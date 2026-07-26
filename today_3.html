@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>오늘 뜨는 채널 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  .rank-item{display:flex;align-items:center;gap:18px;padding:18px 8px;border-bottom:1px solid var(--line);}
+  .rank-item:hover{background:#f8fafc;}
+  .rank-no{font-size:22px;font-weight:800;color:var(--blue);width:44px;text-align:center;flex-shrink:0;}
+  .rank-thumb{width:64px;height:64px;border-radius:50%;object-fit:cover;flex-shrink:0;background:var(--bg-soft);}
+  .rank-thumb.video{width:120px;height:68px;border-radius:10px;}
+  .rank-main{flex:1;min-width:0;}
+  .rank-main .name{font-size:20px;font-weight:700;cursor:pointer;}
+  .rank-main .name:hover{color:var(--blue);}
+  .rank-main .sub{font-size:16.5px;color:var(--sub);margin-top:2px;}
+  .rank-right{text-align:right;flex-shrink:0;}
+  .rank-right b{display:block;font-size:19px;color:var(--ink);}
+  .rank-right .up{color:#dc2626;font-weight:700;font-size:16px;}
+  .rank-right .lbl{font-size:14.5px;color:var(--sub);}
+  .short-badge{display:inline-block;background:#fee2e2;color:#b91c1c;font-size:13.5px;font-weight:700;padding:2px 8px;border-radius:8px;margin-left:6px;vertical-align:middle;}
+  .update-info{font-size:16px;color:var(--sub);margin-bottom:14px;}
+</style>
+</head>
+<body>
+
+<div id="site-header"></div>
+
+<div class="page">
+  <div class="wrap">
+    <h1 class="page-title">오늘 뜨는 채널 🚀</h1>
+    <p class="page-desc">매일 새벽 자동으로 갱신되는 대한민국 급상승 채널과 인기 영상입니다.</p>
+
+    <div class="board-tools">
+      <div class="tabs" id="tabs">
+        <button class="tab on" data-tab="channels">뜨는 채널</button>
+        <button class="tab" data-tab="videos">인기 영상</button>
+        <button class="tab" data-tab="shorts">인기 쇼츠</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="update-info" id="update-info"></div>
+      <div id="list"><p class="empty">데이터를 불러오는 중...</p></div>
+    </div>
+  </div>
+</div>
+
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  function fmtNum(n) {
+    n = Number(n || 0);
+    if (n >= 100000000) return (n / 100000000).toFixed(1).replace(/\.0$/, "") + "억";
+    if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, "") + "만";
+    return n.toLocaleString();
+  }
+
+  function renderChannels(list, metricFn) {
+    return list.map((c, i) => `
+      <div class="rank-item">
+        <div class="rank-no">${i + 1}</div>
+        <img class="rank-thumb" src="${escapeHtml(c.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
+        <div class="rank-main">
+          <div class="name" onclick="location.href='channel.html?id=${c.id}'">${escapeHtml(c.title)}</div>
+          <div class="sub">구독자 ${fmtNum(c.subscriber_count)}명${c.daily_subs > 0 ? " · 어제보다 +" + fmtNum(c.daily_subs) : ""}</div>
+        </div>
+        <div class="rank-right">${metricFn(c)}</div>
+      </div>`).join("");
+  }
+
+  async function loadChannels() {
+    const box = $id("list");
+    // 1순위: 어제 대비 조회수 증가(급상승) 순위
+    const { data } = await sb.from("channels")
+      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date")
+      .not("daily_views", "is", null)
+      .gt("daily_views", 0)
+      .order("daily_views", { ascending: false })
+      .limit(50);
+    if (data && data.length > 0) {
+      $id("update-info").textContent = "기준일: " + (data[0].stats_date || "") + " · 어제 대비 조회수 증가 순";
+      box.innerHTML = renderChannels(data, (c) => `<b>+${fmtNum(c.daily_views)}</b><span class="lbl">일일 조회수 증가</span>`);
+      return;
+    }
+    // 2순위(데이터가 하루치뿐일 때): 구독자순으로 임시 표시
+    const { data: subs } = await sb.from("channels")
+      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date")
+      .order("subscriber_count", { ascending: false })
+      .limit(50);
+    if (!subs || subs.length === 0) {
+      box.innerHTML = '<p class="empty">아직 수집된 채널이 없습니다.<br>수집 로봇이 실행되면 표시됩니다.</p>';
+      return;
+    }
+    $id("update-info").textContent = "지금은 구독자순으로 보여드려요. 데이터가 이틀 이상 쌓이면 \"급상승 순위\"로 자동 전환됩니다.";
+    box.innerHTML = renderChannels(subs, (c) => `<b>${fmtNum(c.subscriber_count)}</b><span class="lbl">구독자</span>`);
+  }
+
+  function renderVideos(list, urlFn, metricFn) {
+    return list.map((v, i) => `
+      <div class="rank-item" style="cursor:pointer" onclick="window.open('${urlFn(v)}','_blank')">
+        <div class="rank-no">${i + 1}</div>
+        <img class="rank-thumb video" src="${escapeHtml(v.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
+        <div class="rank-main">
+          <div class="name">${escapeHtml(v.title)}</div>
+          <div class="sub">${escapeHtml(v.channel_title || (v.channels && v.channels.title) || "")}</div>
+        </div>
+        <div class="rank-right">${metricFn(v)}</div>
+      </div>`).join("");
+  }
+
+  // 인기 영상(롱폼): 유튜브 공식 인기 급상승 차트
+  async function loadVideos() {
+    const box = $id("list");
+    const { data: latest } = await sb.from("trending_videos")
+      .select("date").order("date", { ascending: false }).limit(1);
+    if (!latest || latest.length === 0) {
+      box.innerHTML = '<p class="empty">아직 수집된 영상이 없습니다.<br>수집 로봇 첫 실행 후 표시됩니다.</p>';
+      return;
+    }
+    const day = latest[0].date;
+    const { data } = await sb.from("trending_videos")
+      .select("video_id,title,channel_title,thumbnail,view_count")
+      .eq("date", day)
+      .eq("is_short", false)
+      .order("rank", { ascending: true })
+      .limit(60);
+    if (!data || data.length === 0) {
+      box.innerHTML = '<p class="empty">표시할 영상이 없습니다.</p>';
+      return;
+    }
+    $id("update-info").textContent = "기준일: " + day + " · 유튜브 대한민국 인기 순위";
+    box.innerHTML = renderVideos(data,
+      (v) => "https://www.youtube.com/watch?v=" + v.video_id,
+      (v) => `<b>${fmtNum(v.view_count)}</b><span class="lbl">조회수</span>`);
+  }
+
+  // 인기 쇼츠: 인비랩이 추적하는 채널들의 진짜 쇼츠 랭킹 (자체 수집)
+  async function loadShorts() {
+    const box = $id("list");
+    // 1순위: 어제 대비 조회수 급상승 순
+    let { data } = await sb.from("channel_videos")
+      .select("video_id,title,thumbnail,view_count,daily_views,channels(title)")
+      .eq("is_short", true)
+      .not("daily_views", "is", null)
+      .gt("daily_views", 0)
+      .order("daily_views", { ascending: false })
+      .limit(50);
+    let daily = true;
+    if (!data || data.length === 0) {
+      // 2순위(데이터가 하루치뿐일 때): 총 조회수순
+      const r = await sb.from("channel_videos")
+        .select("video_id,title,thumbnail,view_count,daily_views,channels(title)")
+        .eq("is_short", true)
+        .order("view_count", { ascending: false })
+        .limit(50);
+      data = r.data;
+      daily = false;
+    }
+    if (!data || data.length === 0) {
+      box.innerHTML = '<p class="empty">쇼츠 데이터를 수집하는 중입니다.<br>수집 로봇이 한 번 더 실행되면 표시됩니다.</p>';
+      return;
+    }
+    $id("update-info").textContent = daily
+      ? "인비랩 추적 채널의 쇼츠 · 어제 대비 조회수 증가 순"
+      : "인비랩 추적 채널의 쇼츠 · 총 조회수순 (데이터가 쌓이면 급상승순으로 자동 전환)";
+    box.innerHTML = renderVideos(data,
+      (v) => "https://www.youtube.com/shorts/" + v.video_id,
+      (v) => daily
+        ? `<b>+${fmtNum(v.daily_views)}</b><span class="lbl">일일 조회수 증가</span>`
+        : `<b>${fmtNum(v.view_count)}</b><span class="lbl">조회수</span>`);
+  }
+
+  (async function () {
+    await renderHeader("today");
+    renderFooter();
+    await requireLogin();
+    if (!sb) { $id("list").innerHTML = '<p class="empty">서버 연결 후 표시됩니다.</p>'; return; }
+    await loadChannels();
+
+    document.querySelectorAll("#tabs .tab").forEach((btn) => {
+      btn.addEventListener("click", async function () {
+        document.querySelectorAll("#tabs .tab").forEach((b) => b.classList.remove("on"));
+        this.classList.add("on");
+        $id("list").innerHTML = '<p class="empty">불러오는 중...</p>';
+        const t = this.dataset.tab;
+        if (t === "channels") await loadChannels();
+        else if (t === "videos") await loadVideos();
+        else await loadShorts();
+      });
+    });
+  })();
+</script>
+</body>
+</html>
