@@ -100,9 +100,22 @@
     box.innerHTML = renderChannels(subs, (c) => `<b>${fmtNum(c.subscriber_count)}</b><span class="lbl">구독자</span>`);
   }
 
-  async function loadVideos(onlyShorts) {
+  function renderVideos(list, urlFn, metricFn) {
+    return list.map((v, i) => `
+      <div class="rank-item" style="cursor:pointer" onclick="window.open('${urlFn(v)}','_blank')">
+        <div class="rank-no">${i + 1}</div>
+        <img class="rank-thumb video" src="${escapeHtml(v.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
+        <div class="rank-main">
+          <div class="name">${escapeHtml(v.title)}</div>
+          <div class="sub">${escapeHtml(v.channel_title || (v.channels && v.channels.title) || "")}</div>
+        </div>
+        <div class="rank-right">${metricFn(v)}</div>
+      </div>`).join("");
+  }
+
+  // 인기 영상(롱폼): 유튜브 공식 인기 급상승 차트
+  async function loadVideos() {
     const box = $id("list");
-    // 가장 최근 수집일 찾기
     const { data: latest } = await sb.from("trending_videos")
       .select("date").order("date", { ascending: false }).limit(1);
     if (!latest || latest.length === 0) {
@@ -110,31 +123,56 @@
       return;
     }
     const day = latest[0].date;
-    let q = sb.from("trending_videos")
-      .select("video_id,title,channel_title,thumbnail,view_count,is_short,rank")
+    const { data } = await sb.from("trending_videos")
+      .select("video_id,title,channel_title,thumbnail,view_count")
       .eq("date", day)
-      .eq("is_short", onlyShorts)   // 인기 영상 탭=롱폼만, 인기 쇼츠 탭=쇼츠만
+      .eq("is_short", false)
       .order("rank", { ascending: true })
       .limit(60);
-    const { data, error } = await q;
-    if (error || !data || data.length === 0) {
+    if (!data || data.length === 0) {
       box.innerHTML = '<p class="empty">표시할 영상이 없습니다.</p>';
       return;
     }
     $id("update-info").textContent = "기준일: " + day + " · 유튜브 대한민국 인기 순위";
-    box.innerHTML = data.map((v, i) => `
-      <div class="rank-item" style="cursor:pointer" onclick="window.open('https://www.youtube.com/watch?v=${v.video_id}','_blank')">
-        <div class="rank-no">${i + 1}</div>
-        <img class="rank-thumb video" src="${escapeHtml(v.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
-        <div class="rank-main">
-          <div class="name">${escapeHtml(v.title)}${v.is_short ? '<span class="short-badge">쇼츠</span>' : ""}</div>
-          <div class="sub">${escapeHtml(v.channel_title)}</div>
-        </div>
-        <div class="rank-right">
-          <b>${fmtNum(v.view_count)}</b>
-          <span class="lbl">조회수</span>
-        </div>
-      </div>`).join("");
+    box.innerHTML = renderVideos(data,
+      (v) => "https://www.youtube.com/watch?v=" + v.video_id,
+      (v) => `<b>${fmtNum(v.view_count)}</b><span class="lbl">조회수</span>`);
+  }
+
+  // 인기 쇼츠: 인비랩이 추적하는 채널들의 진짜 쇼츠 랭킹 (자체 수집)
+  async function loadShorts() {
+    const box = $id("list");
+    // 1순위: 어제 대비 조회수 급상승 순
+    let { data } = await sb.from("channel_videos")
+      .select("video_id,title,thumbnail,view_count,daily_views,channels(title)")
+      .eq("is_short", true)
+      .not("daily_views", "is", null)
+      .gt("daily_views", 0)
+      .order("daily_views", { ascending: false })
+      .limit(50);
+    let daily = true;
+    if (!data || data.length === 0) {
+      // 2순위(데이터가 하루치뿐일 때): 총 조회수순
+      const r = await sb.from("channel_videos")
+        .select("video_id,title,thumbnail,view_count,daily_views,channels(title)")
+        .eq("is_short", true)
+        .order("view_count", { ascending: false })
+        .limit(50);
+      data = r.data;
+      daily = false;
+    }
+    if (!data || data.length === 0) {
+      box.innerHTML = '<p class="empty">쇼츠 데이터를 수집하는 중입니다.<br>수집 로봇이 한 번 더 실행되면 표시됩니다.</p>';
+      return;
+    }
+    $id("update-info").textContent = daily
+      ? "인비랩 추적 채널의 쇼츠 · 어제 대비 조회수 증가 순"
+      : "인비랩 추적 채널의 쇼츠 · 총 조회수순 (데이터가 쌓이면 급상승순으로 자동 전환)";
+    box.innerHTML = renderVideos(data,
+      (v) => "https://www.youtube.com/shorts/" + v.video_id,
+      (v) => daily
+        ? `<b>+${fmtNum(v.daily_views)}</b><span class="lbl">일일 조회수 증가</span>`
+        : `<b>${fmtNum(v.view_count)}</b><span class="lbl">조회수</span>`);
   }
 
   (async function () {
@@ -151,8 +189,8 @@
         $id("list").innerHTML = '<p class="empty">불러오는 중...</p>';
         const t = this.dataset.tab;
         if (t === "channels") await loadChannels();
-        else if (t === "videos") await loadVideos(false);
-        else await loadVideos(true);
+        else if (t === "videos") await loadVideos();
+        else await loadShorts();
       });
     });
   })();
