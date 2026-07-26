@@ -73,6 +73,7 @@
     const menu = [
       ["dashboard.html", "dashboard", "홈"],
       ["today.html", "today", "뜨는 채널"],
+      ["rocket.html", "rocket", "로켓 채널"],
       ["channel.html", "channel", "채널 분석"],
       ["community.html", "community", "성장 기록실"],
       ["study.html", "study", "학습자료"],
