@@ -60,20 +60,8 @@
     return n.toLocaleString();
   }
 
-  async function loadChannels() {
-    const box = $id("list");
-    const { data, error } = await sb.from("channels")
-      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date")
-      .not("daily_views", "is", null)
-      .gt("daily_views", 0)
-      .order("daily_views", { ascending: false })
-      .limit(50);
-    if (error || !data || data.length === 0) {
-      box.innerHTML = '<p class="empty">아직 수집된 데이터가 없습니다.<br>수집 로봇이 처음 실행된 다음 날부터 순위가 표시됩니다.</p>';
-      return;
-    }
-    $id("update-info").textContent = "기준일: " + (data[0].stats_date || "") + " · 어제 대비 조회수 증가 순";
-    box.innerHTML = data.map((c, i) => `
+  function renderChannels(list, metricFn) {
+    return list.map((c, i) => `
       <div class="rank-item">
         <div class="rank-no">${i + 1}</div>
         <img class="rank-thumb" src="${escapeHtml(c.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
@@ -81,11 +69,35 @@
           <div class="name" onclick="location.href='channel.html?id=${c.id}'">${escapeHtml(c.title)}</div>
           <div class="sub">구독자 ${fmtNum(c.subscriber_count)}명${c.daily_subs > 0 ? " · 어제보다 +" + fmtNum(c.daily_subs) : ""}</div>
         </div>
-        <div class="rank-right">
-          <b>+${fmtNum(c.daily_views)}</b>
-          <span class="lbl">일일 조회수 증가</span>
-        </div>
+        <div class="rank-right">${metricFn(c)}</div>
       </div>`).join("");
+  }
+
+  async function loadChannels() {
+    const box = $id("list");
+    // 1순위: 어제 대비 조회수 증가(급상승) 순위
+    const { data } = await sb.from("channels")
+      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date")
+      .not("daily_views", "is", null)
+      .gt("daily_views", 0)
+      .order("daily_views", { ascending: false })
+      .limit(50);
+    if (data && data.length > 0) {
+      $id("update-info").textContent = "기준일: " + (data[0].stats_date || "") + " · 어제 대비 조회수 증가 순";
+      box.innerHTML = renderChannels(data, (c) => `<b>+${fmtNum(c.daily_views)}</b><span class="lbl">일일 조회수 증가</span>`);
+      return;
+    }
+    // 2순위(데이터가 하루치뿐일 때): 구독자순으로 임시 표시
+    const { data: subs } = await sb.from("channels")
+      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date")
+      .order("subscriber_count", { ascending: false })
+      .limit(50);
+    if (!subs || subs.length === 0) {
+      box.innerHTML = '<p class="empty">아직 수집된 채널이 없습니다.<br>수집 로봇이 실행되면 표시됩니다.</p>';
+      return;
+    }
+    $id("update-info").textContent = "지금은 구독자순으로 보여드려요. 데이터가 이틀 이상 쌓이면 \"급상승 순위\"로 자동 전환됩니다.";
+    box.innerHTML = renderChannels(subs, (c) => `<b>${fmtNum(c.subscriber_count)}</b><span class="lbl">구독자</span>`);
   }
 
   async function loadVideos(onlyShorts) {
@@ -101,9 +113,9 @@
     let q = sb.from("trending_videos")
       .select("video_id,title,channel_title,thumbnail,view_count,is_short,rank")
       .eq("date", day)
+      .eq("is_short", onlyShorts)   // 인기 영상 탭=롱폼만, 인기 쇼츠 탭=쇼츠만
       .order("rank", { ascending: true })
       .limit(60);
-    if (onlyShorts) q = q.eq("is_short", true);
     const { data, error } = await q;
     if (error || !data || data.length === 0) {
       box.innerHTML = '<p class="empty">표시할 영상이 없습니다.</p>';
