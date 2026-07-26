@@ -3,60 +3,36 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>홈 — 인비랩</title>
+<title>회원가입 — 인비랩</title>
 <link rel="stylesheet" href="assets/css/style.css">
 </head>
 <body>
 
 <div id="site-header"></div>
 
-<div class="page">
-  <div class="wrap">
-    <h1 class="page-title" id="welcome">환영합니다!</h1>
-    <p class="page-desc">오늘도 한 걸음 성장해 볼까요?</p>
+<div class="auth-bg">
+  <div class="auth-card">
+    <h1>무료로 시작하기</h1>
+    <p class="sub">1분이면 끝납니다. 카드 등록도 없습니다.</p>
 
-    <div class="quick">
-      <a href="community.html">
-        <span class="qicon">🏆</span>
-        <b>성장 기록실</b>
-        <span>수익 인증 · 성장 후기</span>
-      </a>
-      <a href="study.html">
-        <span class="qicon">📚</span>
-        <b>학습자료</b>
-        <span>강의 자료 모음</span>
-      </a>
-      <a href="today.html">
-        <span class="qicon">🚀</span>
-        <b>오늘 뜨는 채널</b>
-        <span>매일 갱신 급상승 랭킹</span>
-      </a>
+    <div class="field">
+      <label for="nickname">닉네임 (커뮤니티에서 보이는 이름)</label>
+      <input type="text" id="nickname" placeholder="예: 쇼츠새내기" maxlength="12">
+    </div>
+    <div class="field">
+      <label for="email">이메일</label>
+      <input type="email" id="email" placeholder="example@naver.com">
+    </div>
+    <div class="field">
+      <label for="password">비밀번호</label>
+      <input type="password" id="password" placeholder="6자 이상">
+      <div class="hint">영문·숫자를 섞어 6자 이상 입력해 주세요.</div>
     </div>
 
-    <div class="grid2">
-      <div class="panel">
-        <h3>성장 기록실 최신글</h3>
-        <ul class="post-list" id="latest-posts">
-          <li class="empty">글을 불러오는 중...</li>
-        </ul>
-        <div style="text-align:center;margin-top:16px;">
-          <a class="btn btn-ghost btn-sm" href="community.html">전체 보기</a>
-        </div>
-      </div>
-      <div class="panel soft">
-        <h3>💬 궁금한 게 있으세요?</h3>
-        <p style="font-size:18px;color:var(--sub);margin-bottom:16px;">
-          사용법이든 유튜브 질문이든, 무엇이든 물어보세요.
-          오른쪽 아래 대화 버튼이 곧 생길 예정입니다. (채널톡 연동 예정)
-        </p>
-        <h3 style="margin-top:24px;">📌 시작 안내</h3>
-        <p style="font-size:18px;color:var(--sub);">
-          ① 성장 기록실에서 다른 분들의 후기를 구경해 보세요.<br>
-          ② 첫 인사 글을 남겨보세요.<br>
-          ③ 학습자료에서 강의 자료를 확인하세요.
-        </p>
-      </div>
-    </div>
+    <div id="reg-msg" class="msg"></div>
+    <button class="btn btn-main" id="btn-register">가입하기</button>
+
+    <div class="auth-alt">이미 계정이 있으신가요? <a href="login.html">로그인</a></div>
   </div>
 </div>
 
@@ -66,37 +42,36 @@
 <script src="assets/js/config.js"></script>
 <script src="assets/js/app.js"></script>
 <script>
-  (async function () {
-    await renderHeader("dashboard");
-    renderFooter();
-    const user = await requireLogin();
-    if (user) $id("welcome").textContent = getNickname(user) + " 님, 환영합니다!";
+  renderHeader("");
+  renderFooter();
 
-    // 최신글 5개
-    const box = $id("latest-posts");
-    if (!sb) {
-      box.innerHTML = '<li class="empty">서버 연결 후 실제 글이 표시됩니다.</li>';
-      return;
+  $id("btn-register").addEventListener("click", async function () {
+    const nickname = $id("nickname").value.trim();
+    const email = $id("email").value.trim();
+    const password = $id("password").value;
+
+    if (!nickname) return showMsg("reg-msg", "닉네임을 입력해 주세요.");
+    if (!email || !email.includes("@")) return showMsg("reg-msg", "이메일을 정확히 입력해 주세요.");
+    if (password.length < 6) return showMsg("reg-msg", "비밀번호는 6자 이상이어야 합니다.");
+    if (!sb) return showMsg("reg-msg", "아직 서버 연결 전입니다(미리보기 모드).");
+
+    this.disabled = true;
+    const { error } = await sb.auth.signUp({
+      email: email,
+      password: password,
+      options: { data: { nickname: nickname } }
+    });
+    this.disabled = false;
+
+    if (error) {
+      const t = error.message.includes("already registered")
+        ? "이미 가입된 이메일입니다. 로그인해 주세요."
+        : "가입에 실패했습니다: " + error.message;
+      return showMsg("reg-msg", t);
     }
-    const { data, error } = await sb
-      .from("posts")
-      .select("id,title,category,author_nick,created_at,views")
-      .eq("board", "community")
-      .order("created_at", { ascending: false })
-      .limit(5);
-    if (error || !data || data.length === 0) {
-      box.innerHTML = '<li class="empty">아직 글이 없습니다. 첫 글을 남겨보세요!</li>';
-      return;
-    }
-    box.innerHTML = data.map((p) => `
-      <li class="post-item" onclick="location.href='post.html?id=${p.id}'">
-        <div>
-          <div class="t"><span class="cat">${escapeHtml(p.category || "후기")}</span>${escapeHtml(p.title)}</div>
-          <div class="meta">${escapeHtml(p.author_nick || "회원")} · ${fmtDate(p.created_at)}</div>
-        </div>
-        <div class="right">조회 ${p.views || 0}</div>
-      </li>`).join("");
-  })();
+    showMsg("reg-msg", "가입 완료! 잠시 후 홈으로 이동합니다.", "ok");
+    setTimeout(() => (location.href = "dashboard.html"), 1200);
+  });
 </script>
 </body>
 </html>
