@@ -45,10 +45,19 @@
     <div class="panel" id="detail" style="display:none;margin-top:20px;">
       <div class="ch-head">
         <img id="d-thumb" src="" alt="">
-        <div>
+        <div style="flex:1;">
           <h2 id="d-title"></h2>
           <div class="handle" id="d-handle"></div>
         </div>
+        <div style="display:flex;gap:8px;flex-shrink:0;">
+          <button class="btn btn-ghost btn-sm" id="btn-fav">☆ 관심 채널</button>
+          <button class="btn btn-main btn-sm" id="btn-ai">🤖 AI 진단</button>
+        </div>
+      </div>
+      <div id="ai-box" style="display:none;background:#f5f3ff;border:2px solid #ddd6fe;border-radius:14px;padding:22px;margin-bottom:22px;">
+        <h3 style="font-size:20px;margin-bottom:10px;">🤖 AI 채널 진단 리포트</h3>
+        <div id="ai-text" style="font-size:18px;line-height:1.8;white-space:pre-wrap;"></div>
+        <div id="ai-used" style="font-size:15px;color:var(--sub);margin-top:12px;"></div>
       </div>
       <div class="stat-grid">
         <div class="stat-box"><b id="d-subs">-</b><span>구독자</span></div>
@@ -85,6 +94,8 @@
 <script>
   let curUser = null;
   let charts = [];
+  let curChannel = null;   // AI 진단용: 현재 보고 있는 채널
+  let curSnaps = [];
 
   function fmtNum(n) {
     n = Number(n || 0);
@@ -117,10 +128,22 @@
       </div>`).join("");
   }
 
+  async function refreshFavBtn(id) {
+    if (!curUser) return;
+    const { data } = await sb.from("favorites").select("channel_id").eq("channel_id", id).limit(1);
+    const on = data && data.length > 0;
+    const b = $id("btn-fav");
+    b.textContent = on ? "★ 관심 해제" : "☆ 관심 채널";
+    b.dataset.on = on ? "1" : "";
+  }
+
   async function showDetail(id) {
     const { data: c } = await sb.from("channels").select("*").eq("id", id).single();
     if (!c) return;
+    curChannel = c;
+    $id("ai-box").style.display = "none";
     $id("detail").style.display = "block";
+    refreshFavBtn(id);
     $id("d-thumb").src = c.thumbnail || "";
     $id("d-title").textContent = c.title;
     $id("d-handle").textContent = c.handle || "";
@@ -134,6 +157,7 @@
       .eq("channel_id", id)
       .order("date", { ascending: true })
       .limit(30);
+    curSnaps = snaps || [];
 
     charts.forEach((ch) => ch.destroy());
     charts = [];
@@ -171,6 +195,53 @@
       if (error) return showMsg("req-msg", "요청에 실패했습니다.");
       $id("req-input").value = "";
       showMsg("req-msg", "요청이 접수되었습니다! 다음 수집 때 반영됩니다.", "ok");
+    });
+
+    // 관심 채널 토글
+    $id("btn-fav").addEventListener("click", async function () {
+      if (!curUser || !curChannel) return;
+      if (this.dataset.on) {
+        await sb.from("favorites").delete().eq("channel_id", curChannel.id);
+      } else {
+        await sb.from("favorites").insert({ user_id: curUser.id, channel_id: curChannel.id });
+      }
+      refreshFavBtn(curChannel.id);
+    });
+
+    // AI 진단
+    $id("btn-ai").addEventListener("click", async function () {
+      if (!curUser || !curChannel) return;
+      this.disabled = true;
+      const old = this.textContent;
+      this.textContent = "분석 중... (10~20초)";
+      try {
+        const { data: sess } = await sb.auth.getSession();
+        const token = sess && sess.session ? sess.session.access_token : "";
+        const r = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+          body: JSON.stringify({
+            channel: curChannel,
+            snapshots: curSnaps,
+            videos: [],
+          }),
+        });
+        const d = await r.json();
+        $id("ai-box").style.display = "block";
+        if (!r.ok) {
+          $id("ai-text").textContent = d.error || "진단에 실패했습니다.";
+          $id("ai-used").textContent = "";
+        } else {
+          $id("ai-text").textContent = d.report;
+          $id("ai-used").textContent = `이번 달 사용: ${d.used}/${d.limit}회`;
+        }
+        $id("ai-box").scrollIntoView({ behavior: "smooth" });
+      } catch (e) {
+        $id("ai-box").style.display = "block";
+        $id("ai-text").textContent = "오류가 발생했습니다: " + e.message;
+      }
+      this.disabled = false;
+      this.textContent = old;
     });
 
     // 주소에 ?id=가 있으면 바로 상세 표시 (오늘 뜨는 채널에서 넘어온 경우)
