@@ -1,5 +1,8 @@
 // ============================================
-// 인비랩 데이터 수집 로봇 (수정본: 채널 명단 먼저 등록)
+// 인비랩 데이터 수집 로봇
+// 매일 자동 실행: 유튜브 인기 영상/채널 데이터를 수집해 Supabase에 저장
+// 필요한 환경변수(GitHub Secrets):
+//   YOUTUBE_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE
 // ============================================
 
 const YT_KEY = process.env.YOUTUBE_API_KEY;
@@ -11,6 +14,7 @@ if (!YT_KEY || !SB_URL || !SB_KEY) {
   process.exit(1);
 }
 
+// 한국 시간 기준 날짜 (YYYY-MM-DD)
 function kstDate(offsetDays = 0) {
   const d = new Date(Date.now() + 9 * 3600 * 1000 + offsetDays * 86400 * 1000);
   return d.toISOString().slice(0, 10);
@@ -18,6 +22,7 @@ function kstDate(offsetDays = 0) {
 const TODAY = kstDate(0);
 const YESTERDAY = kstDate(-1);
 
+// ---------- Supabase REST 호출 도우미 ----------
 async function sbFetch(path, { method = "GET", body, prefer } = {}) {
   const headers = {
     apikey: SB_KEY,
@@ -38,6 +43,7 @@ async function sbFetch(path, { method = "GET", body, prefer } = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+// ---------- YouTube API 호출 도우미 ----------
 async function ytFetch(endpoint, params) {
   const qs = new URLSearchParams({ ...params, key: YT_KEY });
   const res = await fetch(`https://www.googleapis.com/youtube/v3/${endpoint}?${qs}`);
@@ -46,10 +52,26 @@ async function ytFetch(endpoint, params) {
   return data;
 }
 
+// ISO8601 재생시간(PT1M30S) → 초
 function durationSec(iso) {
   const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(iso || "");
   if (!m) return 0;
   return (Number(m[1] || 0) * 3600) + (Number(m[2] || 0) * 60) + Number(m[3] || 0);
+}
+
+// 진짜 쇼츠인지 유튜브에 직접 확인 (쇼츠 주소로 열리면 쇼츠)
+async function checkRealShort(videoId) {
+  try {
+    const res = await fetch(`https://www.youtube.com/shorts/${videoId}`, {
+      method: "HEAD",
+      redirect: "manual",
+    });
+    if (res.status === 200) return true;       // 쇼츠 주소 그대로 열림 → 진짜 쇼츠
+    if (res.status >= 300 && res.status < 400) return false; // 일반 영상으로 이동됨 → 쇼츠 아님
+    return null; // 판별 불가
+  } catch {
+    return null;
+  }
 }
 
 function chunk(arr, size) {
@@ -61,7 +83,7 @@ function chunk(arr, size) {
 async function main() {
   console.log(`[인비랩 수집 로봇] 시작 — 기준일: ${TODAY} (KST)`);
 
-  // 1. 한국 인기 영상 수집
+  // ========== 1. 한국 인기 영상 수집 (최대 100개) ==========
   const videos = [];
   let pageToken = "";
   for (let page = 0; page < 2; page++) {
@@ -78,19 +100,31 @@ async function main() {
   }
   console.log(`인기 영상 ${videos.length}개 수집`);
 
-  const trendingRows = videos.map((v, i) => ({
-    video_id: v.id,
-    date: TODAY,
-    title: (v.snippet?.title || "").slice(0, 300),
-    channel_id: v.snippet?.channelId || "",
-    channel_title: v.snippet?.channelTitle || "",
-    thumbnail: v.snippet?.thumbnails?.medium?.url || "",
-    published_at: v.snippet?.publishedAt || null,
-    view_count: Number(v.statistics?.viewCount || 0),
-    like_count: Number(v.statistics?.likeCount || 0),
-    is_short: durationSec(v.contentDetails?.duration) <= 180,
-    rank: i + 1,
-  }));
+  const trendingRows = [];
+  for (let i = 0; i < videos.length; i++) {
+    const v = videos[i];
+    const dur = durationSec(v.contentDetails?.duration);
+    // 3분 10초 이하 영상만 쇼츠 후보로 보고, 유튜브에 직접 확인
+    let isShort = false;
+    if (dur > 0 && dur <= 190) {
+      const real = await checkRealShort(v.id);
+      isShort = real === null ? dur <= 60 : real; // 확인 실패 시 60초 이하만 쇼츠로
+    }
+    trendingRows.push({
+      video_id: v.id,
+      date: TODAY,
+      title: (v.snippet?.title || "").slice(0, 300),
+      channel_id: v.snippet?.channelId || "",
+      channel_title: v.snippet?.channelTitle || "",
+      thumbnail: v.snippet?.thumbnails?.medium?.url || "",
+      published_at: v.snippet?.publishedAt || null,
+      view_count: Number(v.statistics?.viewCount || 0),
+      like_count: Number(v.statistics?.likeCount || 0),
+      is_short: isShort,
+      rank: i + 1,
+    });
+  }
+  console.log(`쇼츠 판별 완료: ${trendingRows.filter((r) => r.is_short).length}개가 진짜 쇼츠`);
   for (const part of chunk(trendingRows, 100)) {
     await sbFetch("trending_videos?on_conflict=video_id,date", {
       method: "POST",
@@ -100,14 +134,15 @@ async function main() {
   }
   console.log("인기 영상 저장 완료");
 
-  // 2. 수집 대상 채널 목록
+  // ========== 2. 수집 대상 채널 목록 만들기 ==========
+  // 기존 등록 채널 + 오늘 인기 영상에 등장한 채널
   const existing = await sbFetch("channels?select=id&is_active=eq.true&limit=1500");
   const idSet = new Set(existing.map((c) => c.id));
   trendingRows.forEach((r) => r.channel_id && idSet.add(r.channel_id));
   const channelIds = [...idSet];
   console.log(`수집 대상 채널: ${channelIds.length}개`);
 
-  // 3. 채널 통계 일괄 조회
+  // ========== 3. 채널 통계 일괄 조회 (50개씩) ==========
   const stats = [];
   for (const ids of chunk(channelIds, 50)) {
     const data = await ytFetch("channels", {
@@ -119,13 +154,13 @@ async function main() {
   }
   console.log(`채널 통계 ${stats.length}개 조회`);
 
-  // 4. 어제 기록 (성장률 계산용)
+  // ========== 4. 어제 기록 불러오기 (성장률 계산용) ==========
   const yRows = await sbFetch(
     `channel_snapshots?select=channel_id,view_count,subscriber_count&date=eq.${YESTERDAY}&limit=2000`
   );
   const yMap = new Map(yRows.map((r) => [r.channel_id, r]));
 
-  // 5. 저장 — 순서 중요: 채널 명단을 먼저 등록한 뒤 일일 기록 저장
+  // ========== 5. 오늘 기록 저장 + 채널 정보 갱신 ==========
   const snapRows = [];
   const chRows = [];
   for (const c of stats) {
@@ -150,6 +185,7 @@ async function main() {
       is_active: true,
     });
   }
+  // 순서 중요: 채널 명단을 먼저 등록한 뒤에 일일 기록을 저장해야 함
   for (const part of chunk(chRows, 200)) {
     await sbFetch("channels?on_conflict=id", {
       method: "POST", body: part, prefer: "resolution=merge-duplicates",
