@@ -72,6 +72,8 @@
     const user = sb ? await getUser() : null;
     const menu = [
       ["dashboard.html", "dashboard", "홈"],
+      ["today.html", "today", "뜨는 채널"],
+      ["channel.html", "channel", "채널 분석"],
       ["community.html", "community", "성장 기록실"],
       ["study.html", "study", "학습자료"],
     ];
@@ -110,7 +112,7 @@
     el.innerHTML = `
       <footer class="site">
         <div class="wrap">
-          인비랩(InbiLab) · inbinam.ai.kr<br>
+          인비랩(InbiLab) · inbilab.ai.kr<br>
           이용약관 · 개인정보처리방침 · 사업자정보
         </div>
       </footer>`;
