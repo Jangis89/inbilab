@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>로켓 채널 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  .update-info{font-size:16px;color:var(--sub);margin-bottom:14px;}
+  .filter-bar{background:var(--bg-soft);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:18px;}
+  .filter-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+  .filter-row:last-child{margin-bottom:0;}
+  .filter-row .flabel{font-size:15.5px;font-weight:700;color:var(--sub);width:74px;flex-shrink:0;}
+  .fbtn{padding:7px 15px;border-radius:999px;border:2px solid var(--line);background:#fff;font-size:15.5px;font-weight:700;cursor:pointer;color:var(--sub);font-family:inherit;}
+  .fbtn.on{border-color:var(--blue);color:var(--blue);background:#eff6ff;}
+  .fbtn[disabled]{opacity:.45;cursor:not-allowed;}
+  .search-inline{display:flex;gap:8px;flex:1;min-width:220px;}
+  .search-inline input{flex:1;padding:9px 14px;font-size:16px;border:2px solid var(--line);border-radius:10px;font-family:inherit;}
+  .search-inline input:focus{outline:none;border-color:var(--blue);}
+
+  .tbl-wrap{overflow-x:auto;}
+  table.rocket{width:100%;min-width:980px;border-collapse:collapse;}
+  table.rocket th{font-size:14.5px;color:var(--sub);font-weight:700;text-align:right;padding:10px 10px;border-bottom:2px solid var(--line);white-space:nowrap;}
+  table.rocket th:nth-child(1),table.rocket th:nth-child(2){text-align:left;}
+  table.rocket td{padding:14px 10px;border-bottom:1px solid var(--line);font-size:16.5px;text-align:right;white-space:nowrap;}
+  table.rocket tr:hover td{background:#f8fafc;}
+  td.rank{font-weight:800;color:var(--blue);text-align:left;font-size:17px;}
+  td.ch{text-align:left;min-width:230px;white-space:normal;}
+  .ch-cell{display:flex;align-items:center;gap:10px;}
+  .ch-cell img{width:42px;height:42px;border-radius:50%;object-fit:cover;background:var(--bg-soft);flex-shrink:0;}
+  .ch-cell .nm{font-size:16.5px;font-weight:700;cursor:pointer;}
+  .ch-cell .nm:hover{color:var(--blue);}
+  .grade{display:inline-block;min-width:24px;text-align:center;font-size:13.5px;font-weight:800;color:#fff;border-radius:7px;padding:2px 7px;}
+  .grade.S{background:#f59e0b}.grade.A{background:#2563eb}.grade.B{background:#16a34a}.grade.C{background:#64748b}.grade.D{background:#cbd5e1;color:#475569}
+  .tag{display:inline-block;font-size:12.5px;font-weight:700;padding:1px 8px;border-radius:999px;background:#eff6ff;color:var(--blue-dark);margin-left:5px;}
+  .fire{color:#dc2626;font-weight:800;}
+  .up{color:#dc2626;font-weight:700;}
+  .money{color:#16a34a;font-weight:800;}
+  .pager{display:flex;justify-content:center;gap:8px;margin-top:20px;}
+  .pager button{padding:9px 16px;border-radius:10px;border:2px solid var(--line);background:#fff;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;color:var(--sub);}
+  .pager button.on{border-color:var(--blue);color:var(--blue);background:#eff6ff;}
+  .pager button[disabled]{opacity:.4;cursor:not-allowed;}
+</style>
+</head>
+<body>
+
+<div id="site-header"></div>
+
+<div class="page">
+  <div class="wrap">
+    <h1 class="page-title">로켓 채널 🔥</h1>
+    <p class="page-desc">지금 급상승 중인 영상을 많이 보유한 채널의 순위입니다.</p>
+
+    <div class="filter-bar">
+      <div class="filter-row">
+        <span class="flabel">기간</span>
+        <button class="fbtn on">일간</button>
+        <button class="fbtn" disabled>주간 (준비중)</button>
+        <button class="fbtn" disabled>월간 (준비중)</button>
+        <div class="search-inline">
+          <input type="text" id="q" placeholder="채널명 검색">
+          <button class="btn btn-main btn-sm" id="btn-q">검색</button>
+        </div>
+      </div>
+      <div class="filter-row">
+        <span class="flabel">등급</span>
+        <button class="fbtn on" data-f="grade" data-v="">전체</button>
+        <button class="fbtn" data-f="grade" data-v="S">S</button>
+        <button class="fbtn" data-f="grade" data-v="A">A</button>
+        <button class="fbtn" data-f="grade" data-v="B">B</button>
+        <button class="fbtn" data-f="grade" data-v="C">C</button>
+        <button class="fbtn" data-f="grade" data-v="D">D</button>
+      </div>
+      <div class="filter-row">
+        <span class="flabel">구독자</span>
+        <button class="fbtn on" data-f="subs" data-v="">전체</button>
+        <button class="fbtn" data-f="subs" data-v="0-10000">1만↓</button>
+        <button class="fbtn" data-f="subs" data-v="10000-100000">1~10만</button>
+        <button class="fbtn" data-f="subs" data-v="100000-500000">10~50만</button>
+        <button class="fbtn" data-f="subs" data-v="500000-1000000">50~100만</button>
+        <button class="fbtn" data-f="subs" data-v="1000000-999999999999">100만↑</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="update-info" id="update-info"></div>
+      <div class="tbl-wrap">
+        <table class="rocket">
+          <thead>
+            <tr>
+              <th>#</th><th>채널</th><th>등급</th><th>구독자</th><th>로켓 영상</th>
+              <th>구독자 증가</th><th>조회수 증가</th><th>예상수익</th>
+              <th>영상(30일)</th><th>숏폼 평균</th><th>롱폼 평균</th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <tr><td colspan="11" style="text-align:center;padding:50px;color:var(--sub);">데이터를 불러오는 중...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pager" id="pager"></div>
+    </div>
+  </div>
+</div>
+
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  function fmtNum(n) {
+    n = Number(n || 0);
+    if (n >= 100000000) return (n / 100000000).toFixed(1).replace(/\.0$/, "") + "억";
+    if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, "") + "만";
+    return n.toLocaleString();
+  }
+  function fmtWon(n) {
+    n = Math.round(Number(n || 0));
+    if (n >= 100000000) return (n / 100000000).toFixed(1) + "억원";
+    if (n >= 10000) return Math.round(n / 10000).toLocaleString() + "만원";
+    return n.toLocaleString() + "원";
+  }
+  function fmtDur(sec) {
+    sec = Math.round(sec);
+    return Math.floor(sec / 60) + "분 " + (sec % 60) + "초";
+  }
+  function gradeOf(dv) {
+    if (dv == null) return "";
+    if (dv >= 5000000) return "S";
+    if (dv >= 1000000) return "A";
+    if (dv >= 300000) return "B";
+    if (dv >= 100000) return "C";
+    return "D";
+  }
+  const RATE = { "숏폼": 0.15, "혼합": 0.8, "롱폼": 2.5, "": 0.8 };
+  const PAGE_SIZE = 20;
+
+  let rows = [];          // 가공된 채널 데이터
+  let filtered = [];
+  let page = 1;
+  const filters = { grade: "", subs: "", q: "" };
+
+  async function loadData() {
+    // 1) 채널
+    const { data: chs } = await sb.from("channels")
+      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date")
+      .order("subscriber_count", { ascending: false })
+      .limit(300);
+    const channels = chs || [];
+    // 2) 채널별 영상 (60개씩 나눠 조회)
+    const vidsBy = {};
+    const ids = channels.map((c) => c.id);
+    for (let i = 0; i < ids.length; i += 60) {
+      const part = ids.slice(i, i + 60);
+      const { data } = await sb.from("channel_videos")
+        .select("channel_id,view_count,daily_views,is_short,duration_sec")
+        .in("channel_id", part)
+        .limit(part.length * 10);
+      (data || []).forEach((v) => {
+        (vidsBy[v.channel_id] = vidsBy[v.channel_id] || []).push(v);
+      });
+    }
+    // 3) 채널별 지표 계산
+    const anyVideoDaily = Object.values(vidsBy).some((arr) => arr.some((v) => v.daily_views != null));
+    rows = channels.map((c) => {
+      const vids = vidsBy[c.id] || [];
+      const shorts = vids.filter((v) => v.is_short);
+      const longs = vids.filter((v) => !v.is_short);
+      // 로켓 영상: 하루 10만 조회 이상 증가한 영상 (데이터 쌓이기 전엔 총 50만 조회 이상)
+      const rocket = anyVideoDaily
+        ? vids.filter((v) => Number(v.daily_views || 0) >= 100000).length
+        : vids.filter((v) => Number(v.view_count || 0) >= 500000).length;
+      const ratio = vids.length ? shorts.length / vids.length : -1;
+      const type = ratio < 0 ? "" : ratio >= 0.8 ? "숏폼" : ratio <= 0.2 ? "롱폼" : "혼합";
+      const avg = (arr) => arr.length ? arr.reduce((s, v) => s + Number(v.duration_sec || 0), 0) / arr.length : null;
+      return {
+        ...c, type,
+        rocket,
+        videoCount: vids.length,
+        shortAvg: avg(shorts),
+        longAvg: avg(longs),
+        money: c.daily_views != null && c.daily_views > 0 ? c.daily_views * (RATE[type] ?? 0.8) : null,
+        grade: gradeOf(c.daily_views),
+      };
+    });
+    // 기본 정렬: 로켓 영상 많은 순 → 조회수 증가 → 구독자
+    rows.sort((a, b) => (b.rocket - a.rocket)
+      || (Number(b.daily_views || 0) - Number(a.daily_views || 0))
+      || (b.subscriber_count - a.subscriber_count));
+    $id("update-info").textContent = anyVideoDaily
+      ? "기준일: " + (channels[0] && channels[0].stats_date || "") + " · 로켓 영상 = 하루 10만 조회 이상 급상승한 영상 수 · 수익은 자체 추정치"
+      : "지금은 '최근 30일 조회수 50만 이상 영상 수' 기준입니다. 데이터가 이틀 이상 쌓이면 진짜 급상승 기준으로 자동 전환됩니다";
+  }
+
+  function applyFilter() {
+    filtered = rows.filter((r) => {
+      if (filters.grade && r.grade !== filters.grade) return false;
+      if (filters.subs) {
+        const [lo, hi] = filters.subs.split("-").map(Number);
+        if (r.subscriber_count < lo || r.subscriber_count >= hi) return false;
+      }
+      if (filters.q && !r.title.toLowerCase().includes(filters.q.toLowerCase())) return false;
+      return true;
+    });
+    page = 1;
+    render();
+  }
+
+  function render() {
+    const tbody = $id("tbody");
+    const total = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    if (page > total) page = total;
+    const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    if (slice.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:50px;color:var(--sub);">조건에 맞는 채널이 없습니다.</td></tr>';
+    } else {
+      tbody.innerHTML = slice.map((r, i) => `
+        <tr>
+          <td class="rank">${(page - 1) * PAGE_SIZE + i + 1}</td>
+          <td class="ch">
+            <div class="ch-cell">
+              <img src="${escapeHtml(r.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
+              <div>
+                <span class="nm" onclick="location.href='channel.html?id=${r.id}'">${escapeHtml(r.title)}</span>${r.type ? `<span class="tag">${r.type}</span>` : ""}
+              </div>
+            </div>
+          </td>
+          <td>${r.grade ? `<span class="grade ${r.grade}">${r.grade}</span>` : "-"}</td>
+          <td>${fmtNum(r.subscriber_count)}</td>
+          <td>${r.rocket > 0 ? `<span class="fire">🔥 ${r.rocket}개</span>` : "-"}</td>
+          <td>${r.daily_subs > 0 ? `<span class="up">+${fmtNum(r.daily_subs)}</span>` : "-"}</td>
+          <td>${r.daily_views > 0 ? `<span class="up">+${fmtNum(r.daily_views)}</span>` : "-"}</td>
+          <td>${r.money ? `<span class="money">${fmtWon(r.money)}</span>` : "-"}</td>
+          <td>${r.videoCount >= 10 ? "10개+" : r.videoCount + "개"}</td>
+          <td>${r.shortAvg != null ? fmtDur(r.shortAvg) : "-"}</td>
+          <td>${r.longAvg != null ? fmtDur(r.longAvg) : "-"}</td>
+        </tr>`).join("");
+    }
+    // 페이지 버튼
+    const pager = $id("pager");
+    let html = `<button ${page === 1 ? "disabled" : ""} onclick="goPage(${page - 1})">이전</button>`;
+    for (let p = 1; p <= total && p <= 10; p++) {
+      html += `<button class="${p === page ? "on" : ""}" onclick="goPage(${p})">${p}</button>`;
+    }
+    html += `<button ${page === total ? "disabled" : ""} onclick="goPage(${page + 1})">다음</button>`;
+    pager.innerHTML = html;
+  }
+  window.goPage = function (p) { page = p; render(); window.scrollTo({ top: 0, behavior: "smooth" }); };
+
+  (async function () {
+    await renderHeader("rocket");
+    renderFooter();
+    await requireLogin();
+    if (!sb) { $id("tbody").innerHTML = '<tr><td colspan="11" style="text-align:center;padding:50px;color:var(--sub);">서버 연결 후 표시됩니다.</td></tr>'; return; }
+    await loadData();
+    applyFilter();
+
+    document.querySelectorAll(".fbtn[data-f]").forEach((btn) => {
+      btn.addEventListener("click", function () {
+        const f = this.dataset.f;
+        document.querySelectorAll('.fbtn[data-f="' + f + '"]').forEach((b) => b.classList.remove("on"));
+        this.classList.add("on");
+        filters[f] = this.dataset.v;
+        applyFilter();
+      });
+    });
+    $id("btn-q").addEventListener("click", () => { filters.q = $id("q").value.trim(); applyFilter(); });
+    $id("q").addEventListener("keydown", (e) => { if (e.key === "Enter") { filters.q = $id("q").value.trim(); applyFilter(); } });
+  })();
+</script>
+</body>
+</html>
