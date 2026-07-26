@@ -6,6 +6,7 @@
 <title>오늘 뜨는 채널 — 인비랩</title>
 <link rel="stylesheet" href="assets/css/style.css">
 <style>
+  /* 영상 랭킹 공통 */
   .rank-item{display:flex;align-items:center;gap:18px;padding:18px 8px;border-bottom:1px solid var(--line);}
   .rank-item:hover{background:#f8fafc;}
   .rank-no{font-size:22px;font-weight:800;color:var(--blue);width:44px;text-align:center;flex-shrink:0;}
@@ -17,10 +18,37 @@
   .rank-main .sub{font-size:16.5px;color:var(--sub);margin-top:2px;}
   .rank-right{text-align:right;flex-shrink:0;}
   .rank-right b{display:block;font-size:19px;color:var(--ink);}
-  .rank-right .up{color:#dc2626;font-weight:700;font-size:16px;}
   .rank-right .lbl{font-size:14.5px;color:var(--sub);}
-  .short-badge{display:inline-block;background:#fee2e2;color:#b91c1c;font-size:13.5px;font-weight:700;padding:2px 8px;border-radius:8px;margin-left:6px;vertical-align:middle;}
   .update-info{font-size:16px;color:var(--sub);margin-bottom:14px;}
+
+  /* 채널 랭킹 (튜브랩식) */
+  .ch-row{display:flex;align-items:center;gap:16px;padding:20px 8px;border-bottom:1px solid var(--line);flex-wrap:wrap;}
+  .ch-row:hover{background:#f8fafc;}
+  .ch-info{display:flex;align-items:center;gap:12px;min-width:250px;flex:1;}
+  .ch-info img{width:56px;height:56px;border-radius:50%;object-fit:cover;background:var(--bg-soft);flex-shrink:0;}
+  .ch-name{font-size:18.5px;font-weight:700;cursor:pointer;}
+  .ch-name:hover{color:var(--blue);}
+  .ch-meta{font-size:15px;color:var(--sub);margin-top:2px;}
+  .grade{display:inline-block;min-width:26px;text-align:center;font-size:14px;font-weight:800;color:#fff;border-radius:8px;padding:2px 7px;margin-right:6px;vertical-align:middle;}
+  .grade.S{background:#f59e0b}.grade.A{background:#2563eb}.grade.B{background:#16a34a}.grade.C{background:#64748b}.grade.D{background:#cbd5e1;color:#475569}
+  .tag{display:inline-block;font-size:13.5px;font-weight:700;padding:2px 9px;border-radius:999px;background:#eff6ff;color:var(--blue-dark);margin-left:6px;vertical-align:middle;}
+  .ch-stats{text-align:right;width:150px;flex-shrink:0;}
+  .ch-stats .views{font-size:19px;font-weight:800;}
+  .ch-stats .delta{font-size:14.5px;color:#dc2626;font-weight:700;}
+  .ch-stats .money{font-size:16.5px;color:#16a34a;font-weight:800;margin-top:2px;}
+  .ch-stats .lbl{font-size:13.5px;color:var(--sub);}
+  .ch-videos{display:flex;gap:8px;flex-shrink:0;}
+  .ch-videos a{display:block;position:relative;width:92px;height:52px;border-radius:8px;overflow:hidden;background:var(--bg-soft);}
+  .ch-videos img{width:100%;height:100%;object-fit:cover;}
+  .ch-videos .v{position:absolute;left:0;right:0;bottom:0;background:rgba(15,23,42,.75);color:#fff;font-size:11.5px;text-align:center;padding:1px 0;}
+  /* 필터 바 */
+  .filter-bar{background:var(--bg-soft);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:18px;}
+  .filter-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+  .filter-row:last-child{margin-bottom:0;}
+  .filter-row .flabel{font-size:15.5px;font-weight:700;color:var(--sub);width:74px;flex-shrink:0;}
+  .fbtn{padding:7px 15px;border-radius:999px;border:2px solid var(--line);background:#fff;font-size:15.5px;font-weight:700;cursor:pointer;color:var(--sub);font-family:inherit;}
+  .fbtn.on{border-color:var(--blue);color:var(--blue);background:#eff6ff;}
+  @media(max-width:1000px){.ch-videos{display:none;}}
 </style>
 </head>
 <body>
@@ -40,6 +68,31 @@
       </div>
     </div>
 
+    <div class="filter-bar" id="filter-bar">
+      <div class="filter-row">
+        <span class="flabel">채널 유형</span>
+        <button class="fbtn on" data-f="type" data-v="">전체</button>
+        <button class="fbtn" data-f="type" data-v="숏폼">숏폼</button>
+        <button class="fbtn" data-f="type" data-v="롱폼">롱폼</button>
+        <button class="fbtn" data-f="type" data-v="혼합">혼합</button>
+      </div>
+      <div class="filter-row">
+        <span class="flabel">구독자</span>
+        <button class="fbtn on" data-f="subs" data-v="">전체</button>
+        <button class="fbtn" data-f="subs" data-v="0-10000">1만↓</button>
+        <button class="fbtn" data-f="subs" data-v="10000-100000">1~10만</button>
+        <button class="fbtn" data-f="subs" data-v="100000-500000">10~50만</button>
+        <button class="fbtn" data-f="subs" data-v="500000-1000000">50~100만</button>
+        <button class="fbtn" data-f="subs" data-v="1000000-999999999999">100만↑</button>
+      </div>
+      <div class="filter-row">
+        <span class="flabel">정렬</span>
+        <button class="fbtn on" data-f="sort" data-v="daily_views">조회수 증가순</button>
+        <button class="fbtn" data-f="sort" data-v="daily_subs">구독자 증가순</button>
+        <button class="fbtn" data-f="sort" data-v="subscriber_count">구독자순</button>
+      </div>
+    </div>
+
     <div class="panel">
       <div class="update-info" id="update-info"></div>
       <div id="list"><p class="empty">데이터를 불러오는 중...</p></div>
@@ -53,53 +106,140 @@
 <script src="assets/js/config.js"></script>
 <script src="assets/js/app.js"></script>
 <script>
+  // ---------- 도우미 ----------
   function fmtNum(n) {
     n = Number(n || 0);
     if (n >= 100000000) return (n / 100000000).toFixed(1).replace(/\.0$/, "") + "억";
     if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, "") + "만";
     return n.toLocaleString();
   }
+  function fmtWon(n) {
+    n = Math.round(Number(n || 0));
+    if (n >= 100000000) return (n / 100000000).toFixed(1) + "억원";
+    if (n >= 10000) return Math.round(n / 10000).toLocaleString() + "만원";
+    return n.toLocaleString() + "원";
+  }
+  // 등급: 일일 조회수 증가 기준 (자체 기준)
+  function gradeOf(dv) {
+    if (dv == null) return "";
+    if (dv >= 5000000) return "S";
+    if (dv >= 1000000) return "A";
+    if (dv >= 300000) return "B";
+    if (dv >= 100000) return "C";
+    return "D";
+  }
+  // 예상 수익: 일일 조회수 증가 × 유형별 추정 단가(원/조회수)
+  const RATE = { "숏폼": 0.15, "혼합": 0.8, "롱폼": 2.5, "": 0.8 };
 
-  function renderChannels(list, metricFn) {
-    return list.map((c, i) => `
-      <div class="rank-item">
-        <div class="rank-no">${i + 1}</div>
-        <img class="rank-thumb" src="${escapeHtml(c.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
-        <div class="rank-main">
-          <div class="name" onclick="location.href='channel.html?id=${c.id}'">${escapeHtml(c.title)}</div>
-          <div class="sub">구독자 ${fmtNum(c.subscriber_count)}명${c.daily_subs > 0 ? " · 어제보다 +" + fmtNum(c.daily_subs) : ""}</div>
-        </div>
-        <div class="rank-right">${metricFn(c)}</div>
-      </div>`).join("");
+  let allChannels = [];       // 서버에서 받아온 채널
+  let videosByChannel = {};   // 채널별 최근 영상
+  const filters = { type: "", subs: "", sort: "daily_views" };
+
+  // ---------- 채널 데이터 로드 ----------
+  async function fetchChannels() {
+    const { data } = await sb.from("channels")
+      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date")
+      .order("subscriber_count", { ascending: false })
+      .limit(300);
+    allChannels = data || [];
+  }
+
+  async function fetchVideosFor(ids) {
+    const need = ids.filter((id) => !(id in videosByChannel));
+    for (let i = 0; i < need.length; i += 60) {
+      const part = need.slice(i, i + 60);
+      const { data } = await sb.from("channel_videos")
+        .select("channel_id,video_id,title,thumbnail,view_count,is_short")
+        .in("channel_id", part)
+        .order("view_count", { ascending: false })
+        .limit(part.length * 10);
+      part.forEach((id) => { videosByChannel[id] = videosByChannel[id] || []; });
+      (data || []).forEach((v) => {
+        (videosByChannel[v.channel_id] = videosByChannel[v.channel_id] || []).push(v);
+      });
+    }
+  }
+
+  // 채널 유형: 최근 영상 중 쇼츠 비율로 판정
+  function typeOf(ch) {
+    const vids = videosByChannel[ch.id] || [];
+    if (vids.length === 0) return "";
+    const ratio = vids.filter((v) => v.is_short).length / vids.length;
+    if (ratio >= 0.8) return "숏폼";
+    if (ratio <= 0.2) return "롱폼";
+    return "혼합";
   }
 
   async function loadChannels() {
     const box = $id("list");
-    // 1순위: 어제 대비 조회수 증가(급상승) 순위
-    const { data } = await sb.from("channels")
-      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date")
-      .not("daily_views", "is", null)
-      .gt("daily_views", 0)
-      .order("daily_views", { ascending: false })
-      .limit(50);
-    if (data && data.length > 0) {
-      $id("update-info").textContent = "기준일: " + (data[0].stats_date || "") + " · 어제 대비 조회수 증가 순";
-      box.innerHTML = renderChannels(data, (c) => `<b>+${fmtNum(c.daily_views)}</b><span class="lbl">일일 조회수 증가</span>`);
+    box.innerHTML = '<p class="empty">데이터를 불러오는 중...</p>';
+    if (allChannels.length === 0) await fetchChannels();
+    if (allChannels.length === 0) {
+      box.innerHTML = '<p class="empty">아직 수집된 채널이 없습니다.</p>';
       return;
     }
-    // 2순위(데이터가 하루치뿐일 때): 구독자순으로 임시 표시
-    const { data: subs } = await sb.from("channels")
-      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date")
-      .order("subscriber_count", { ascending: false })
-      .limit(50);
-    if (!subs || subs.length === 0) {
-      box.innerHTML = '<p class="empty">아직 수집된 채널이 없습니다.<br>수집 로봇이 실행되면 표시됩니다.</p>';
+
+    // 1) 구독자 필터
+    let list = allChannels.slice();
+    if (filters.subs) {
+      const [lo, hi] = filters.subs.split("-").map(Number);
+      list = list.filter((c) => c.subscriber_count >= lo && c.subscriber_count < hi);
+    }
+    // 2) 정렬 (급상승 데이터 없으면 구독자순으로 대체)
+    const hasDaily = list.some((c) => c.daily_views != null && c.daily_views > 0);
+    const key = (!hasDaily && filters.sort !== "subscriber_count") ? "subscriber_count" : filters.sort;
+    list.sort((a, b) => Number(b[key] || 0) - Number(a[key] || 0));
+
+    // 3) 상위 120개의 영상을 불러와 유형 판정 → 유형 필터 → 상위 50개 표시
+    const top = list.slice(0, 120);
+    await fetchVideosFor(top.map((c) => c.id));
+    let rows = top.map((c) => ({ ...c, type: typeOf(c) }));
+    if (filters.type) rows = rows.filter((r) => r.type === filters.type);
+    rows = rows.slice(0, 50);
+
+    $id("update-info").textContent = hasDaily
+      ? "기준일: " + (rows[0] && rows[0].stats_date || "") + " · 등급/수익은 인비랩 자체 추정치입니다"
+      : "지금은 구독자순입니다. 데이터가 이틀 이상 쌓이면 급상승순으로 자동 전환됩니다 · 등급/수익은 자체 추정치";
+
+    if (rows.length === 0) {
+      box.innerHTML = '<p class="empty">조건에 맞는 채널이 없습니다. 필터를 바꿔보세요.</p>';
       return;
     }
-    $id("update-info").textContent = "지금은 구독자순으로 보여드려요. 데이터가 이틀 이상 쌓이면 \"급상승 순위\"로 자동 전환됩니다.";
-    box.innerHTML = renderChannels(subs, (c) => `<b>${fmtNum(c.subscriber_count)}</b><span class="lbl">구독자</span>`);
+    box.innerHTML = rows.map((c, i) => {
+      const g = gradeOf(c.daily_views);
+      const vids = (videosByChannel[c.id] || []).slice(0, 5);
+      const money = c.daily_views != null && c.daily_views > 0
+        ? fmtWon(c.daily_views * (RATE[c.type] ?? 0.8)) : null;
+      return `
+      <div class="ch-row">
+        <div class="rank-no">${i + 1}</div>
+        <div class="ch-info">
+          <img src="${escapeHtml(c.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
+          <div>
+            <div class="ch-name" onclick="location.href='channel.html?id=${c.id}'">
+              ${g ? `<span class="grade ${g}">${g}</span>` : ""}${escapeHtml(c.title)}${c.type ? `<span class="tag">${c.type}</span>` : ""}
+            </div>
+            <div class="ch-meta">구독자 ${fmtNum(c.subscriber_count)}명${c.daily_subs > 0 ? " · +" + fmtNum(c.daily_subs) : ""}</div>
+          </div>
+        </div>
+        <div class="ch-stats">
+          ${c.daily_views != null && c.daily_views > 0
+            ? `<div class="views">+${fmtNum(c.daily_views)}</div><div class="lbl">일일 조회수 증가</div>`
+            : `<div class="views">${fmtNum(c.subscriber_count)}</div><div class="lbl">구독자</div>`}
+          ${money ? `<div class="money">${money}</div><div class="lbl">일일 예상수익(추정)</div>` : ""}
+        </div>
+        <div class="ch-videos">
+          ${vids.map((v) => `
+            <a href="https://www.youtube.com/${v.is_short ? "shorts/" : "watch?v="}${v.video_id}" target="_blank" title="${escapeHtml(v.title)}">
+              <img src="${escapeHtml(v.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
+              <span class="v">${fmtNum(v.view_count)}</span>
+            </a>`).join("")}
+        </div>
+      </div>`;
+    }).join("");
   }
 
+  // ---------- 인기 영상(롱폼) / 인기 쇼츠 ----------
   function renderVideos(list, urlFn, metricFn) {
     return list.map((v, i) => `
       <div class="rank-item" style="cursor:pointer" onclick="window.open('${urlFn(v)}','_blank')">
@@ -113,22 +253,19 @@
       </div>`).join("");
   }
 
-  // 인기 영상(롱폼): 유튜브 공식 인기 급상승 차트
   async function loadVideos() {
     const box = $id("list");
     const { data: latest } = await sb.from("trending_videos")
       .select("date").order("date", { ascending: false }).limit(1);
     if (!latest || latest.length === 0) {
-      box.innerHTML = '<p class="empty">아직 수집된 영상이 없습니다.<br>수집 로봇 첫 실행 후 표시됩니다.</p>';
+      box.innerHTML = '<p class="empty">아직 수집된 영상이 없습니다.</p>';
       return;
     }
     const day = latest[0].date;
     const { data } = await sb.from("trending_videos")
       .select("video_id,title,channel_title,thumbnail,view_count")
-      .eq("date", day)
-      .eq("is_short", false)
-      .order("rank", { ascending: true })
-      .limit(60);
+      .eq("date", day).eq("is_short", false)
+      .order("rank", { ascending: true }).limit(60);
     if (!data || data.length === 0) {
       box.innerHTML = '<p class="empty">표시할 영상이 없습니다.</p>';
       return;
@@ -139,30 +276,22 @@
       (v) => `<b>${fmtNum(v.view_count)}</b><span class="lbl">조회수</span>`);
   }
 
-  // 인기 쇼츠: 인비랩이 추적하는 채널들의 진짜 쇼츠 랭킹 (자체 수집)
   async function loadShorts() {
     const box = $id("list");
-    // 1순위: 어제 대비 조회수 급상승 순
     let { data } = await sb.from("channel_videos")
       .select("video_id,title,thumbnail,view_count,daily_views,channels(title)")
-      .eq("is_short", true)
-      .not("daily_views", "is", null)
-      .gt("daily_views", 0)
-      .order("daily_views", { ascending: false })
-      .limit(50);
+      .eq("is_short", true).not("daily_views", "is", null).gt("daily_views", 0)
+      .order("daily_views", { ascending: false }).limit(50);
     let daily = true;
     if (!data || data.length === 0) {
-      // 2순위(데이터가 하루치뿐일 때): 총 조회수순
       const r = await sb.from("channel_videos")
         .select("video_id,title,thumbnail,view_count,daily_views,channels(title)")
         .eq("is_short", true)
-        .order("view_count", { ascending: false })
-        .limit(50);
-      data = r.data;
-      daily = false;
+        .order("view_count", { ascending: false }).limit(50);
+      data = r.data; daily = false;
     }
     if (!data || data.length === 0) {
-      box.innerHTML = '<p class="empty">쇼츠 데이터를 수집하는 중입니다.<br>수집 로봇이 한 번 더 실행되면 표시됩니다.</p>';
+      box.innerHTML = '<p class="empty">쇼츠 데이터를 수집하는 중입니다.</p>';
       return;
     }
     $id("update-info").textContent = daily
@@ -175,6 +304,7 @@
         : `<b>${fmtNum(v.view_count)}</b><span class="lbl">조회수</span>`);
   }
 
+  // ---------- 초기화 ----------
   (async function () {
     await renderHeader("today");
     renderFooter();
@@ -182,15 +312,28 @@
     if (!sb) { $id("list").innerHTML = '<p class="empty">서버 연결 후 표시됩니다.</p>'; return; }
     await loadChannels();
 
+    // 탭 전환
     document.querySelectorAll("#tabs .tab").forEach((btn) => {
       btn.addEventListener("click", async function () {
         document.querySelectorAll("#tabs .tab").forEach((b) => b.classList.remove("on"));
         this.classList.add("on");
-        $id("list").innerHTML = '<p class="empty">불러오는 중...</p>';
         const t = this.dataset.tab;
+        $id("filter-bar").style.display = (t === "channels") ? "block" : "none";
+        $id("list").innerHTML = '<p class="empty">불러오는 중...</p>';
         if (t === "channels") await loadChannels();
         else if (t === "videos") await loadVideos();
         else await loadShorts();
+      });
+    });
+
+    // 필터 버튼
+    document.querySelectorAll(".fbtn").forEach((btn) => {
+      btn.addEventListener("click", async function () {
+        const f = this.dataset.f;
+        document.querySelectorAll(`.fbtn[data-f=\"${f}\"]`).forEach((b) => b.classList.remove("on"));
+        this.classList.add("on");
+        filters[f] = this.dataset.v;
+        await loadChannels();
       });
     });
   })();
