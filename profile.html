@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>내 정보 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<div id="site-header"></div>
+
+<div class="page">
+  <div class="wrap" style="max-width:640px;">
+    <h1 class="page-title">내 정보</h1>
+    <p class="page-desc">계정 정보를 확인하고 닉네임을 바꿀 수 있습니다.</p>
+
+    <div class="panel">
+      <div class="field">
+        <label>이메일</label>
+        <input type="text" id="email" disabled>
+      </div>
+      <div class="field">
+        <label for="nickname">닉네임</label>
+        <input type="text" id="nickname" maxlength="12">
+        <div class="hint">커뮤니티에서 보이는 이름입니다.</div>
+      </div>
+      <div class="field">
+        <label>요금제</label>
+        <input type="text" id="plan" disabled value="무료 플랜">
+      </div>
+      <div id="pf-msg" class="msg"></div>
+      <button class="btn btn-main" id="btn-save">저장하기</button>
+    </div>
+  </div>
+</div>
+
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  (async function () {
+    await renderHeader("");
+    renderFooter();
+    const user = await requireLogin();
+    if (!user) return;
+
+    $id("email").value = user.email || "";
+    $id("nickname").value = getNickname(user);
+
+    $id("btn-save").addEventListener("click", async function () {
+      const nickname = $id("nickname").value.trim();
+      if (!nickname) return showMsg("pf-msg", "닉네임을 입력해 주세요.");
+      this.disabled = true;
+      const { error } = await sb.auth.updateUser({ data: { nickname } });
+      this.disabled = false;
+      if (error) return showMsg("pf-msg", "저장에 실패했습니다.");
+      showMsg("pf-msg", "저장되었습니다!", "ok");
+      renderHeader("");
+    });
+  })();
+</script>
+</body>
+</html>

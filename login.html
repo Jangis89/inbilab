@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>로그인 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<div id="site-header"></div>
+
+<div class="auth-bg">
+  <div class="auth-card">
+    <h1>로그인</h1>
+    <p class="sub">다시 오신 것을 환영합니다.</p>
+
+    <div class="field">
+      <label for="email">이메일</label>
+      <input type="email" id="email" placeholder="example@naver.com">
+    </div>
+    <div class="field">
+      <label for="password">비밀번호</label>
+      <input type="password" id="password" placeholder="비밀번호">
+    </div>
+
+    <div id="login-msg" class="msg"></div>
+    <button class="btn btn-main" id="btn-login">로그인</button>
+
+    <div class="auth-alt">아직 회원이 아니신가요? <a href="register.html">무료로 가입하기</a></div>
+  </div>
+</div>
+
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  renderHeader("");
+  renderFooter();
+
+  async function doLogin() {
+    const email = $id("email").value.trim();
+    const password = $id("password").value;
+    if (!email || !password) return showMsg("login-msg", "이메일과 비밀번호를 입력해 주세요.");
+    if (!sb) return showMsg("login-msg", "아직 서버 연결 전입니다(미리보기 모드).");
+
+    $id("btn-login").disabled = true;
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    $id("btn-login").disabled = false;
+
+    if (error) return showMsg("login-msg", "이메일 또는 비밀번호가 맞지 않습니다.");
+    const next = new URLSearchParams(location.search).get("next") || "dashboard.html";
+    location.href = next;
+  }
+
+  $id("btn-login").addEventListener("click", doLogin);
+  $id("password").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+</script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>새 글 쓰기 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<div id="site-header"></div>
+
+<div class="page">
+  <div class="wrap" style="max-width:820px;">
+    <h1 class="page-title">새 글 쓰기</h1>
+    <p class="page-desc">성장 기록실에 글을 남깁니다.</p>
+
+    <div class="panel editor">
+      <div class="field">
+        <label for="category">글 종류</label>
+        <div class="tabs" id="cat-tabs">
+          <button class="tab on" data-v="자유">자유</button>
+          <button class="tab" data-v="수익 인증">수익 인증</button>
+          <button class="tab" data-v="구독자 성장">구독자 성장</button>
+          <button class="tab" data-v="후기">후기</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="title">제목</label>
+        <input type="text" id="title" placeholder="제목을 입력하세요" maxlength="100">
+      </div>
+      <div class="field">
+        <label for="content">내용</label>
+        <textarea id="content" placeholder="내용을 자유롭게 적어주세요."></textarea>
+      </div>
+
+      <div id="write-msg" class="msg"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <a class="btn btn-ghost" href="community.html">취소</a>
+        <button class="btn btn-main" id="btn-submit">등록하기</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  let curUser = null;
+  let curCat = "자유";
+
+  (async function () {
+    await renderHeader("community");
+    renderFooter();
+    curUser = await requireLogin();
+
+    document.querySelectorAll("#cat-tabs .tab").forEach((btn) => {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll("#cat-tabs .tab").forEach((b) => b.classList.remove("on"));
+        this.classList.add("on");
+        curCat = this.dataset.v;
+      });
+    });
+
+    $id("btn-submit").addEventListener("click", async function () {
+      const title = $id("title").value.trim();
+      const content = $id("content").value.trim();
+      if (!title) return showMsg("write-msg", "제목을 입력해 주세요.");
+      if (!content) return showMsg("write-msg", "내용을 입력해 주세요.");
+      if (!sb || !curUser) return showMsg("write-msg", "로그인 후 이용할 수 있습니다.");
+
+      this.disabled = true;
+      const { data, error } = await sb.from("posts").insert({
+        board: "community",
+        category: curCat,
+        title: title,
+        content: content,
+        author_id: curUser.id,
+        author_nick: getNickname(curUser),
+      }).select("id").single();
+      this.disabled = false;
+
+      if (error) return showMsg("write-msg", "등록에 실패했습니다: " + error.message);
+      location.href = "post.html?id=" + data.id;
+    });
+  })();
+</script>
+</body>
+</html>

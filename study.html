@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>학습자료 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<div id="site-header"></div>
+
+<div class="page">
+  <div class="wrap">
+    <h1 class="page-title">학습자료 게시판</h1>
+    <p class="page-desc">강의 자료와 공지를 확인하세요. (운영자가 올리는 게시판입니다)</p>
+
+    <div class="panel">
+      <ul class="post-list" id="posts">
+        <li class="empty">자료를 불러오는 중...</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  (async function () {
+    await renderHeader("study");
+    renderFooter();
+    await requireLogin();
+
+    const box = $id("posts");
+    if (!sb) {
+      box.innerHTML = '<li class="empty">서버 연결 후 실제 자료가 표시됩니다.</li>';
+      return;
+    }
+    const { data, error } = await sb.from("posts")
+      .select("id,title,category,author_nick,created_at,views")
+      .eq("board", "study")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (error || !data || data.length === 0) {
+      box.innerHTML = '<li class="empty">아직 등록된 자료가 없습니다.</li>';
+      return;
+    }
+    box.innerHTML = data.map((p) => `
+      <li class="post-item" onclick="location.href='post.html?id=${p.id}'">
+        <div>
+          <div class="t"><span class="cat">${escapeHtml(p.category || "자료")}</span>${escapeHtml(p.title)}</div>
+          <div class="meta">${escapeHtml(p.author_nick || "운영자")} · ${fmtDate(p.created_at)}</div>
+        </div>
+        <div class="right">조회 ${p.views || 0}</div>
+      </li>`).join("");
+  })();
+</script>
+</body>
+</html>

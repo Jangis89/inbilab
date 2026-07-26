@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>회원가입 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<div id="site-header"></div>
+
+<div class="auth-bg">
+  <div class="auth-card">
+    <h1>무료로 시작하기</h1>
+    <p class="sub">1분이면 끝납니다. 카드 등록도 없습니다.</p>
+
+    <div class="field">
+      <label for="nickname">닉네임 (커뮤니티에서 보이는 이름)</label>
+      <input type="text" id="nickname" placeholder="예: 쇼츠새내기" maxlength="12">
+    </div>
+    <div class="field">
+      <label for="email">이메일</label>
+      <input type="email" id="email" placeholder="example@naver.com">
+    </div>
+    <div class="field">
+      <label for="password">비밀번호</label>
+      <input type="password" id="password" placeholder="6자 이상">
+      <div class="hint">영문·숫자를 섞어 6자 이상 입력해 주세요.</div>
+    </div>
+
+    <div id="reg-msg" class="msg"></div>
+    <button class="btn btn-main" id="btn-register">가입하기</button>
+
+    <div class="auth-alt">이미 계정이 있으신가요? <a href="login.html">로그인</a></div>
+  </div>
+</div>
+
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  renderHeader("");
+  renderFooter();
+
+  $id("btn-register").addEventListener("click", async function () {
+    const nickname = $id("nickname").value.trim();
+    const email = $id("email").value.trim();
+    const password = $id("password").value;
+
+    if (!nickname) return showMsg("reg-msg", "닉네임을 입력해 주세요.");
+    if (!email || !email.includes("@")) return showMsg("reg-msg", "이메일을 정확히 입력해 주세요.");
+    if (password.length < 6) return showMsg("reg-msg", "비밀번호는 6자 이상이어야 합니다.");
+    if (!sb) return showMsg("reg-msg", "아직 서버 연결 전입니다(미리보기 모드).");
+
+    this.disabled = true;
+    const { error } = await sb.auth.signUp({
+      email: email,
+      password: password,
+      options: { data: { nickname: nickname } }
+    });
+    this.disabled = false;
+
+    if (error) {
+      const t = error.message.includes("already registered")
+        ? "이미 가입된 이메일입니다. 로그인해 주세요."
+        : "가입에 실패했습니다: " + error.message;
+      return showMsg("reg-msg", t);
+    }
+    showMsg("reg-msg", "가입 완료! 잠시 후 홈으로 이동합니다.", "ok");
+    setTimeout(() => (location.href = "dashboard.html"), 1200);
+  });
+</script>
+</body>
+</html>

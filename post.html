@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>글 보기 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<div id="site-header"></div>
+
+<div class="page">
+  <div class="wrap" style="max-width:860px;">
+    <div class="panel post-view" id="post-box">
+      <p class="empty">글을 불러오는 중...</p>
+    </div>
+
+    <div class="panel comments" style="margin-top:20px;">
+      <h3 id="cmt-title">댓글</h3>
+      <div id="comments"></div>
+      <div class="comment-form">
+        <input type="text" id="cmt-input" placeholder="따뜻한 댓글을 남겨주세요" maxlength="500">
+        <button class="btn btn-main btn-sm" id="btn-cmt">등록</button>
+      </div>
+      <div id="cmt-msg" class="msg"></div>
+    </div>
+
+    <div style="margin-top:20px;display:flex;justify-content:space-between;">
+      <a class="btn btn-ghost" href="community.html">← 목록으로</a>
+      <button class="btn btn-danger btn-sm" id="btn-del" style="display:none;">글 삭제</button>
+    </div>
+  </div>
+</div>
+
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  const postId = new URLSearchParams(location.search).get("id");
+  let curUser = null;
+
+  async function loadComments() {
+    if (!sb) return;
+    const { data } = await sb.from("comments")
+      .select("id,author_nick,content,created_at")
+      .eq("post_id", postId)
+      .order("created_at", { ascending: true });
+    const list = data || [];
+    $id("cmt-title").textContent = "댓글 " + list.length + "개";
+    $id("comments").innerHTML = list.map((c) => `
+      <div class="comment">
+        <span class="who">${escapeHtml(c.author_nick || "회원")}</span>
+        <span class="when">${fmtDate(c.created_at)}</span>
+        <div class="body">${escapeHtml(c.content)}</div>
+      </div>`).join("") || '<p style="color:var(--sub);font-size:17px;">첫 댓글을 남겨보세요.</p>';
+  }
+
+  (async function () {
+    await renderHeader("community");
+    renderFooter();
+    curUser = sb ? await getUser() : null;
+
+    if (!sb || !postId) {
+      $id("post-box").innerHTML = '<p class="empty">서버 연결 후 글을 볼 수 있습니다.</p>';
+      return;
+    }
+
+    // 글 불러오기
+    const { data: p, error } = await sb.from("posts")
+      .select("*").eq("id", postId).single();
+    if (error || !p) {
+      $id("post-box").innerHTML = '<p class="empty">글을 찾을 수 없습니다.</p>';
+      return;
+    }
+    $id("post-box").innerHTML = `
+      <h1>${escapeHtml(p.title)}</h1>
+      <div class="meta">
+        <span class="cat" style="color:var(--blue);font-weight:700;">[${escapeHtml(p.category || "자유")}]</span>
+        ${escapeHtml(p.author_nick || "회원")} · ${fmtDate(p.created_at)} · 조회 ${(p.views || 0) + 1}
+      </div>
+      <div class="content">${escapeHtml(p.content)}</div>`;
+
+    // 조회수 +1 (전용 함수 호출)
+    sb.rpc("increment_views", { post_id_input: Number(postId) });
+
+    // 내 글이면 삭제 버튼 표시
+    if (curUser && curUser.id === p.author_id) {
+      const del = $id("btn-del");
+      del.style.display = "inline-block";
+      del.addEventListener("click", async () => {
+        if (!confirm("이 글을 삭제할까요?")) return;
+        await sb.from("posts").delete().eq("id", postId);
+        location.href = "community.html";
+      });
+    }
+
+    await loadComments();
+
+    $id("btn-cmt").addEventListener("click", async function () {
+      const content = $id("cmt-input").value.trim();
+      if (!content) return;
+      if (!curUser) return showMsg("cmt-msg", "댓글은 로그인 후 쓸 수 있습니다.");
+      this.disabled = true;
+      const { error } = await sb.from("comments").insert({
+        post_id: Number(postId),
+        author_id: curUser.id,
+        author_nick: getNickname(curUser),
+        content: content,
+      });
+      this.disabled = false;
+      if (error) return showMsg("cmt-msg", "댓글 등록에 실패했습니다.");
+      $id("cmt-input").value = "";
+      await loadComments();
+    });
+  })();
+</script>
+</body>
+</html>

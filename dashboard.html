@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>홈 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<div id="site-header"></div>
+
+<div class="page">
+  <div class="wrap">
+    <h1 class="page-title" id="welcome">환영합니다!</h1>
+    <p class="page-desc">오늘도 한 걸음 성장해 볼까요?</p>
+
+    <div class="quick">
+      <a href="community.html">
+        <span class="qicon">🏆</span>
+        <b>성장 기록실</b>
+        <span>수익 인증 · 성장 후기</span>
+      </a>
+      <a href="study.html">
+        <span class="qicon">📚</span>
+        <b>학습자료</b>
+        <span>강의 자료 모음</span>
+      </a>
+      <a href="javascript:alert('2단계에서 열리는 기능입니다. 조금만 기다려주세요!')">
+        <span class="qicon">🚀</span>
+        <b>오늘 뜨는 채널 <span class="badge-soon">준비중</span></b>
+        <span>매일 갱신 급상승 랭킹</span>
+      </a>
+    </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h3>성장 기록실 최신글</h3>
+        <ul class="post-list" id="latest-posts">
+          <li class="empty">글을 불러오는 중...</li>
+        </ul>
+        <div style="text-align:center;margin-top:16px;">
+          <a class="btn btn-ghost btn-sm" href="community.html">전체 보기</a>
+        </div>
+      </div>
+      <div class="panel soft">
+        <h3>💬 궁금한 게 있으세요?</h3>
+        <p style="font-size:18px;color:var(--sub);margin-bottom:16px;">
+          사용법이든 유튜브 질문이든, 무엇이든 물어보세요.
+          오른쪽 아래 대화 버튼이 곧 생길 예정입니다. (채널톡 연동 예정)
+        </p>
+        <h3 style="margin-top:24px;">📌 시작 안내</h3>
+        <p style="font-size:18px;color:var(--sub);">
+          ① 성장 기록실에서 다른 분들의 후기를 구경해 보세요.<br>
+          ② 첫 인사 글을 남겨보세요.<br>
+          ③ 학습자료에서 강의 자료를 확인하세요.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  (async function () {
+    await renderHeader("dashboard");
+    renderFooter();
+    const user = await requireLogin();
+    if (user) $id("welcome").textContent = getNickname(user) + " 님, 환영합니다!";
+
+    // 최신글 5개
+    const box = $id("latest-posts");
+    if (!sb) {
+      box.innerHTML = '<li class="empty">서버 연결 후 실제 글이 표시됩니다.</li>';
+      return;
+    }
+    const { data, error } = await sb
+      .from("posts")
+      .select("id,title,category,author_nick,created_at,views")
+      .eq("board", "community")
+      .order("created_at", { ascending: false })
+      .limit(5);
+    if (error || !data || data.length === 0) {
+      box.innerHTML = '<li class="empty">아직 글이 없습니다. 첫 글을 남겨보세요!</li>';
+      return;
+    }
+    box.innerHTML = data.map((p) => `
+      <li class="post-item" onclick="location.href='post.html?id=${p.id}'">
+        <div>
+          <div class="t"><span class="cat">${escapeHtml(p.category || "후기")}</span>${escapeHtml(p.title)}</div>
+          <div class="meta">${escapeHtml(p.author_nick || "회원")} · ${fmtDate(p.created_at)}</div>
+        </div>
+        <div class="right">조회 ${p.views || 0}</div>
+      </li>`).join("");
+  })();
+</script>
+</body>
+</html>
