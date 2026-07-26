@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>관심 채널 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  .fav-row{display:flex;align-items:center;gap:16px;padding:18px 8px;border-bottom:1px solid var(--line);}
+  .fav-row:hover{background:#f8fafc;}
+  .fav-row img{width:56px;height:56px;border-radius:50%;object-fit:cover;background:var(--bg-soft);}
+  .fav-main{flex:1;min-width:0;}
+  .fav-main .nm{font-size:19px;font-weight:700;cursor:pointer;}
+  .fav-main .nm:hover{color:var(--blue);}
+  .fav-main .meta{font-size:16px;color:var(--sub);margin-top:2px;}
+  .fav-right{text-align:right;flex-shrink:0;}
+  .fav-right b{display:block;font-size:18px;}
+  .fav-right .lbl{font-size:14px;color:var(--sub);}
+</style>
+</head>
+<body>
+
+<div id="site-header"></div>
+
+<div class="page">
+  <div class="wrap">
+    <h1 class="page-title">관심 채널 ⭐</h1>
+    <p class="page-desc">별표로 저장해 둔 채널을 한곳에서 지켜봅니다. 채널 분석 화면에서 추가할 수 있어요.</p>
+
+    <div class="panel">
+      <div id="list"><p class="empty">불러오는 중...</p></div>
+    </div>
+  </div>
+</div>
+
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  function fmtNum(n) {
+    n = Number(n || 0);
+    if (n >= 100000000) return (n / 100000000).toFixed(1).replace(/\.0$/, "") + "억";
+    if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, "") + "만";
+    return n.toLocaleString();
+  }
+
+  async function load() {
+    const box = $id("list");
+    const { data, error } = await sb.from("favorites")
+      .select("channel_id, channels(id,title,thumbnail,subscriber_count,daily_views,daily_subs)")
+      .order("created_at", { ascending: false });
+    if (error) { box.innerHTML = '<p class="empty">불러오지 못했습니다.</p>'; return; }
+    const list = (data || []).map((r) => r.channels).filter(Boolean);
+    if (list.length === 0) {
+      box.innerHTML = '<p class="empty">아직 관심 채널이 없습니다.<br>채널 분석에서 채널을 연 뒤 "☆ 관심 채널" 버튼을 눌러보세요.</p>';
+      return;
+    }
+    box.innerHTML = list.map((c) => `
+      <div class="fav-row">
+        <img src="${escapeHtml(c.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
+        <div class="fav-main">
+          <div class="nm" onclick="location.href='channel.html?id=${c.id}'">${escapeHtml(c.title)}</div>
+          <div class="meta">구독자 ${fmtNum(c.subscriber_count)}명${c.daily_subs > 0 ? " · 어제보다 +" + fmtNum(c.daily_subs) : ""}</div>
+        </div>
+        <div class="fav-right">
+          ${c.daily_views > 0 ? `<b style="color:#dc2626;">+${fmtNum(c.daily_views)}</b><span class="lbl">일일 조회수 증가</span>` : `<b>${fmtNum(c.subscriber_count)}</b><span class="lbl">구독자</span>`}
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="removeFav('${c.id}')">해제</button>
+      </div>`).join("");
+  }
+
+  window.removeFav = async function (id) {
+    await sb.from("favorites").delete().eq("channel_id", id);
+    load();
+  };
+
+  (async function () {
+    await renderHeader("favorites");
+    renderFooter();
+    const user = await requireLogin();
+    if (!sb || !user) return;
+    await load();
+  })();
+</script>
+</body>
+</html>
