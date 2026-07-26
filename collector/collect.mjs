@@ -197,6 +197,96 @@ async function main() {
     });
   }
   console.log("채널 정보/일일 기록 저장 완료");
+
+  // ========== 6. 채널별 최근 영상 수집 (쇼츠 랭킹의 재료) ==========
+  // 구독자 많은 순으로 최대 400개 채널의 최근 업로드를 확인
+  const targetChannels = chRows
+    .slice()
+    .sort((a, b) => b.subscriber_count - a.subscriber_count)
+    .slice(0, 400);
+
+  // 이미 판별해 둔 영상은 다시 검사하지 않음
+  const known = await sbFetch("channel_videos?select=video_id,is_short&limit=20000");
+  const knownMap = new Map(known.map((r) => [r.video_id, r.is_short]));
+
+  const cutoff = Date.now() - 30 * 86400 * 1000; // 최근 30일 영상만
+  const candidateIds = [];
+  for (const ch of targetChannels) {
+    const uploadsPlaylist = "UU" + ch.id.slice(2); // 채널의 업로드 목록 ID
+    try {
+      const pl = await ytFetch("playlistItems", {
+        part: "contentDetails",
+        playlistId: uploadsPlaylist,
+        maxResults: "10",
+      });
+      for (const it of pl.items || []) {
+        const vid = it.contentDetails?.videoId;
+        const pub = new Date(it.contentDetails?.videoPublishedAt || 0).getTime();
+        if (vid && pub > cutoff) candidateIds.push(vid);
+      }
+    } catch { /* 업로드 목록이 없는 채널은 건너뜀 */ }
+  }
+  console.log(`채널 영상 후보: ${candidateIds.length}개`);
+
+  const vstats = [];
+  for (const ids of chunk(candidateIds, 50)) {
+    const data = await ytFetch("videos", {
+      part: "snippet,statistics,contentDetails",
+      id: ids.join(","),
+      maxResults: "50",
+    });
+    vstats.push(...(data.items || []));
+  }
+
+  const yv = await sbFetch(
+    `video_snapshots?select=video_id,view_count&date=eq.${YESTERDAY}&limit=20000`
+  );
+  const yvMap = new Map(yv.map((r) => [r.video_id, Number(r.view_count)]));
+
+  const videoRows = [];
+  const vSnapRows = [];
+  let newlyChecked = 0;
+  for (const v of vstats) {
+    const dur = durationSec(v.contentDetails?.duration);
+    let isShort;
+    if (knownMap.has(v.id)) {
+      isShort = knownMap.get(v.id);
+    } else if (dur === 0 || dur > 190) {
+      isShort = false;
+    } else {
+      const real = await checkRealShort(v.id);
+      newlyChecked++;
+      isShort = real === null ? dur <= 60 : real;
+    }
+    const views = Number(v.statistics?.viewCount || 0);
+    const y = yvMap.get(v.id);
+    videoRows.push({
+      video_id: v.id,
+      channel_id: v.snippet?.channelId || null,
+      title: (v.snippet?.title || "").slice(0, 300),
+      thumbnail: v.snippet?.thumbnails?.medium?.url || "",
+      published_at: v.snippet?.publishedAt || null,
+      duration_sec: dur,
+      is_short: isShort,
+      view_count: views,
+      like_count: Number(v.statistics?.likeCount || 0),
+      daily_views: y != null ? views - y : null,
+      stats_date: TODAY,
+    });
+    vSnapRows.push({ video_id: v.id, date: TODAY, view_count: views });
+  }
+  for (const part of chunk(videoRows, 200)) {
+    await sbFetch("channel_videos?on_conflict=video_id", {
+      method: "POST", body: part, prefer: "resolution=merge-duplicates",
+    });
+  }
+  for (const part of chunk(vSnapRows, 200)) {
+    await sbFetch("video_snapshots?on_conflict=video_id,date", {
+      method: "POST", body: part, prefer: "resolution=merge-duplicates",
+    });
+  }
+  const shortCount = videoRows.filter((r) => r.is_short).length;
+  console.log(`채널 영상 ${videoRows.length}개 저장 (쇼츠 ${shortCount}개, 새로 판별 ${newlyChecked}개)`);
   console.log("[인비랩 수집 로봇] 정상 종료 ✅");
 }
 
