@@ -3,31 +3,47 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>로그인 — 인비랩</title>
+<title>오늘 뜨는 채널 — 인비랩</title>
 <link rel="stylesheet" href="assets/css/style.css">
+<style>
+  .rank-item{display:flex;align-items:center;gap:18px;padding:18px 8px;border-bottom:1px solid var(--line);}
+  .rank-item:hover{background:#f8fafc;}
+  .rank-no{font-size:22px;font-weight:800;color:var(--blue);width:44px;text-align:center;flex-shrink:0;}
+  .rank-thumb{width:64px;height:64px;border-radius:50%;object-fit:cover;flex-shrink:0;background:var(--bg-soft);}
+  .rank-thumb.video{width:120px;height:68px;border-radius:10px;}
+  .rank-main{flex:1;min-width:0;}
+  .rank-main .name{font-size:20px;font-weight:700;cursor:pointer;}
+  .rank-main .name:hover{color:var(--blue);}
+  .rank-main .sub{font-size:16.5px;color:var(--sub);margin-top:2px;}
+  .rank-right{text-align:right;flex-shrink:0;}
+  .rank-right b{display:block;font-size:19px;color:var(--ink);}
+  .rank-right .up{color:#dc2626;font-weight:700;font-size:16px;}
+  .rank-right .lbl{font-size:14.5px;color:var(--sub);}
+  .short-badge{display:inline-block;background:#fee2e2;color:#b91c1c;font-size:13.5px;font-weight:700;padding:2px 8px;border-radius:8px;margin-left:6px;vertical-align:middle;}
+  .update-info{font-size:16px;color:var(--sub);margin-bottom:14px;}
+</style>
 </head>
 <body>
 
 <div id="site-header"></div>
 
-<div class="auth-bg">
-  <div class="auth-card">
-    <h1>로그인</h1>
-    <p class="sub">다시 오신 것을 환영합니다.</p>
+<div class="page">
+  <div class="wrap">
+    <h1 class="page-title">오늘 뜨는 채널 🚀</h1>
+    <p class="page-desc">매일 새벽 자동으로 갱신되는 대한민국 급상승 채널과 인기 영상입니다.</p>
 
-    <div class="field">
-      <label for="email">이메일</label>
-      <input type="email" id="email" placeholder="example@naver.com">
+    <div class="board-tools">
+      <div class="tabs" id="tabs">
+        <button class="tab on" data-tab="channels">뜨는 채널</button>
+        <button class="tab" data-tab="videos">인기 영상</button>
+        <button class="tab" data-tab="shorts">인기 쇼츠</button>
+      </div>
     </div>
-    <div class="field">
-      <label for="password">비밀번호</label>
-      <input type="password" id="password" placeholder="비밀번호">
+
+    <div class="panel">
+      <div class="update-info" id="update-info"></div>
+      <div id="list"><p class="empty">데이터를 불러오는 중...</p></div>
     </div>
-
-    <div id="login-msg" class="msg"></div>
-    <button class="btn btn-main" id="btn-login">로그인</button>
-
-    <div class="auth-alt">아직 회원이 아니신가요? <a href="register.html">무료로 가입하기</a></div>
   </div>
 </div>
 
@@ -37,32 +53,97 @@
 <script src="assets/js/config.js"></script>
 <script src="assets/js/app.js"></script>
 <script>
-  renderHeader("");
-  renderFooter();
-
-  async function doLogin() {
-    const email = $id("email").value.trim();
-    const password = $id("password").value;
-    if (!email || !password) return showMsg("login-msg", "이메일과 비밀번호를 입력해 주세요.");
-    if (!sb) return showMsg("login-msg", "아직 서버 연결 전입니다(미리보기 모드).");
-
-    $id("btn-login").disabled = true;
-    const { error } = await sb.auth.signInWithPassword({ email, password });
-    $id("btn-login").disabled = false;
-
-    if (error) {
-      let t = "이메일 또는 비밀번호가 맞지 않습니다.";
-      if ((error.message || "").includes("Email not confirmed")) {
-        t = "이메일 확인이 완료되지 않은 계정입니다. 가입 시 받은 확인 메일을 눌러주세요.";
-      }
-      return showMsg("login-msg", t);
-    }
-    const next = new URLSearchParams(location.search).get("next") || "dashboard.html";
-    location.href = next;
+  function fmtNum(n) {
+    n = Number(n || 0);
+    if (n >= 100000000) return (n / 100000000).toFixed(1).replace(/\.0$/, "") + "억";
+    if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, "") + "만";
+    return n.toLocaleString();
   }
 
-  $id("btn-login").addEventListener("click", doLogin);
-  $id("password").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+  async function loadChannels() {
+    const box = $id("list");
+    const { data, error } = await sb.from("channels")
+      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date")
+      .not("daily_views", "is", null)
+      .gt("daily_views", 0)
+      .order("daily_views", { ascending: false })
+      .limit(50);
+    if (error || !data || data.length === 0) {
+      box.innerHTML = '<p class="empty">아직 수집된 데이터가 없습니다.<br>수집 로봇이 처음 실행된 다음 날부터 순위가 표시됩니다.</p>';
+      return;
+    }
+    $id("update-info").textContent = "기준일: " + (data[0].stats_date || "") + " · 어제 대비 조회수 증가 순";
+    box.innerHTML = data.map((c, i) => `
+      <div class="rank-item">
+        <div class="rank-no">${i + 1}</div>
+        <img class="rank-thumb" src="${escapeHtml(c.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
+        <div class="rank-main">
+          <div class="name" onclick="location.href='channel.html?id=${c.id}'">${escapeHtml(c.title)}</div>
+          <div class="sub">구독자 ${fmtNum(c.subscriber_count)}명${c.daily_subs > 0 ? " · 어제보다 +" + fmtNum(c.daily_subs) : ""}</div>
+        </div>
+        <div class="rank-right">
+          <b>+${fmtNum(c.daily_views)}</b>
+          <span class="lbl">일일 조회수 증가</span>
+        </div>
+      </div>`).join("");
+  }
+
+  async function loadVideos(onlyShorts) {
+    const box = $id("list");
+    // 가장 최근 수집일 찾기
+    const { data: latest } = await sb.from("trending_videos")
+      .select("date").order("date", { ascending: false }).limit(1);
+    if (!latest || latest.length === 0) {
+      box.innerHTML = '<p class="empty">아직 수집된 영상이 없습니다.<br>수집 로봇 첫 실행 후 표시됩니다.</p>';
+      return;
+    }
+    const day = latest[0].date;
+    let q = sb.from("trending_videos")
+      .select("video_id,title,channel_title,thumbnail,view_count,is_short,rank")
+      .eq("date", day)
+      .order("rank", { ascending: true })
+      .limit(60);
+    if (onlyShorts) q = q.eq("is_short", true);
+    const { data, error } = await q;
+    if (error || !data || data.length === 0) {
+      box.innerHTML = '<p class="empty">표시할 영상이 없습니다.</p>';
+      return;
+    }
+    $id("update-info").textContent = "기준일: " + day + " · 유튜브 대한민국 인기 순위";
+    box.innerHTML = data.map((v, i) => `
+      <div class="rank-item" style="cursor:pointer" onclick="window.open('https://www.youtube.com/watch?v=${v.video_id}','_blank')">
+        <div class="rank-no">${i + 1}</div>
+        <img class="rank-thumb video" src="${escapeHtml(v.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
+        <div class="rank-main">
+          <div class="name">${escapeHtml(v.title)}${v.is_short ? '<span class="short-badge">쇼츠</span>' : ""}</div>
+          <div class="sub">${escapeHtml(v.channel_title)}</div>
+        </div>
+        <div class="rank-right">
+          <b>${fmtNum(v.view_count)}</b>
+          <span class="lbl">조회수</span>
+        </div>
+      </div>`).join("");
+  }
+
+  (async function () {
+    await renderHeader("today");
+    renderFooter();
+    await requireLogin();
+    if (!sb) { $id("list").innerHTML = '<p class="empty">서버 연결 후 표시됩니다.</p>'; return; }
+    await loadChannels();
+
+    document.querySelectorAll("#tabs .tab").forEach((btn) => {
+      btn.addEventListener("click", async function () {
+        document.querySelectorAll("#tabs .tab").forEach((b) => b.classList.remove("on"));
+        this.classList.add("on");
+        $id("list").innerHTML = '<p class="empty">불러오는 중...</p>';
+        const t = this.dataset.tab;
+        if (t === "channels") await loadChannels();
+        else if (t === "videos") await loadVideos(false);
+        else await loadVideos(true);
+      });
+    });
+  })();
 </script>
 </body>
 </html>

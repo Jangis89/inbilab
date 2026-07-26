@@ -1,29 +1,105 @@
-# ============================================
-# 인비랩 수집 로봇 자동 실행 설정
-# 이 파일은 GitHub에서 다음 경로에 만들어야 합니다:
-#   .github/workflows/collect.yml
-# (안내서의 순서를 따라 만들어 주세요)
-# ============================================
-name: 인비랩 데이터 수집
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>성장 기록실 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
 
-on:
-  schedule:
-    - cron: "0 18 * * *"   # 매일 UTC 18:00 = 한국시간 새벽 3시
-  workflow_dispatch: {}      # "Run workflow" 버튼으로 수동 실행 가능
+<div id="site-header"></div>
 
-jobs:
-  collect:
-    runs-on: ubuntu-latest
-    steps:
-      - name: 코드 가져오기
-        uses: actions/checkout@v4
-      - name: Node 준비
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - name: 수집 실행
-        env:
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
-        run: node collector/collect.mjs
+<div class="page">
+  <div class="wrap">
+    <h1 class="page-title">성장 기록실</h1>
+    <p class="page-desc">수강생들의 실제 수익 인증, 구독자 성장, 후기를 모았습니다.</p>
+
+    <div class="board-tools">
+      <div class="tabs" id="tabs">
+        <button class="tab on" data-cat="">전체</button>
+        <button class="tab" data-cat="수익 인증">수익 인증</button>
+        <button class="tab" data-cat="구독자 성장">구독자 성장</button>
+        <button class="tab" data-cat="후기">후기</button>
+        <button class="tab" data-cat="자유">자유</button>
+      </div>
+      <a class="btn btn-main btn-sm" href="write.html">✏️ 새 글 쓰기</a>
+    </div>
+
+    <div class="panel">
+      <ul class="post-list" id="posts">
+        <li class="empty">글을 불러오는 중...</li>
+      </ul>
+      <div style="text-align:center;margin-top:18px;">
+        <button class="btn btn-ghost btn-sm" id="btn-more" style="display:none;">더 보기</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  const PAGE_SIZE = 15;
+  let curCat = "";
+  let offset = 0;
+
+  async function loadPosts(reset) {
+    const box = $id("posts");
+    if (!sb) {
+      box.innerHTML = '<li class="empty">서버 연결 후 실제 게시판이 작동합니다.<br>(미리보기 모드)</li>';
+      return;
+    }
+    if (reset) { offset = 0; box.innerHTML = '<li class="empty">글을 불러오는 중...</li>'; }
+
+    let q = sb.from("posts")
+      .select("id,title,category,author_nick,created_at,views,comment_count")
+      .eq("board", "community")
+      .order("created_at", { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (curCat) q = q.eq("category", curCat);
+
+    const { data, error } = await q;
+    if (error) { box.innerHTML = '<li class="empty">글을 불러오지 못했습니다.</li>'; return; }
+
+    const items = (data || []).map((p) => `
+      <li class="post-item" onclick="location.href='post.html?id=${p.id}'">
+        <div>
+          <div class="t"><span class="cat">${escapeHtml(p.category || "자유")}</span>${escapeHtml(p.title)}
+            ${p.comment_count ? `<span style="color:var(--blue);font-size:16px;"> [${p.comment_count}]</span>` : ""}
+          </div>
+          <div class="meta">${escapeHtml(p.author_nick || "회원")} · ${fmtDate(p.created_at)}</div>
+        </div>
+        <div class="right">조회 ${p.views || 0}</div>
+      </li>`).join("");
+
+    if (reset) {
+      box.innerHTML = items || '<li class="empty">아직 글이 없습니다. 첫 글의 주인공이 되어보세요!</li>';
+    } else {
+      box.insertAdjacentHTML("beforeend", items);
+    }
+    $id("btn-more").style.display = (data && data.length === PAGE_SIZE) ? "inline-block" : "none";
+    offset += PAGE_SIZE;
+  }
+
+  (async function () {
+    await renderHeader("community");
+    renderFooter();
+    await loadPosts(true);
+
+    document.querySelectorAll("#tabs .tab").forEach((btn) => {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll("#tabs .tab").forEach((b) => b.classList.remove("on"));
+        this.classList.add("on");
+        curCat = this.dataset.cat;
+        loadPosts(true);
+      });
+    });
+    $id("btn-more").addEventListener("click", () => loadPosts(false));
+  })();
+</script>
+</body>
+</html>

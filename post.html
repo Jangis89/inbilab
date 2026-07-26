@@ -3,75 +3,32 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>채널 분석 — 인비랩</title>
+<title>글 보기 — 인비랩</title>
 <link rel="stylesheet" href="assets/css/style.css">
-<style>
-  .search-row{display:flex;gap:10px;margin-bottom:24px;}
-  .search-row input{flex:1;padding:16px 18px;font-size:19px;border:2px solid var(--line);border-radius:12px;font-family:inherit;}
-  .search-row input:focus{outline:none;border-color:var(--blue);}
-  .ch-head{display:flex;align-items:center;gap:20px;margin-bottom:22px;}
-  .ch-head img{width:84px;height:84px;border-radius:50%;object-fit:cover;background:var(--bg-soft);}
-  .ch-head h2{font-size:28px;}
-  .ch-head .handle{color:var(--sub);font-size:17px;}
-  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;}
-  .stat-box{background:var(--bg-soft);border:1px solid var(--line);border-radius:14px;padding:18px;text-align:center;}
-  .stat-box b{display:block;font-size:24px;color:var(--blue);}
-  .stat-box span{font-size:15.5px;color:var(--sub);}
-  .result-item{display:flex;align-items:center;gap:14px;padding:14px 8px;border-bottom:1px solid var(--line);cursor:pointer;}
-  .result-item:hover{background:#f8fafc;}
-  .result-item img{width:52px;height:52px;border-radius:50%;object-fit:cover;background:var(--bg-soft);}
-  .result-item .t{font-size:19px;font-weight:700;}
-  .result-item .s{font-size:16px;color:var(--sub);}
-  @media(max-width:860px){.stat-grid{grid-template-columns:repeat(2,1fr);}}
-</style>
 </head>
 <body>
 
 <div id="site-header"></div>
 
 <div class="page">
-  <div class="wrap">
-    <h1 class="page-title">채널 분석 🔍</h1>
-    <p class="page-desc">채널 이름을 검색하면 성장 그래프와 주요 수치를 보여드립니다.</p>
-
-    <div class="panel">
-      <div class="search-row">
-        <input type="text" id="q" placeholder="채널 이름을 입력하세요 (예: 먹기전에)">
-        <button class="btn btn-main" id="btn-search">검색</button>
-      </div>
-      <div id="results"></div>
+  <div class="wrap" style="max-width:860px;">
+    <div class="panel post-view" id="post-box">
+      <p class="empty">글을 불러오는 중...</p>
     </div>
 
-    <div class="panel" id="detail" style="display:none;margin-top:20px;">
-      <div class="ch-head">
-        <img id="d-thumb" src="" alt="">
-        <div>
-          <h2 id="d-title"></h2>
-          <div class="handle" id="d-handle"></div>
-        </div>
+    <div class="panel comments" style="margin-top:20px;">
+      <h3 id="cmt-title">댓글</h3>
+      <div id="comments"></div>
+      <div class="comment-form">
+        <input type="text" id="cmt-input" placeholder="따뜻한 댓글을 남겨주세요" maxlength="500">
+        <button class="btn btn-main btn-sm" id="btn-cmt">등록</button>
       </div>
-      <div class="stat-grid">
-        <div class="stat-box"><b id="d-subs">-</b><span>구독자</span></div>
-        <div class="stat-box"><b id="d-views">-</b><span>총 조회수</span></div>
-        <div class="stat-box"><b id="d-videos">-</b><span>영상 수</span></div>
-        <div class="stat-box"><b id="d-daily">-</b><span>일일 조회수 증가</span></div>
-      </div>
-      <h3 style="font-size:21px;margin-bottom:12px;">최근 30일 조회수 추이</h3>
-      <canvas id="chart-views" height="110"></canvas>
-      <h3 style="font-size:21px;margin:26px 0 12px;">최근 30일 구독자 추이</h3>
-      <canvas id="chart-subs" height="110"></canvas>
+      <div id="cmt-msg" class="msg"></div>
     </div>
 
-    <div class="panel soft" style="margin-top:20px;">
-      <h3>찾는 채널이 없나요?</h3>
-      <p style="font-size:18px;color:var(--sub);margin-bottom:14px;">
-        채널 이름이나 주소를 남겨주시면 다음 수집 때 추가해 드립니다.
-      </p>
-      <div class="search-row" style="margin-bottom:0;">
-        <input type="text" id="req-input" placeholder="채널 이름 또는 유튜브 주소">
-        <button class="btn btn-ghost" id="btn-req">수집 요청</button>
-      </div>
-      <div id="req-msg" class="msg"></div>
+    <div style="margin-top:20px;display:flex;justify-content:space-between;">
+      <a class="btn btn-ghost" href="community.html">← 목록으로</a>
+      <button class="btn btn-danger btn-sm" id="btn-del" style="display:none;">글 삭제</button>
     </div>
   </div>
 </div>
@@ -79,103 +36,85 @@
 <div id="site-footer"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="assets/js/config.js"></script>
 <script src="assets/js/app.js"></script>
 <script>
+  const postId = new URLSearchParams(location.search).get("id");
   let curUser = null;
-  let charts = [];
 
-  function fmtNum(n) {
-    n = Number(n || 0);
-    if (n >= 100000000) return (n / 100000000).toFixed(1).replace(/\.0$/, "") + "억";
-    if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, "") + "만";
-    return n.toLocaleString();
+  async function loadComments() {
+    if (!sb) return;
+    const { data } = await sb.from("comments")
+      .select("id,author_nick,content,created_at")
+      .eq("post_id", postId)
+      .order("created_at", { ascending: true });
+    const list = data || [];
+    $id("cmt-title").textContent = "댓글 " + list.length + "개";
+    $id("comments").innerHTML = list.map((c) => `
+      <div class="comment">
+        <span class="who">${escapeHtml(c.author_nick || "회원")}</span>
+        <span class="when">${fmtDate(c.created_at)}</span>
+        <div class="body">${escapeHtml(c.content)}</div>
+      </div>`).join("") || '<p style="color:var(--sub);font-size:17px;">첫 댓글을 남겨보세요.</p>';
   }
-
-  async function search() {
-    const q = $id("q").value.trim();
-    if (!q || !sb) return;
-    const box = $id("results");
-    box.innerHTML = '<p class="empty">검색 중...</p>';
-    const { data } = await sb.from("channels")
-      .select("id,title,handle,thumbnail,subscriber_count")
-      .ilike("title", "%" + q + "%")
-      .order("subscriber_count", { ascending: false })
-      .limit(10);
-    if (!data || data.length === 0) {
-      box.innerHTML = '<p class="empty">등록된 채널 중에는 검색 결과가 없습니다.<br>아래 "수집 요청"을 남겨주시면 추가해 드릴게요.</p>';
-      return;
-    }
-    box.innerHTML = data.map((c) => `
-      <div class="result-item" onclick="showDetail('${c.id}')">
-        <img src="${escapeHtml(c.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
-        <div>
-          <div class="t">${escapeHtml(c.title)}</div>
-          <div class="s">구독자 ${fmtNum(c.subscriber_count)}명</div>
-        </div>
-      </div>`).join("");
-  }
-
-  async function showDetail(id) {
-    const { data: c } = await sb.from("channels").select("*").eq("id", id).single();
-    if (!c) return;
-    $id("detail").style.display = "block";
-    $id("d-thumb").src = c.thumbnail || "";
-    $id("d-title").textContent = c.title;
-    $id("d-handle").textContent = c.handle || "";
-    $id("d-subs").textContent = fmtNum(c.subscriber_count);
-    $id("d-views").textContent = fmtNum(c.view_count);
-    $id("d-videos").textContent = Number(c.video_count || 0).toLocaleString();
-    $id("d-daily").textContent = c.daily_views != null ? "+" + fmtNum(c.daily_views) : "수집 중";
-
-    const { data: snaps } = await sb.from("channel_snapshots")
-      .select("date,view_count,subscriber_count")
-      .eq("channel_id", id)
-      .order("date", { ascending: true })
-      .limit(30);
-
-    charts.forEach((ch) => ch.destroy());
-    charts = [];
-    const labels = (snaps || []).map((s) => s.date.slice(5));
-    const mk = (canvasId, label, values, color) => {
-      charts.push(new Chart($id(canvasId), {
-        type: "line",
-        data: { labels, datasets: [{ label, data: values, borderColor: color, backgroundColor: color + "22", fill: true, tension: 0.3, pointRadius: 3 }] },
-        options: {
-          plugins: { legend: { display: false } },
-          scales: { y: { ticks: { callback: (v) => fmtNum(v) } } },
-        },
-      }));
-    };
-    mk("chart-views", "총 조회수", (snaps || []).map((s) => Number(s.view_count)), "#2563eb");
-    mk("chart-subs", "구독자", (snaps || []).map((s) => Number(s.subscriber_count)), "#f59e0b");
-    $id("detail").scrollIntoView({ behavior: "smooth" });
-  }
-  window.showDetail = showDetail;
 
   (async function () {
-    await renderHeader("channel");
+    await renderHeader("community");
     renderFooter();
-    curUser = await requireLogin();
-    if (!sb) return;
+    curUser = sb ? await getUser() : null;
 
-    $id("btn-search").addEventListener("click", search);
-    $id("q").addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
+    if (!sb || !postId) {
+      $id("post-box").innerHTML = '<p class="empty">서버 연결 후 글을 볼 수 있습니다.</p>';
+      return;
+    }
 
-    $id("btn-req").addEventListener("click", async function () {
-      const v = $id("req-input").value.trim();
-      if (!v) return;
-      if (!curUser) return showMsg("req-msg", "로그인 후 요청할 수 있습니다.");
-      const { error } = await sb.from("channel_requests").insert({ query: v, user_id: curUser.id });
-      if (error) return showMsg("req-msg", "요청에 실패했습니다.");
-      $id("req-input").value = "";
-      showMsg("req-msg", "요청이 접수되었습니다! 다음 수집 때 반영됩니다.", "ok");
+    // 글 불러오기
+    const { data: p, error } = await sb.from("posts")
+      .select("*").eq("id", postId).single();
+    if (error || !p) {
+      $id("post-box").innerHTML = '<p class="empty">글을 찾을 수 없습니다.</p>';
+      return;
+    }
+    $id("post-box").innerHTML = `
+      <h1>${escapeHtml(p.title)}</h1>
+      <div class="meta">
+        <span class="cat" style="color:var(--blue);font-weight:700;">[${escapeHtml(p.category || "자유")}]</span>
+        ${escapeHtml(p.author_nick || "회원")} · ${fmtDate(p.created_at)} · 조회 ${(p.views || 0) + 1}
+      </div>
+      <div class="content">${escapeHtml(p.content)}</div>`;
+
+    // 조회수 +1 (전용 함수 호출)
+    sb.rpc("increment_views", { post_id_input: Number(postId) });
+
+    // 내 글이면 삭제 버튼 표시
+    if (curUser && curUser.id === p.author_id) {
+      const del = $id("btn-del");
+      del.style.display = "inline-block";
+      del.addEventListener("click", async () => {
+        if (!confirm("이 글을 삭제할까요?")) return;
+        await sb.from("posts").delete().eq("id", postId);
+        location.href = "community.html";
+      });
+    }
+
+    await loadComments();
+
+    $id("btn-cmt").addEventListener("click", async function () {
+      const content = $id("cmt-input").value.trim();
+      if (!content) return;
+      if (!curUser) return showMsg("cmt-msg", "댓글은 로그인 후 쓸 수 있습니다.");
+      this.disabled = true;
+      const { error } = await sb.from("comments").insert({
+        post_id: Number(postId),
+        author_id: curUser.id,
+        author_nick: getNickname(curUser),
+        content: content,
+      });
+      this.disabled = false;
+      if (error) return showMsg("cmt-msg", "댓글 등록에 실패했습니다.");
+      $id("cmt-input").value = "";
+      await loadComments();
     });
-
-    // 주소에 ?id=가 있으면 바로 상세 표시 (오늘 뜨는 채널에서 넘어온 경우)
-    const pid = new URLSearchParams(location.search).get("id");
-    if (pid) showDetail(pid);
   })();
 </script>
 </body>
