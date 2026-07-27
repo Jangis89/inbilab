@@ -1,3 +1,9 @@
+# ============================================
+# 인비랩 수집 로봇 자동 실행 설정
+# 이 파일은 GitHub에서 다음 경로에 만들어야 합니다:
+#   .github/workflows/collect.yml
+# (안내서의 순서를 따라 만들어 주세요)
+# ============================================
 name: 인비랩 데이터 수집
 
 on:
@@ -20,4 +26,5 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: node collector/collect.mjs
