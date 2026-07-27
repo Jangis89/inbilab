@@ -50,6 +50,7 @@
           <div class="handle" id="d-handle"></div>
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0;">
+          <button class="btn btn-ghost btn-sm" id="btn-goto">▶ 채널가기</button>
           <button class="btn btn-ghost btn-sm" id="btn-fav">☆ 관심 채널</button>
           <button class="btn btn-main btn-sm" id="btn-ai">🤖 AI 진단</button>
         </div>
@@ -195,6 +196,14 @@
       if (error) return showMsg("req-msg", "요청에 실패했습니다.");
       $id("req-input").value = "";
       showMsg("req-msg", "요청이 접수되었습니다! 다음 수집 때 반영됩니다.", "ok");
+    });
+
+    // 채널가기: 해당 유튜브 채널을 새 탭으로 열기
+    $id("btn-goto").addEventListener("click", function () {
+      if (!curChannel) return;
+      const h = curChannel.handle ? (curChannel.handle.charAt(0) === "@" ? curChannel.handle : "@" + curChannel.handle) : "";
+      const url = h ? "https://www.youtube.com/" + h : "https://www.youtube.com/channel/" + curChannel.id;
+      window.open(url, "_blank");
     });
 
     // 관심 채널 토글
