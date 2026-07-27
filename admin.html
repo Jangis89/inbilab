@@ -277,7 +277,7 @@
     const confRow = filters.source === "ai"
       ? `<div class="filter-row">
           <span class="flabel">유형</span>
-          ${[["", "전체"], ["검증후보", "✅ 검증후보"], ["급등후보", "🚀 급등후보"], ["검토필요", "🔍 검토필요"], ["부적합", "부적합"]].map(([v, t]) => `<button class="fbtn ${filters.klass === v ? "on" : ""}" data-f="klass" data-v="${v}">${t}</button>`).join("")}
+          ${[["", "전체"], ["검증후보", "✅ 검증후보"], ["급등후보", "🚀 급등후보"], ["검토필요", "🔍 검토필요"]].map(([v, t]) => `<button class="fbtn ${filters.klass === v ? "on" : ""}" data-f="klass" data-v="${v}">${t}</button>`).join("")}
         </div>
         <div class="filter-row">
           <span class="flabel">확신도</span>
