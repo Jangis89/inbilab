@@ -53,7 +53,7 @@
 <div class="page">
   <div class="wrap" id="wrap">
     <h1 class="page-title">채널 승인 🛠️</h1>
-    <p class="page-desc">튜브랩에서 가져온 채널과 AI가 편집형으로 본 채널입니다(모두 구독자 50만 미만). 강사님이 ✓승인/✗제외만 눌러주세요.</p>
+    <p class="page-desc">AI가 가져온 50만 구독자 미만의 채널입니다. 관리자님께서는 수강생에게 보여줄 채널에 대해 ✓승인/✗제외만 눌러주세요.</p>
 
     <div id="content"><p class="empty">확인하는 중...</p></div>
   </div>
@@ -111,6 +111,18 @@
     render();
   }
   window.setStatus = setStatus;
+
+  // 채널 완전 삭제 (관리자 전용 · RLS로 서버에서도 관리자만 허용)
+  async function delChannel(id) {
+    const row = allRows.find((r) => r.id === id);
+    const title = row ? row.title : "이 채널";
+    if (!confirm(`'${title}' 채널을 목록에서 완전히 삭제할까요?\n\n삭제하면 승인·검토 목록과 수강생 화면에서 모두 사라집니다.\n(다시 필요하면 나중에 새로 수집됩니다.)`)) return;
+    const { error } = await sb.from("channels").delete().eq("id", id);
+    if (error) { alert("삭제 실패: " + error.message); return; }
+    allRows = allRows.filter((r) => r.id !== id);
+    render();
+  }
+  window.delChannel = delChannel;
 
   function counts() {
     const c = { 대기: 0, 승인: 0, 제외: 0 };
@@ -195,6 +207,9 @@
             </a>`).join("") || '<span style="color:var(--sub);font-size:15px">최근 영상 자료 없음</span>'}
         </div>
         ${actions}
+        <div style="text-align:right;margin-top:10px">
+          <button class="btn btn-ghost btn-sm" style="color:#991b1b" onclick="delChannel('${r.id}')">🗑 완전 삭제</button>
+        </div>
       </div>`;
     }).join("");
     bindFilters();

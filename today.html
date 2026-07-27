@@ -48,12 +48,11 @@
   .filter-row .flabel{font-size:15.5px;font-weight:700;color:var(--sub);width:74px;flex-shrink:0;}
   .fbtn{padding:7px 15px;border-radius:999px;border:2px solid var(--line);background:#fff;font-size:15.5px;font-weight:700;cursor:pointer;color:var(--sub);font-family:inherit;}
   .fbtn.on{border-color:var(--blue);color:var(--blue);background:#eff6ff;}
-  /* 무출연 편집형 큰 스위치 */
-  .face-switch{display:flex;gap:0;background:var(--bg-soft);border:2px solid var(--line);border-radius:14px;padding:6px;margin-bottom:16px;max-width:520px;}
-  .face-switch button{flex:1;padding:14px 10px;border:none;background:transparent;border-radius:10px;font-size:18px;font-weight:800;color:var(--sub);cursor:pointer;font-family:inherit;line-height:1.3;}
-  .face-switch button.on{background:var(--blue);color:#fff;}
-  .face-switch button small{display:block;font-size:13.5px;font-weight:600;opacity:.85;margin-top:2px;}
   .genre-tag{display:inline-block;font-size:13.5px;font-weight:700;padding:2px 9px;border-radius:999px;background:#f0fdf4;color:#166534;margin-left:6px;vertical-align:middle;}
+  /* 관리자 전용 채널 제어 (수강생에게는 보이지 않음) */
+  .admin-ctrl{width:100%;display:flex;justify-content:flex-end;gap:8px;margin-top:6px;padding-top:10px;border-top:1px dashed var(--line);}
+  .admin-ctrl button{padding:6px 12px;border-radius:999px;border:2px solid var(--line);background:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;color:var(--sub);}
+  .admin-ctrl button.del{color:#991b1b;border-color:#fecaca;}
   @media(max-width:1000px){.ch-videos{display:none;}}
 </style>
 </head>
@@ -65,11 +64,6 @@
   <div class="wrap">
     <h1 class="page-title">오늘 뜨는 채널 🚀</h1>
     <p class="page-desc">매일 새벽 자동으로 갱신되는 대한민국 급상승 채널과 인기 영상입니다.</p>
-
-    <div class="face-switch" id="face-switch">
-      <button class="on" data-face="1">🎬 무출연 편집형만<small>얼굴·목소리 없이 편집하는 채널</small></button>
-      <button data-face="0">전체 채널<small>모든 급상승 채널 보기</small></button>
-    </div>
 
     <div class="board-tools">
       <div class="tabs" id="tabs">
@@ -93,8 +87,6 @@
         <button class="fbtn" data-f="subs" data-v="0-10000">1만↓</button>
         <button class="fbtn" data-f="subs" data-v="10000-100000">1~10만</button>
         <button class="fbtn" data-f="subs" data-v="100000-500000">10~50만</button>
-        <button class="fbtn" data-f="subs" data-v="500000-1000000">50~100만</button>
-        <button class="fbtn" data-f="subs" data-v="1000000-999999999999">100만↑</button>
       </div>
       <div class="filter-row">
         <span class="flabel">정렬</span>
@@ -144,7 +136,7 @@
 
   let allChannels = [];       // 서버에서 받아온 채널
   let videosByChannel = {};   // 채널별 최근 영상
-  const filters = { type: "", subs: "", sort: "daily_views", faceless: true };
+  const filters = { type: "", subs: "", sort: "daily_views" };
 
   // ---------- 채널 데이터 로드 ----------
   async function fetchChannels() {
@@ -191,15 +183,12 @@
       return;
     }
 
-    // 0) 무출연 편집형만: 관리자가 '승인'한 채널만
-    let list = allChannels.slice();
-    if (filters.faceless) {
-      list = list.filter((c) => c.admin_status === "승인");
-      if (list.length === 0) {
-        box.innerHTML = '<p class="empty">아직 <b>승인된 무출연 편집형 채널</b>이 없습니다.<br>매일 새벽 AI가 채널을 분류하고, 강사님이 승인하면 여기에 표시됩니다.<br><br>지금 전체 채널을 보려면 위에서 <b>[전체 채널]</b>을 눌러주세요.</p>';
-        $id("update-info").textContent = "";
-        return;
-      }
+    // 0) 관리자가 '승인'한 채널만 수강생에게 노출
+    let list = allChannels.filter((c) => c.admin_status === "승인");
+    if (list.length === 0) {
+      box.innerHTML = '<p class="empty">아직 표시할 채널이 없습니다.<br>매일 새벽 AI가 급상승 채널을 모아오고, 관리자가 승인하면 여기에 순위로 표시됩니다.</p>';
+      $id("update-info").textContent = "";
+      return;
     }
     // 1) 구독자 필터
     if (filters.subs) {
@@ -218,8 +207,7 @@
     if (filters.type) rows = rows.filter((r) => r.type === filters.type);
     rows = rows.slice(0, 50);
 
-    const modeTxt = filters.faceless ? "🎬 무출연 편집형(승인된 채널) · " : "전체 채널 · ";
-    $id("update-info").textContent = modeTxt + (hasDaily
+    $id("update-info").textContent = (hasDaily
       ? "기준일: " + (rows[0] && rows[0].stats_date || "") + " · 등급/수익은 인비랩 자체 추정치입니다"
       : "지금은 구독자순입니다. 데이터가 이틀 이상 쌓이면 급상승순으로 자동 전환됩니다 · 등급/수익은 자체 추정치");
 
@@ -257,9 +245,35 @@
               <span class="v">${fmtNum(v.view_count)}</span>
             </a>`).join("")}
         </div>
+        ${window.__admin ? `
+        <div class="admin-ctrl">
+          <button onclick="adminRevert('${c.id}')">↩ 채널 승인으로 되돌리기</button>
+          <button class="del" onclick="adminDelete('${c.id}')">🗑 삭제</button>
+        </div>` : ""}
       </div>`;
     }).join("");
   }
+
+  // ---------- 관리자 전용: 승인 취소 / 삭제 (RLS로 서버에서도 관리자만 허용) ----------
+  async function adminRevert(id) {
+    const ch = allChannels.find((c) => c.id === id);
+    if (!confirm(`'${ch ? ch.title : "이 채널"}'을(를) 수강생 화면에서 내리고 '채널 승인' 검토 대기로 되돌릴까요?`)) return;
+    const { error } = await sb.from("channels").update({ admin_status: "대기" }).eq("id", id);
+    if (error) { alert("변경 실패: " + error.message); return; }
+    if (ch) ch.admin_status = "대기";
+    await loadChannels();
+  }
+  window.adminRevert = adminRevert;
+
+  async function adminDelete(id) {
+    const ch = allChannels.find((c) => c.id === id);
+    if (!confirm(`'${ch ? ch.title : "이 채널"}' 채널을 완전히 삭제할까요?\n\n삭제하면 수강생 화면과 채널 승인 목록에서 모두 사라집니다.`)) return;
+    const { error } = await sb.from("channels").delete().eq("id", id);
+    if (error) { alert("삭제 실패: " + error.message); return; }
+    allChannels = allChannels.filter((c) => c.id !== id);
+    await loadChannels();
+  }
+  window.adminDelete = adminDelete;
 
   // ---------- 인기 영상(롱폼) / 인기 쇼츠 ----------
   function renderVideos(list, urlFn, metricFn) {
@@ -330,8 +344,9 @@
   (async function () {
     await renderHeader("today");
     renderFooter();
-    await requireLogin();
+    const user = await requireLogin();
     if (!sb) { $id("list").innerHTML = '<p class="empty">서버 연결 후 표시됩니다.</p>'; return; }
+    window.__admin = user ? await isAdmin(user) : false;   // 관리자면 채널 되돌리기/삭제 버튼 표시
     await loadChannels();
 
     // 탭 전환
@@ -342,7 +357,6 @@
         const t = this.dataset.tab;
         const showCh = (t === "channels");
         $id("filter-bar").style.display = showCh ? "block" : "none";
-        $id("face-switch").style.display = showCh ? "flex" : "none";
         $id("list").innerHTML = '<p class="empty">불러오는 중...</p>';
         if (t === "channels") await loadChannels();
         else if (t === "videos") await loadVideos();
@@ -357,16 +371,6 @@
         document.querySelectorAll(`.fbtn[data-f="${f}"]`).forEach((b) => b.classList.remove("on"));
         this.classList.add("on");
         filters[f] = this.dataset.v;
-        await loadChannels();
-      });
-    });
-
-    // 무출연 편집형 / 전체 스위치
-    document.querySelectorAll("#face-switch button").forEach((btn) => {
-      btn.addEventListener("click", async function () {
-        document.querySelectorAll("#face-switch button").forEach((b) => b.classList.remove("on"));
-        this.classList.add("on");
-        filters.faceless = this.dataset.face === "1";
         await loadChannels();
       });
     });
