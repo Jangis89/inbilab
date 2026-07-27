@@ -83,40 +83,85 @@ function chunk(arr, size) {
   return out;
 }
 
-// ---------- 유튜브에서 "최근 급상승 쇼츠" 채널 발굴 (search API) ----------
-// 무출연 편집형 쇼츠가 많이 쓰는 주제어로 최근 14일 인기 쇼츠를 검색 → 채널 후보 수집
-const SHORTS_SEEDS = [
+// ---------- Phase 1: 유튜브 급상승 쇼츠 발굴 (시간창 × 검색어 성적 배분) ----------
+// 검색어는 DB(search_terms 표)에서 관리: 성적 좋은 검색어에 검색 자원의 대부분을 배분(80%),
+// 나머지는 새 검색어 탐색(20%). 시간창(1·3·7일)으로 "오늘 막 터진 채널"까지 잡음.
+const DEFAULT_SEEDS = [
   "영화 요약 쇼츠", "드라마 요약", "명장면 모음", "레전드 모음", "랭킹 top",
   "이슈 정리", "해외반응", "동물 모음", "게임 하이라이트", "애니 썰",
   "역사 이슈", "실화 사건", "썰 애니메이션", "정보 꿀팁 쇼츠", "충격 모음", "스포츠 명장면",
 ];
-async function discoverShortsChannels(maxChannels = 220) {
-  const publishedAfter = new Date(Date.now() - 14 * 86400 * 1000).toISOString();
-  const hits = new Map(); // channelId -> 검색 노출 횟수(여러 검색어에 걸릴수록 관련성 높음)
-  for (const q of SHORTS_SEEDS) {
+
+async function loadSearchTerms() {
+  try {
+    const rows = await sbFetch("search_terms?select=term,score,last_run&enabled=eq.true&limit=100");
+    if (rows && rows.length > 0) return rows;
+    // 최초 실행: 기본 검색어를 표에 등록
+    await sbFetch("search_terms?on_conflict=term", {
+      method: "POST",
+      body: DEFAULT_SEEDS.map((t) => ({ term: t, source: "기본", enabled: true })),
+      prefer: "resolution=merge-duplicates",
+    });
+  } catch (e) {
+    console.log(`검색어 표 사용 불가(기본 검색어로 진행): ${e.message}`);
+  }
+  return DEFAULT_SEEDS.map((t) => ({ term: t, score: null, last_run: null }));
+}
+
+async function searchOnce(q, days, hits, discoverySrc) {
+  const publishedAfter = new Date(Date.now() - days * 86400 * 1000).toISOString();
+  const data = await ytFetch("search", {
+    part: "snippet",
+    type: "video",
+    videoDuration: "short",       // 4분 미만(쇼츠 후보) — 이후 재생시간으로 진짜 쇼츠 확정
+    order: "viewCount",           // 조회수 높은 순 = 지금 뜨는 영상
+    regionCode: "KR",
+    relevanceLanguage: "ko",
+    publishedAfter,
+    maxResults: "50",
+    q,
+  });
+  let n = 0;
+  for (const it of data.items || []) {
+    const cid = it.snippet?.channelId;
+    if (!cid) continue;
+    hits.set(cid, (hits.get(cid) || 0) + 1);
+    if (!discoverySrc.has(cid)) discoverySrc.set(cid, `검색:${q}|${days}일`);
+    n++;
+  }
+  return n;
+}
+
+async function discoverShortsChannels(termRows, maxChannels = 250) {
+  const WINDOWS = [1, 3, 7]; // 최근 1일 / 3일 / 7일 (모두 조회수순)
+  const proven = termRows.filter((t) => t.last_run).sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+  const fresh = termRows.filter((t) => !t.last_run);
+  // 성적 상위 8개 = 시간창 3개 모두, 그 다음 8개 = 7일 1개, 새 검색어 최대 6개 = 7일 1개 (탐색)
+  let top, rest, explore;
+  if (proven.length === 0) {
+    top = fresh.slice(0, 8); rest = fresh.slice(8, 16); explore = fresh.slice(16, 22);
+  } else {
+    top = proven.slice(0, 8); rest = proven.slice(8, 16); explore = fresh.slice(0, 6);
+  }
+  const plan = [
+    ...top.flatMap((t) => WINDOWS.map((d) => ({ term: t.term, days: d }))),
+    ...rest.map((t) => ({ term: t.term, days: 7 })),
+    ...explore.map((t) => ({ term: t.term, days: 7 })),
+  ]; // 최대 38회 검색 = 하루 쿼터의 약 38%
+  const hits = new Map();          // channelId -> 노출 횟수
+  const discoverySrc = new Map();  // channelId -> "검색:검색어|시간창"
+  const ranTerms = new Set();
+  for (const p of plan) {
     try {
-      const data = await ytFetch("search", {
-        part: "snippet",
-        type: "video",
-        videoDuration: "short",       // 4분 미만(쇼츠 후보) — 이후 재생시간으로 진짜 쇼츠 확정
-        order: "viewCount",           // 조회수 높은 순 = 지금 뜨는 영상
-        regionCode: "KR",
-        relevanceLanguage: "ko",
-        publishedAfter,               // 최근 14일 = 현재 성장 중
-        maxResults: "50",
-        q,
-      });
-      for (const it of data.items || []) {
-        const cid = it.snippet?.channelId;
-        if (cid) hits.set(cid, (hits.get(cid) || 0) + 1);
-      }
+      await searchOnce(p.term, p.days, hits, discoverySrc);
+      ranTerms.add(p.term);
     } catch (e) {
-      console.log(`  쇼츠 발굴 검색 실패(${q}): ${e.message}`);
+      console.log(`  검색 실패(${p.term}/${p.days}일): ${e.message}`);
     }
   }
   const ranked = [...hits.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
-  console.log(`쇼츠 발굴: 후보 채널 ${ranked.length}개 (검색어 ${SHORTS_SEEDS.length}개) → 상위 ${Math.min(maxChannels, ranked.length)}개 사용`);
-  return ranked.slice(0, maxChannels);
+  console.log(`쇼츠 발굴: 검색 ${plan.length}회(검색어 ${ranTerms.size}개, 시간창 1·3·7일) → 후보 ${ranked.length}개, 상위 ${Math.min(maxChannels, ranked.length)}개 사용`);
+  return { ids: ranked.slice(0, maxChannels), discoverySrc, ranTerms };
 }
 
 // ---------- 썸네일 이미지를 base64로 (Gemini 비전 입력용) ----------
@@ -278,8 +323,10 @@ async function main() {
   console.log(`쇼츠 판별 완료: ${trendingRows.filter((r) => r.is_short).length}개가 진짜 쇼츠`);
   // 인기 영상 저장은 채널 구독자 수를 확인한 뒤(50만 미만만) 진행 → 아래 3단계 이후
 
-  // ========== 1.5 유튜브에서 급상승 쇼츠 채널 발굴 ==========
-  const discovered = await discoverShortsChannels(220);
+  // ========== 1.5 유튜브에서 급상승 쇼츠 채널 발굴 (Phase 1) ==========
+  const termRows = await loadSearchTerms();
+  const disc = await discoverShortsChannels(termRows, 250);
+  const discovered = disc.ids;
   const discoveredSet = new Set(discovered);
 
   // ========== 2. 수집 대상 채널 목록 만들기 ==========
@@ -436,15 +483,92 @@ async function main() {
     console.log(`성장 미달 제외 처리 실패(다음 실행에서 재시도): ${e.message}`);
   }
 
-  // 발견 경로 기록: 유튜브 검색(14일·조회수순)으로 발굴된 채널 표시 (이미 기록된 채널은 유지)
-  for (const ids of chunk([...discoveredSet], 100)) {
-    try {
-      await sbFetch(`channels?discovery_source=is.null&id=in.(${ids.map((i) => `"${i}"`).join(",")})`, {
-        method: "PATCH",
-        body: { discovery_source: "YT검색_14일_조회수순" },
-        prefer: "return=minimal",
+  // 발견 경로 기록: 어떤 검색어·시간창이 이 채널을 찾았는지 (이미 기록된 채널은 유지)
+  const srcGroups = new Map();
+  for (const [cid, src] of disc.discoverySrc) {
+    if (!discoveredSet.has(cid)) continue;
+    const a = srcGroups.get(src) || []; a.push(cid); srcGroups.set(src, a);
+  }
+  for (const [src, ids] of srcGroups) {
+    for (const part of chunk(ids, 80)) {
+      try {
+        await sbFetch(`channels?discovery_source=is.null&id=in.(${part.map((i) => `"${i}"`).join(",")})`, {
+          method: "PATCH",
+          body: { discovery_source: src },
+          prefer: "return=minimal",
+        });
+      } catch { /* 기록 실패해도 수집은 계속 */ }
+    }
+  }
+
+  // ========== 5.7 검색어 성적표 갱신 (Phase 1) ==========
+  // 각 검색어가 발굴한 채널들이 이후 AI 합격/관리자 승인으로 이어졌는지 집계 → 점수화
+  // → 다음 실행 때 점수 높은 검색어에 검색 자원(시간창 3개)을 배분
+  try {
+    const dsRows = await sbFetch(
+      `channels?select=discovery_source,ai_ref_class,admin_status&discovery_source=like.${encodeURIComponent("검색:")}*&limit=3000`
+    );
+    const stat = new Map();
+    for (const r of dsRows || []) {
+      const m = /^검색:(.+)\|/.exec(r.discovery_source || "");
+      if (!m) continue;
+      const t = m[1];
+      const s = stat.get(t) || { discovered: 0, passed: 0, approved: 0 };
+      s.discovered++;
+      if (["검증후보", "급등후보", "검토필요"].includes(r.ai_ref_class)) s.passed++;
+      if (r.admin_status === "승인") s.approved++;
+      stat.set(t, s);
+    }
+    for (const t of new Set([...disc.ranTerms, ...stat.keys()])) {
+      const s = stat.get(t) || { discovered: 0, passed: 0, approved: 0 };
+      const score = s.approved * 3 + s.passed + s.discovered * 0.1; // 승인이 가장 큰 가산점
+      const body = { discovered: s.discovered, passed: s.passed, approved: s.approved, score };
+      if (disc.ranTerms.has(t)) body.last_run = TODAY;
+      await sbFetch(`search_terms?term=eq.${encodeURIComponent(t)}`, {
+        method: "PATCH", body, prefer: "return=minimal",
       });
-    } catch { /* 기록 실패해도 수집은 계속 */ }
+    }
+    console.log(`검색어 성적표 갱신 완료 (${stat.size}개 검색어 집계)`);
+  } catch (e) {
+    console.log(`검색어 성적표 갱신 실패(다음 실행에서 재시도): ${e.message}`);
+  }
+
+  // ========== 5.8 튜브랩에서 새 검색어 자동 추출 (Phase 1) ==========
+  // 검색어가 28개 미만이면, 튜브랩 상위 채널 이름·장르에서 새 검색어 후보를 AI로 뽑아 추가
+  const GEM_KEY_EXTRACT = process.env.GEMINI_API_KEY;
+  if (GEM_KEY_EXTRACT && termRows.length < 28) {
+    try {
+      const tl = await sbFetch(`channels?select=title,ai_genre&source=eq.tubelab&order=daily_views.desc.nullslast&limit=40`);
+      const prompt =
+        `아래는 지금 성장 중인 한국 무출연 쇼츠 채널 목록이야. 이런 채널을 유튜브 검색으로 발굴할 때 쓸 새로운 한국어 검색어 5개를 제안해.\n` +
+        `기존 검색어와 겹치지 않게: ${termRows.map((t) => t.term).join(", ")}\n\n채널 목록:\n` +
+        (tl || []).map((c) => `- ${c.title}${c.ai_genre ? ` (${c.ai_genre})` : ""}`).join("\n") +
+        `\n\n반드시 JSON 배열로만 반환: ["검색어1","검색어2","검색어3","검색어4","검색어5"]`;
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEM_KEY_EXTRACT}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.7 } }),
+        }
+      );
+      const data = await res.json();
+      const arr = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "[]");
+      const news = (Array.isArray(arr) ? arr : [])
+        .map((s) => String(s).trim().slice(0, 40))
+        .filter((s) => s && !termRows.some((t) => t.term === s))
+        .slice(0, 5);
+      if (news.length) {
+        await sbFetch("search_terms?on_conflict=term", {
+          method: "POST",
+          body: news.map((t) => ({ term: t, source: "자동", enabled: true })),
+          prefer: "resolution=merge-duplicates",
+        });
+        console.log(`새 검색어 ${news.length}개 추가: ${news.join(", ")}`);
+      }
+    } catch (e) {
+      console.log(`새 검색어 추출 실패(다음 실행에서 재시도): ${e.message}`);
+    }
   }
 
   // ========== 6. 채널별 최근 영상 수집 (쇼츠 랭킹의 재료) ==========
