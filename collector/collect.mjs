@@ -164,6 +164,53 @@ async function discoverShortsChannels(termRows, maxChannels = 250) {
   return { ids: ranked.slice(0, maxChannels), discoverySrc, ranTerms };
 }
 
+// ---------- Phase 2: 영상 1개 단위 레퍼런스 분석 (제목+썸네일 1차 분석) ----------
+async function analyzeVideo(v, ch, gemKey, model = "gemini-pro-latest") {
+  const prompt =
+    `너는 유튜브 쇼츠 교육 플랫폼의 영상 분석가야. 아래 무출연 쇼츠 '영상 1개'를 40-60대 입문 수강생이 벤치마킹할 수 있게 분석해.\n` +
+    `채널: ${ch.title || ""}${ch.ai_genre ? ` (${ch.ai_genre})` : ""}\n영상 제목: ${v.title}\n조회수: ${v.view_count}\n첨부 썸네일도 참고해.\n\n` +
+    `반드시 아래 JSON만 반환(모든 필드는 실제 분석값으로 채워라):\n` +
+    `{"fit_score":"<0~100 정수: 입문자 벤치마킹 적합도>","hook":"첫 1~2초 훅이 어떻게 시선을 끄는지 한 줄",` +
+    `"structure":"영상 구성(도입-전개-마무리) 한 줄","benchmark":"수강생이 배워야 할 핵심 한 줄",` +
+    `"caution":"그대로 베끼면 안 되는 것 한 줄","ideas":["같은 구조로 만들 수 있는 새 소재 3개"]}`;
+  const parts = [{ text: prompt }];
+  if (v.thumbnail) {
+    const b64 = await fetchImageBase64(v.thumbnail);
+    if (b64) parts.push({ inline_data: { mime_type: "image/jpeg", data: b64 } });
+  }
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${gemKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts }], generationConfig: { responseMimeType: "application/json", temperature: 0.3 } }),
+      }
+    );
+    const data = await res.json();
+    if (data.error) {
+      console.log(`  영상 분석 오류(${(v.title || "").slice(0, 20)}): ${String(data.error.message).slice(0, 100)}`);
+      if (/quota|RESOURCE_EXHAUSTED|rate/i.test(String(data.error.message))) return { quota: true };
+      return null;
+    }
+    let o = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+    if (Array.isArray(o)) o = o[0] || {};
+    const fit = Math.max(0, Math.min(100, Math.round(Number(o.fit_score) || 0)));
+    if (!fit && !(o.hook || "").trim()) return null; // 응답 불량 → 다음 실행에서 재시도
+    return {
+      fit,
+      hook: (o.hook || "").slice(0, 200),
+      structure: (o.structure || "").slice(0, 200),
+      benchmark: (o.benchmark || "").slice(0, 200),
+      caution: (o.caution || "").slice(0, 200),
+      ideas: Array.isArray(o.ideas) ? o.ideas.slice(0, 3).map((s) => String(s).slice(0, 80)) : [],
+    };
+  } catch (e) {
+    console.log(`  영상 분석 실패(${(v.title || "").slice(0, 20)}): ${e.message}`);
+    return null;
+  }
+}
+
 // ---------- 썸네일 이미지를 base64로 (Gemini 비전 입력용) ----------
 async function fetchImageBase64(url) {
   try {
@@ -751,6 +798,50 @@ async function main() {
       if (faceless) facelessN++;
     }
     console.log(`AI 검수 완료: 쇼츠 채널 ${aiDone}개 판정(무출연 ${facelessN}개, 점수미달 자동제외 ${rejectN}개), 쇼츠아님 제외 ${notShorts}개, 영상없음 보류 ${noData}개`);
+
+    // ========== 7.5 영상 단위 레퍼런스 분석 (Phase 2) ==========
+    // 승인 채널 + AI 무출연 합격 채널의 쇼츠 중 조회수 상위 영상을 골라
+    // 훅·구성·배울 점·새 소재 아이디어를 영상 1개 단위로 분석 → 레퍼런스 영상 게시판의 재료
+    const VIDEO_AI_LIMIT = 60; // 하루 최대 분석 영상 수
+    try {
+      const okCh = await sbFetch(
+        `channels?select=id,title,ai_genre&or=(admin_status.eq.${encodeURIComponent("승인")},ai_faceless.eq.true)&is_active=eq.true&limit=1000`
+      );
+      const chInfo = new Map((okCh || []).map((c) => [c.id, c]));
+      const okIds = [...chInfo.keys()];
+      let cand = [];
+      for (const part of chunk(okIds, 60)) {
+        const rows = await sbFetch(
+          `channel_videos?select=video_id,channel_id,title,thumbnail,view_count&is_short=eq.true&analyzed_at=is.null&channel_id=in.(${part.map((i) => `"${i}"`).join(",")})&order=view_count.desc&limit=150`
+        );
+        cand.push(...(rows || []));
+      }
+      cand.sort((a, b) => Number(b.view_count) - Number(a.view_count));
+      cand = cand.slice(0, VIDEO_AI_LIMIT);
+      let vDone = 0;
+      for (const v of cand) {
+        let r = await analyzeVideo(v, chInfo.get(v.channel_id) || {}, GEM_KEY, gemModel);
+        if (r && r.quota && gemModel === "gemini-pro-latest") {
+          console.log("  ⚠ Pro 일일 한도 도달 → Flash 모델로 전환해 계속 진행");
+          gemModel = "gemini-flash-latest";
+          r = await analyzeVideo(v, chInfo.get(v.channel_id) || {}, GEM_KEY, gemModel);
+        }
+        if (!r || r.quota) continue;
+        await sbFetch(`channel_videos?video_id=eq.${v.video_id}`, {
+          method: "PATCH",
+          body: {
+            ai_fit: r.fit, ai_hook: r.hook, ai_structure: r.structure,
+            ai_benchmark: r.benchmark, ai_caution: r.caution, ai_ideas: r.ideas,
+            analyzed_at: new Date().toISOString(),
+          },
+          prefer: "return=minimal",
+        });
+        vDone++;
+      }
+      console.log(`영상 레퍼런스 분석 완료: ${vDone}/${cand.length}개`);
+    } catch (e) {
+      console.log(`영상 레퍼런스 분석 실패(다음 실행에서 재시도): ${e.message}`);
+    }
   } else {
     console.log("GEMINI_API_KEY 없음 — AI 분류 단계 건너뜀");
   }
