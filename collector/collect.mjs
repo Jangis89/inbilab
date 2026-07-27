@@ -135,19 +135,27 @@ async function fetchImageBase64(url) {
 async function classifyChannel(ch, vids, gemKey, gold = "") {
   const titles = vids.map((v, i) => `${i + 1}. ${v.title}`).join("\n");
   const goldBlock = gold
-    ? `아래는 우리가 찾는 '정답' 유형이야 — 튜브랩이 엄선한 무출연 편집형 쇼츠 채널 예시:\n${gold}\n\n`
+    ? `[정답 예시 — 튜브랩이 엄선한 무출연 편집형 쇼츠 채널]\n${gold}\n\n`
     : "";
+  const negBlock =
+    `[오답 예시 — 아래 유형은 부적합(제작자 본인이 출연해야 만들 수 있거나 쇼츠가 아님)]\n` +
+    `- 세로형이지만 본인 일상/브이로그\n` +
+    `- 얼굴은 안 나와도 '제작자 본인 목소리 해설'이 핵심인 채널\n` +
+    `- 3분 이하지만 가로형 롱폼\n` +
+    `- 먹방·리액션·페이스캠 게임(본인 직접 출연)\n` +
+    `- 영화/방송을 거의 변형 없이 그대로 재업로드\n` +
+    `- 음악만 바꾼 반복 영상\n\n`;
   const prompt =
-    `너는 유튜브 쇼츠 채널 분류 전문가야. 대상은 "쇼츠(60초 안팎 세로영상) 위주" 채널이고, 그중 ` +
-    `"본인 얼굴·목소리 출연 없이 영상 편집으로만 운영되는 무출연 편집형"인지 판정해줘.\n\n` +
-    goldBlock +
-    `채널명: ${ch.title}\n최근 영상 제목:\n${titles}\n\n` +
-    `첨부된 썸네일 이미지도 함께 참고해. 판정 기준:\n` +
-    `- 편집형(무출연, faceless=true): 영화/드라마 요약·리뷰, 명장면·짤 편집, 랭킹/TOP, 이슈·정보 나레이션(TTS), 게임화면 편집, 애니메이션, 동물짤/해외반응 등. ` +
-    `얼굴이 보여도 "남의 영상(영화·방송·경기)을 편집"한 것이면 편집형이다.\n` +
-    `- 출연형(제외, faceless=false): 본인 얼굴/목소리로 하는 브이로그, 페이스캠 게임방송, 직접 말하는 리뷰어, 직접 출연 먹방 등.\n\n` +
-    `반드시 아래 JSON 형식으로만 답해:\n` +
-    `{"faceless": true 또는 false, "confidence": "상"|"중"|"하", "reason": "한 줄 근거", "genre": "추정 장르(영화요약/랭킹/명장면/이슈정보/게임/애니/동물/해외반응/기타)"}`;
+    `너는 유튜브 '쇼츠' 채널 분석가야. 이 채널이 "제작자가 자기 얼굴과 목소리를 노출하지 않고 편집으로 만드는 무출연 쇼츠 채널"인지 판정해.\n` +
+    `핵심 규칙: 영상 안에 배우·행인 등 '타인'의 얼굴/목소리가 나오는 건 괜찮다. ` +
+    `오직 '제작자 본인'이 자기 얼굴이나 목소리로 출연해야만 만들 수 있는 채널만 제외한다. ` +
+    `(예: 영화요약 쇼츠는 배우 얼굴이 나와도 제작자는 무출연이므로 적합)\n\n` +
+    goldBlock + negBlock +
+    `채널명: ${ch.title}\n최근 영상 제목:\n${titles}\n\n첨부된 썸네일 이미지도 함께 참고해.\n\n` +
+    `반드시 아래 JSON만 반환:\n` +
+    `{"creator_face":"none|brief|main","other_faces":"none|some|frequent","creator_voice":"none|main",` +
+    `"voice_type":"none|ai_tts|original|music","content_format":"movie_recap|drama_recap|ranking|animation|game_edit|issue_tts|animal|sports|music|other",` +
+    `"reproducible_beginner":true,"copyright_risk":"low|mid|high","confidence":0.0,"genre":"한국어 장르","reason":"한 줄 근거"}`;
   const parts = [{ text: prompt }];
   for (const v of vids.slice(0, 4)) {
     if (!v.thumbnail) continue;
@@ -172,12 +180,16 @@ async function classifyChannel(ch, vids, gemKey, gold = "") {
       return null;
     }
     const txt = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    const obj = JSON.parse(txt);
+    const o = JSON.parse(txt);
+    // 무출연 최종 판정 = 제작자 본인 얼굴이 none/brief 이고, 본인 목소리가 none (타인 얼굴/목소리는 무관)
+    const faceless = (o.creator_face === "none" || o.creator_face === "brief") && o.creator_voice === "none";
     return {
-      faceless: !!obj.faceless,
-      confidence: obj.confidence || "중",
-      reason: (obj.reason || "").slice(0, 200),
-      genre: (obj.genre || "").slice(0, 40),
+      faceless,
+      confidence: typeof o.confidence === "number" ? o.confidence : 0.6, // 0~1
+      reason: (o.reason || "").slice(0, 200),
+      genre: (o.genre || o.content_format || "").slice(0, 40),
+      copyright_risk: o.copyright_risk || null,
+      voice_type: o.voice_type || null,
     };
   } catch (e) {
     console.log(`  분류 실패(${ch.title}): ${e.message}`);
@@ -378,8 +390,8 @@ async function main() {
     if (knownMap.has(v.id)) {
       isShort = knownMap.get(v.id);
     } else {
-      // 재생시간 기준 빠른 판정(90초 이하 = 쇼츠). 대량 HEAD 요청 제거로 속도 대폭 개선
-      isShort = dur > 0 && dur <= 90;
+      // 재생시간 기준 빠른 판정(180초 이하 = 쇼츠 후보). 2024-10 이후 쇼츠 최대 3분 반영
+      isShort = dur > 0 && dur <= 180;
       newlyChecked++;
     }
     const views = Number(v.statistics?.viewCount || 0);
@@ -436,33 +448,38 @@ async function main() {
         `channel_videos?select=title,thumbnail,is_short,published_at&channel_id=eq.${ch.id}&order=published_at.desc&limit=12`
       );
       if (!vids || vids.length === 0) { noData++; continue; } // 영상 없으면 분류 보류(다음 기회)
-      // (1) 기계 규칙: 최근 영상의 쇼츠 비율 60% 미만이면 쇼츠 채널 아님 → 제외
-      const shortRatio = vids.filter((v) => v.is_short).length / vids.length;
-      if (shortRatio < 0.6) {
+      // (1) 완화된 기계 규칙: 최근 영상 중 쇼츠가 3개 미만이면 쇼츠 채널로 보기 어려움 → 제외
+      const shortsCount = vids.filter((v) => v.is_short).length;
+      if (shortsCount < 3) {
         await sbFetch(`channels?id=eq.${ch.id}`, {
           method: "PATCH",
-          body: { ai_faceless: false, ai_confidence: "하", ai_reason: "쇼츠 위주 채널이 아님(롱폼 비중 높음)", ai_genre: null, classified_at: new Date().toISOString() },
+          body: { ai_faceless: false, ai_confidence: "하", ai_reason: "쇼츠 영상이 충분치 않음(롱폼 위주)", ai_genre: null, classified_at: new Date().toISOString() },
           prefer: "return=minimal",
         });
         notShorts++;
         continue;
       }
-      // (2) 쇼츠 채널만 AI(튜브랩 예시 기반)로 무출연 판정
-      const result = await classifyChannel(ch, vids.slice(0, 5), GEM_KEY, gold);
-      if (!result) continue;
+      // (2) 쇼츠 채널만 AI(튜브랩 정답 + 오답 예시)로 '본인' 무출연 판정
+      const r = await classifyChannel(ch, vids.slice(0, 5), GEM_KEY, gold);
+      if (!r) continue;
+      const conf = r.confidence;                          // 0~1
+      const confText = conf >= 0.8 ? "상" : conf >= 0.5 ? "중" : "하";
+      const faceless = conf < 0.5 ? false : r.faceless;   // 신뢰도 0.5 미만은 제외
       await sbFetch(`channels?id=eq.${ch.id}`, {
         method: "PATCH",
         body: {
-          ai_faceless: result.faceless,
-          ai_confidence: result.confidence,
-          ai_reason: result.reason,
-          ai_genre: result.genre,
+          ai_faceless: faceless,
+          ai_confidence: confText,
+          ai_reason: r.reason,
+          ai_genre: r.genre,
+          ai_copyright_risk: r.copyright_risk,
+          ai_voice_type: r.voice_type,
           classified_at: new Date().toISOString(),
         },
         prefer: "return=minimal",
       });
       aiDone++;
-      if (result.faceless) facelessN++;
+      if (faceless) facelessN++;
     }
     console.log(`AI 검수 완료: 쇼츠 채널 ${aiDone}개 판정(무출연 ${facelessN}개), 쇼츠아님 제외 ${notShorts}개, 영상없음 보류 ${noData}개`);
   } else {
