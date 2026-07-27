@@ -22,6 +22,9 @@ function kstDate(offsetDays = 0) {
 const TODAY = kstDate(0);
 const YESTERDAY = kstDate(-1);
 
+// 구독자 상한: 이 값 이상(50만 이상) 채널은 수집·저장·표시하지 않음 (입문자 벤치마킹용)
+const MAX_SUBS = 500000;
+
 // ---------- Supabase REST 호출 도우미 ----------
 async function sbFetch(path, { method = "GET", body, prefer } = {}) {
   const headers = {
@@ -186,14 +189,7 @@ async function main() {
     });
   }
   console.log(`쇼츠 판별 완료: ${trendingRows.filter((r) => r.is_short).length}개가 진짜 쇼츠`);
-  for (const part of chunk(trendingRows, 100)) {
-    await sbFetch("trending_videos?on_conflict=video_id,date", {
-      method: "POST",
-      body: part,
-      prefer: "resolution=merge-duplicates",
-    });
-  }
-  console.log("인기 영상 저장 완료");
+  // 인기 영상 저장은 채널 구독자 수를 확인한 뒤(50만 미만만) 진행 → 아래 3단계 이후
 
   // ========== 2. 수집 대상 채널 목록 만들기 ==========
   // 기존 등록 채널 + 오늘 인기 영상에 등장한 채널
@@ -215,6 +211,22 @@ async function main() {
   }
   console.log(`채널 통계 ${stats.length}개 조회`);
 
+  // 채널별 구독자 수 지도 (50만 이상 제외에 사용)
+  const subsMap = new Map();
+  for (const c of stats) subsMap.set(c.id, Number(c.statistics?.subscriberCount || 0));
+  const isBig = (channelId) => (subsMap.get(channelId) || 0) >= MAX_SUBS;
+
+  // 인기 영상 저장 — 대형(50만 이상) 채널 영상은 제외
+  const trendingSmall = trendingRows.filter((r) => !isBig(r.channel_id));
+  for (const part of chunk(trendingSmall, 100)) {
+    await sbFetch("trending_videos?on_conflict=video_id,date", {
+      method: "POST",
+      body: part,
+      prefer: "resolution=merge-duplicates",
+    });
+  }
+  console.log(`인기 영상 저장 완료 (50만 미만 ${trendingSmall.length}개 / 전체 ${trendingRows.length}개)`);
+
   // ========== 4. 어제 기록 불러오기 (성장률 계산용) ==========
   const yRows = await sbFetch(
     `channel_snapshots?select=channel_id,view_count,subscriber_count&date=eq.${YESTERDAY}&limit=2000`
@@ -226,6 +238,7 @@ async function main() {
   const chRows = [];
   for (const c of stats) {
     const subs = Number(c.statistics?.subscriberCount || 0);
+    if (subs >= MAX_SUBS) continue; // 50만 이상 대형 채널은 저장하지 않음
     const views = Number(c.statistics?.viewCount || 0);
     const vids = Number(c.statistics?.videoCount || 0);
     snapRows.push({
@@ -354,7 +367,7 @@ async function main() {
   if (GEM_KEY) {
     const DAILY_LIMIT = 50; // 하루에 분류할 새 채널 수 (비용/속도 조절)
     const unclassified = await sbFetch(
-      `channels?select=id,title&classified_at=is.null&is_active=eq.true&order=subscriber_count.desc&limit=${DAILY_LIMIT}`
+      `channels?select=id,title&classified_at=is.null&is_active=eq.true&subscriber_count=lt.${MAX_SUBS}&order=subscriber_count.desc&limit=${DAILY_LIMIT}`
     );
     console.log(`AI 분류 대상(미분류) 채널: ${unclassified.length}개`);
     let classified = 0;
