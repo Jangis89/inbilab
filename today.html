@@ -21,32 +21,34 @@
   .rank-right .lbl{font-size:14.5px;color:var(--sub);}
   .update-info{font-size:16px;color:var(--sub);margin-bottom:14px;}
 
-  /* 채널 랭킹 (튜브랩식) */
-  .ch-row{display:flex;align-items:center;gap:16px;padding:20px 8px;border-bottom:1px solid var(--line);flex-wrap:wrap;}
+  /* 채널 랭킹 (튜브랩식) — 한 줄 컴팩트 */
+  .list-head{display:flex;align-items:center;gap:16px;padding:10px 8px;border-bottom:2px solid var(--line);font-size:13.5px;font-weight:800;color:var(--sub);}
+  .list-head .h-rank{width:40px;text-align:center;flex-shrink:0;}
+  .list-head .h-ch{flex:1;min-width:210px;}
+  .list-head .h-stats{width:132px;text-align:right;flex-shrink:0;}
+  .list-head .h-vids{width:430px;text-align:center;flex-shrink:0;}
+  .ch-row{display:flex;align-items:center;gap:16px;padding:14px 8px;border-bottom:1px solid var(--line);flex-wrap:wrap;}
   .ch-row:hover{background:#f8fafc;}
-  .ch-info{display:flex;align-items:center;gap:12px;min-width:250px;flex:1;}
-  .ch-info img{width:56px;height:56px;border-radius:50%;object-fit:cover;background:var(--bg-soft);flex-shrink:0;}
-  .ch-name{font-size:18.5px;font-weight:700;cursor:pointer;}
+  .rank-no{width:40px;}
+  .ch-info{display:flex;align-items:center;gap:12px;min-width:210px;flex:1;}
+  .ch-info img{width:48px;height:48px;border-radius:50%;object-fit:cover;background:var(--bg-soft);flex-shrink:0;}
+  .ch-name{font-size:16.5px;font-weight:700;cursor:pointer;}
   .ch-name:hover{color:var(--blue);}
-  .ch-meta{font-size:15px;color:var(--sub);margin-top:2px;}
-  .grade{display:inline-block;min-width:26px;text-align:center;font-size:14px;font-weight:800;color:#fff;border-radius:8px;padding:2px 7px;margin-right:6px;vertical-align:middle;}
+  .ch-meta{font-size:13.5px;color:var(--sub);margin-top:2px;}
+  .grade{display:inline-block;min-width:24px;text-align:center;font-size:13px;font-weight:800;color:#fff;border-radius:7px;padding:1px 6px;margin-right:5px;vertical-align:middle;}
   .grade.S{background:#f59e0b}.grade.A{background:#2563eb}.grade.B{background:#16a34a}.grade.C{background:#64748b}.grade.D{background:#cbd5e1;color:#475569}
-  .tag{display:inline-block;font-size:13.5px;font-weight:700;padding:2px 9px;border-radius:999px;background:#eff6ff;color:var(--blue-dark);margin-left:6px;vertical-align:middle;}
-  .ch-stats{text-align:right;width:185px;flex-shrink:0;}
-  .ch-stats .views{font-size:26px;font-weight:900;color:var(--ink);line-height:1.2;}
-  .ch-stats .lbl{font-size:15.5px;color:var(--sub);margin-bottom:4px;}
-  .ch-stats .money-box{display:inline-block;margin-top:8px;background:linear-gradient(135deg,#dcfce7,#a7f3d0);border:1.5px solid #6ee7b7;border-radius:14px;padding:9px 17px;box-shadow:0 2px 8px rgba(22,163,74,.22);}
-  .ch-stats .money-box .money{font-size:24px;font-weight:900;color:#15803d;line-height:1.15;}
-  .ch-stats .money-box .lbl2{font-size:13.5px;color:#16a34a;font-weight:800;margin-top:1px;}
-  .videos-label{flex-basis:100%;width:100%;text-align:center;margin-top:16px;font-size:16px;font-weight:800;color:var(--sub);letter-spacing:.3px;}
-  .ch-videos{display:flex;gap:12px;justify-content:center;flex-basis:100%;width:100%;margin-top:12px;flex-wrap:wrap;}
-  .ch-videos a{display:block;position:relative;width:112px;height:199px;border-radius:12px;overflow:hidden;background:#000;flex-shrink:0;box-shadow:0 1px 5px rgba(15,23,42,.14);}
+  .tag{display:inline-block;font-size:12.5px;font-weight:700;padding:1px 8px;border-radius:999px;background:#eff6ff;color:var(--blue-dark);margin-left:5px;vertical-align:middle;}
+  .ch-stats{text-align:right;width:132px;flex-shrink:0;}
+  .ch-stats .views{font-size:19px;font-weight:800;color:var(--ink);}
+  .ch-stats .lbl{font-size:11.5px;color:var(--sub);}
+  .ch-stats .money{font-size:16px;font-weight:800;color:#16a34a;margin-top:3px;}
+  .ch-videos{display:flex;gap:6px;justify-content:flex-start;width:430px;flex-shrink:0;}
+  .ch-videos a{display:block;position:relative;width:81px;height:144px;border-radius:8px;overflow:hidden;background:#000;flex-shrink:0;box-shadow:0 1px 3px rgba(15,23,42,.12);}
   .ch-videos img{width:100%;height:100%;object-fit:cover;display:block;}
-  .ch-videos .v{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(transparent,rgba(0,0,0,.82));color:#fff;font-size:14px;font-weight:800;text-align:center;padding:16px 4px 6px;}
-  .ch-videos .vrank{position:absolute;top:7px;left:7px;min-width:24px;height:24px;line-height:24px;padding:0 5px;text-align:center;font-size:13.5px;font-weight:900;color:#fff;background:rgba(15,23,42,.82);border-radius:8px;}
-  .ch-videos .vrank.top{background:#f59e0b;box-shadow:0 0 0 2px #fff;}
-  .ch-videos a.center{transform:scale(1.06);box-shadow:0 3px 12px rgba(245,158,11,.45);}
-  @media(max-width:520px){.ch-videos a{width:96px;height:170px;}}
+  .ch-videos .v{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(transparent,rgba(0,0,0,.82));color:#fff;font-size:11px;font-weight:800;text-align:center;padding:12px 2px 4px;}
+  .ch-videos .vrank{position:absolute;top:4px;left:4px;min-width:18px;height:18px;line-height:18px;padding:0 3px;text-align:center;font-size:11px;font-weight:900;color:#fff;background:rgba(15,23,42,.82);border-radius:6px;}
+  .ch-videos .vrank.top{background:#f59e0b;}
+  .ch-videos a.center{outline:2px solid #f59e0b;outline-offset:-2px;}
   /* 필터 바 */
   .filter-bar{background:var(--bg-soft);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:18px;}
   .filter-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
@@ -56,10 +58,10 @@
   .fbtn.on{border-color:var(--blue);color:var(--blue);background:#eff6ff;}
   .genre-tag{display:inline-block;font-size:13.5px;font-weight:700;padding:2px 9px;border-radius:999px;background:#f0fdf4;color:#166534;margin-left:6px;vertical-align:middle;}
   /* 관리자 전용 채널 제어 (수강생에게는 보이지 않음) */
-  .admin-ctrl{width:100%;display:flex;justify-content:flex-end;gap:8px;margin-top:6px;padding-top:10px;border-top:1px dashed var(--line);}
-  .admin-ctrl button{padding:6px 12px;border-radius:999px;border:2px solid var(--line);background:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;color:var(--sub);}
+  .admin-ctrl{width:100%;display:flex;justify-content:flex-end;gap:8px;margin-top:4px;padding-top:8px;border-top:1px dashed var(--line);}
+  .admin-ctrl button{padding:5px 11px;border-radius:999px;border:2px solid var(--line);background:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;color:var(--sub);}
   .admin-ctrl button.del{color:#991b1b;border-color:#fecaca;}
-  @media(max-width:1000px){.ch-videos{display:none;}}
+  @media(max-width:940px){.ch-videos,.list-head .h-vids{display:none;}}
 </style>
 </head>
 <body>
@@ -242,7 +244,14 @@
       box.innerHTML = '<p class="empty">조건에 맞는 채널이 없습니다. 필터를 바꿔보세요.</p>';
       return;
     }
-    box.innerHTML = rows.map((c, i) => {
+    const listHead = `
+      <div class="list-head">
+        <div class="h-rank">순위</div>
+        <div class="h-ch">채널</div>
+        <div class="h-stats">일일 조회수<br>(예상수익)</div>
+        <div class="h-vids">🔥 인기 영상 (30일)</div>
+      </div>`;
+    box.innerHTML = listHead + rows.map((c, i) => {
       const g = gradeOf(c.daily_views);
       const vids = (videosByChannel[c.id] || []).slice(0, 5);
       const money = c.daily_views != null && c.daily_views > 0
@@ -263,9 +272,8 @@
           ${c.daily_views != null && c.daily_views > 0
             ? `<div class="views">+${fmtNum(c.daily_views)}</div><div class="lbl">일일 조회수 증가</div>`
             : `<div class="views">${fmtNum(c.subscriber_count)}</div><div class="lbl">구독자</div>`}
-          ${money ? `<div class="money-box"><div class="money">💰 ${money}</div><div class="lbl2">일일 예상수익</div></div>` : ""}
+          ${money ? `<div class="money">${money}</div><div class="lbl">예상수익</div>` : ""}
         </div>
-        ${vids.length ? `<div class="videos-label">🔥 인기 영상 (30일)</div>` : ""}
         <div class="ch-videos">
           ${centerRank(vids).map((v) => `
             <a class="${v.rank === 1 ? "center" : ""}" href="https://www.youtube.com/${v.is_short ? "shorts/" : "watch?v="}${v.video_id}" target="_blank" title="${escapeHtml(v.title)}">
