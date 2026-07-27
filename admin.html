@@ -28,6 +28,7 @@
   .conf.중{background:#fef9c3;color:#854d0e;}
   .conf.하{background:#fee2e2;color:#991b1b;}
   .genre-tag{display:inline-block;font-size:14px;font-weight:700;padding:2px 10px;border-radius:999px;background:#eff6ff;color:var(--blue-dark);margin-left:8px;vertical-align:middle;}
+  .src-badge{display:inline-block;font-size:14px;font-weight:800;padding:2px 10px;border-radius:999px;background:#fef3c7;color:#92400e;margin-left:8px;vertical-align:middle;}
   .reason{background:var(--bg-soft);border-radius:12px;padding:12px 16px;font-size:16.5px;color:var(--ink);margin:14px 0;line-height:1.55;}
   .reason b{color:var(--blue-dark);}
   .vids{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;}
@@ -52,7 +53,7 @@
 <div class="page">
   <div class="wrap" id="wrap">
     <h1 class="page-title">채널 승인 🛠️</h1>
-    <p class="page-desc">AI가 "무출연 편집형"으로 분류한 채널입니다. 강사님이 최종 확인해 주세요.</p>
+    <p class="page-desc">튜브랩에서 가져온 채널과 AI가 편집형으로 본 채널입니다(모두 구독자 50만 미만). 강사님이 ✓승인/✗제외만 눌러주세요.</p>
 
     <div id="content"><p class="empty">확인하는 중...</p></div>
   </div>
@@ -76,10 +77,11 @@
   let videosByChannel = {};
 
   async function fetchRows() {
-    // AI가 편집형(무출연)이라 본 채널만
+    // 승인 후보: 튜브랩에서 가져온 채널 + AI가 편집형이라 본 채널 (모두 50만 미만)
     const { data } = await sb.from("channels")
-      .select("id,title,thumbnail,subscriber_count,ai_confidence,ai_reason,ai_genre,admin_status")
-      .eq("ai_faceless", true)
+      .select("id,title,thumbnail,subscriber_count,ai_confidence,ai_reason,ai_genre,admin_status,source")
+      .lt("subscriber_count", 500000)
+      .or("source.eq.tubelab,ai_faceless.eq.true")
       .order("subscriber_count", { ascending: false })
       .limit(500);
     allRows = data || [];
@@ -176,6 +178,7 @@
           <div>
             <div class="nm">
               ${escapeHtml(r.title)}
+              ${r.source === "tubelab" ? `<span class="src-badge">튜브랩</span>` : ""}
               ${r.ai_confidence ? `<span class="conf ${r.ai_confidence}">확신 ${r.ai_confidence}</span>` : ""}
               ${r.ai_genre ? `<span class="genre-tag">${escapeHtml(r.ai_genre)}</span>` : ""}
             </div>
