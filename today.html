@@ -180,19 +180,19 @@
     allChannels = data || [];
   }
 
+  // 채널마다 개별 조회 (묶음 조회 시 조회수 높은 채널이 다른 채널 영상을 밀어내는 문제 방지)
   async function fetchVideosFor(ids) {
     const need = ids.filter((id) => !(id in videosByChannel));
-    for (let i = 0; i < need.length; i += 60) {
-      const part = need.slice(i, i + 60);
-      const { data } = await sb.from("channel_videos")
-        .select("channel_id,video_id,title,thumbnail,view_count,is_short")
-        .in("channel_id", part)
-        .order("view_count", { ascending: false })
-        .limit(part.length * 10);
-      part.forEach((id) => { videosByChannel[id] = videosByChannel[id] || []; });
-      (data || []).forEach((v) => {
-        (videosByChannel[v.channel_id] = videosByChannel[v.channel_id] || []).push(v);
-      });
+    for (let i = 0; i < need.length; i += 12) {
+      const part = need.slice(i, i + 12);
+      await Promise.all(part.map(async (id) => {
+        const { data } = await sb.from("channel_videos")
+          .select("channel_id,video_id,title,thumbnail,view_count,is_short")
+          .eq("channel_id", id)
+          .order("view_count", { ascending: false })
+          .limit(10);
+        videosByChannel[id] = data || [];
+      }));
     }
   }
 
