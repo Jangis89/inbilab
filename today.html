@@ -150,6 +150,7 @@
   async function fetchChannels() {
     const { data } = await sb.from("channels")
       .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date,ai_genre,admin_status")
+      .lt("subscriber_count", 500000)
       .order("subscriber_count", { ascending: false })
       .limit(600);
     allChannels = data || [];
