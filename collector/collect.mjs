@@ -132,7 +132,8 @@ async function fetchImageBase64(url) {
 }
 
 // ---------- Gemini로 "레퍼런스 가치" 판정 (무출연 여부 + 이식성/반복성/실행성/교육가치) ----------
-async function classifyChannel(ch, vids, gemKey, gold = "") {
+// model: 기본 Pro(품질 우선). Pro 일일 한도(250회) 도달 시 호출부에서 Flash로 자동 전환.
+async function classifyChannel(ch, vids, gemKey, gold = "", model = "gemini-pro-latest") {
   const titles = vids.map((v, i) => `${i + 1}. ${v.title}`).join("\n");
   const goldBlock = gold
     ? `[정답 예시 — 튜브랩이 엄선한 무출연 편집형 쇼츠 채널]\n${gold}\n\n`
@@ -158,11 +159,11 @@ async function classifyChannel(ch, vids, gemKey, gold = "") {
     `feasible_score 0~15(초보 실행성: 무출연·TTS 가능·직접촬영 불필요·일반 PC 편집도구로 제작), ` +
     `educate_score 0~15(교육 가치: 첫 1~2초 훅이 명확, 구성·편집 원리를 추출해 가르칠 수 있음).\n` +
     `series_repeated: 이 채널이 같은 포맷을 여러 영상에서 반복 운영 중이면 true(채널 검증), 한두 개만 터진 상태면 false.\n\n` +
-    `반드시 아래 JSON만 반환:\n` +
+    `반드시 아래 형태의 JSON만 반환해. 모든 점수 필드는 반드시 네가 평가한 실제 정수 점수로 채워라(0은 '해당 영역 완전 낙제'일 때만 사용):\n` +
     `{"creator_face":"none|brief|main","creator_voice":"none|main","voice_type":"none|ai_tts|original|music",` +
     `"content_format":"movie_recap|drama_recap|ranking|animation|game_edit|issue_tts|animal|sports|music|other",` +
-    `"transfer_score":0,"monetize_score":0,"repeat_score":0,"feasible_score":0,"educate_score":0,` +
-    `"series_repeated":true,"copyright_risk":"low|mid|high","confidence":0.0,"genre":"한국어 장르","reason":"한 줄 근거",` +
+    `"transfer_score":"<0~25 정수>","monetize_score":"<0~25 정수>","repeat_score":"<0~20 정수>","feasible_score":"<0~15 정수>","educate_score":"<0~15 정수>",` +
+    `"series_repeated":true,"copyright_risk":"low|mid|high","confidence":"<0~1 소수>","genre":"한국어 장르","reason":"한 줄 근거",` +
     `"benchmark":"수강생이 참고할 포인트 한 줄","caution":"그대로 따라하면 안 되는 것 한 줄"}`;
   const parts = [{ text: prompt }];
   for (const v of vids.slice(0, 4)) {
@@ -172,7 +173,7 @@ async function classifyChannel(ch, vids, gemKey, gold = "") {
   }
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-latest:generateContent?key=${gemKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${gemKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -184,13 +185,25 @@ async function classifyChannel(ch, vids, gemKey, gold = "") {
     );
     const data = await res.json();
     if (data.error) {
-      console.log(`  Gemini 오류(${ch.title}): ${data.error.message}`);
+      console.log(`  Gemini 오류(${ch.title}): ${String(data.error.message).slice(0, 140)}`);
+      // 일일 한도/쿼터 초과는 호출부에 알려 모델 전환(Pro→Flash)을 유도
+      if (/quota|RESOURCE_EXHAUSTED|rate/i.test(String(data.error.message))) return { quota: true };
       return null;
     }
     const txt = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    const o = JSON.parse(txt);
+    let o = JSON.parse(txt);
+    if (Array.isArray(o)) o = o[0] || {};                       // 배열로 감싸서 주는 경우
+    if (o.scores && typeof o.scores === "object") o = { ...o, ...o.scores }; // 점수를 중첩해 주는 경우
     // 무출연 최종 판정 = 제작자 본인 얼굴이 none/brief 이고, 본인 목소리가 none (타인 얼굴/목소리는 무관)
     const faceless = (o.creator_face === "none" || o.creator_face === "brief") && o.creator_voice === "none";
+    // 점수 필드가 누락됐거나(파싱 실패) 전부 0인데 근거도 없으면 → 저장하지 않고 다음 실행에서 재시도
+    const rawScores = [o.transfer_score, o.monetize_score, o.repeat_score, o.feasible_score, o.educate_score];
+    const missing = rawScores.some((v) => v == null || v === "" || isNaN(Number(v)));
+    const allZero = rawScores.every((v) => Number(v) === 0);
+    if (missing || (allZero && !(o.reason || "").trim())) {
+      console.log(`  점수 응답 불량(${ch.title}): ${txt.slice(0, 120)} → 재시도 예정`);
+      return null;
+    }
     const cap = (x, max) => Math.max(0, Math.min(max, Math.round(Number(x) || 0)));
     const scores = {
       transfer: cap(o.transfer_score, 25),
@@ -201,7 +214,7 @@ async function classifyChannel(ch, vids, gemKey, gold = "") {
     };
     return {
       faceless,
-      confidence: typeof o.confidence === "number" ? o.confidence : 0.6, // 0~1
+      confidence: isNaN(Number(o.confidence)) ? 0.6 : Math.max(0, Math.min(1, Number(o.confidence))), // 0~1
       reason: (o.reason || "").slice(0, 200),
       genre: (o.genre || o.content_format || "").slice(0, 40),
       copyright_risk: o.copyright_risk || null,
@@ -467,7 +480,8 @@ async function main() {
     );
     const gold = (goldRows || []).map((g) => `- ${g.title}${g.ai_genre ? ` (${g.ai_genre})` : ""}`).join("\n");
 
-    const AI_LIMIT = 200; // Gemini로 판정할 쇼츠 채널 최대 수 (하루)
+    const AI_LIMIT = 400; // Gemini로 판정할 쇼츠 채널 최대 수 (하루) — Pro 250회 초과분은 Flash가 처리
+    let gemModel = "gemini-pro-latest"; // Pro 한도 도달 시 Flash로 자동 전환
     // 튜브랩 채널은 이미 검증됨 → 제외. 새로 발굴/트렌딩된 채널(source 없음)만 검수. 신규 우선.
     const unclassified = await sbFetch(
       `channels?select=id,title,admin_status&classified_at=is.null&is_active=eq.true&subscriber_count=lt.${MAX_SUBS}&source=is.null&order=added_at.desc&limit=600`
@@ -492,8 +506,13 @@ async function main() {
         continue;
       }
       // (2) 쇼츠 채널만 AI(튜브랩 정답 + 오답 예시)로 '본인' 무출연 판정
-      const r = await classifyChannel(ch, vids.slice(0, 5), GEM_KEY, gold);
-      if (!r) continue;
+      let r = await classifyChannel(ch, vids.slice(0, 5), GEM_KEY, gold, gemModel);
+      if (r && r.quota && gemModel === "gemini-pro-latest") {
+        console.log("  ⚠ Pro 일일 한도 도달 → Flash 모델로 전환해 계속 진행");
+        gemModel = "gemini-flash-latest";
+        r = await classifyChannel(ch, vids.slice(0, 5), GEM_KEY, gold, gemModel);
+      }
+      if (!r || r.quota) continue;
       const conf = r.confidence;                          // 0~1
       const confText = conf >= 0.8 ? "상" : conf >= 0.5 ? "중" : "하";
       const faceless = conf < 0.5 ? false : r.faceless;   // 신뢰도 0.5 미만은 제외
