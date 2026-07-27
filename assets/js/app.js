@@ -48,6 +48,17 @@
     return (user.user_metadata && user.user_metadata.nickname) || (user.email ? user.email.split("@")[0] : "회원");
   };
 
+  // 관리자 여부 (admins 표에 등록된 사람만 true)
+  window.isAdmin = async function (user) {
+    if (!sb || !user) return false;
+    try {
+      const { data } = await sb.from("admins").select("user_id").eq("user_id", user.id).maybeSingle();
+      return !!data;
+    } catch {
+      return false;
+    }
+  };
+
   window.logout = async function () {
     if (sb) await sb.auth.signOut();
     location.href = "index.html";
@@ -65,7 +76,7 @@
   };
 
   // ---------- 헤더/사이드바 렌더링 ----------
-  // 로그인 전: 상단 간단 바 / 로그인 후: 좌측 그룹형 사이드바
+  // 로그인 전: 상단 간단 바 / 로그인 후: 좌측 그��형 사이드바
   window.renderHeader = async function (active) {
     const el = $id("site-header");
     if (!el) return;
@@ -109,6 +120,12 @@
         ["study.html", "study", "📚", "학습자료"],
       ]},
     ];
+    // 관리자에게만 '운영' 메뉴 노출
+    if (await isAdmin(user)) {
+      groups.push({ label: "운영", items: [
+        ["admin.html", "admin", "🛠️", "채널 승인"],
+      ]});
+    }
     const navHtml = groups.map((g) =>
       (g.label ? `<div class="side-label">${g.label}</div>` : "") +
       g.items.map(([href, key, icon, label]) =>
