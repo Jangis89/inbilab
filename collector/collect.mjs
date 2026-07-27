@@ -384,6 +384,31 @@ async function main() {
     console.log(`안전장치 처리 실패(다음 실행에서 재시도): ${e.message}`);
   }
 
+  // ========== 5.6 성장 미달 자동 제외 (관리자 방침) ==========
+  // AI 발굴 채널 중 하루 성장(조회수 증가 + 구독자 증가)이 합쳐서 100 미만이면
+  // 수강생이 볼 가치가 없으므로 검토 대기에 올리지 않고 자동 제외.
+  // (성장 데이터가 아직 없는 신규 발굴 채널은 다음 날 성장 확인 후 판단)
+  try {
+    const pendingAi = await sbFetch(
+      `channels?select=id,daily_views,daily_subs&source=is.null&is_active=eq.true` +
+      `&daily_views=not.is.null&daily_subs=not.is.null` +
+      `&or=(admin_status.is.null,admin_status.eq.${encodeURIComponent("대기")})&limit=2000`
+    );
+    const lowGrowth = (pendingAi || [])
+      .filter((c) => (Number(c.daily_views) || 0) + (Number(c.daily_subs) || 0) < 100)
+      .map((c) => c.id);
+    for (const ids of chunk(lowGrowth, 100)) {
+      await sbFetch(`channels?id=in.(${ids.map((i) => `"${i}"`).join(",")})`, {
+        method: "PATCH",
+        body: { admin_status: "제외" },
+        prefer: "return=minimal",
+      });
+    }
+    if (lowGrowth.length) console.log(`성장 미달(하루 증가 합계 100 미만) 자동 제외: ${lowGrowth.length}개`);
+  } catch (e) {
+    console.log(`성장 미달 제외 처리 실패(다음 실행에서 재시도): ${e.message}`);
+  }
+
   // 발견 경로 기록: 유튜브 검색(14일·조회수순)으로 발굴된 채널 표시 (이미 기록된 채널은 유지)
   for (const ids of chunk([...discoveredSet], 100)) {
     try {
