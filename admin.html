@@ -98,7 +98,7 @@
   <div class="wrap" id="wrap">
     <h1 class="page-title">채널 승인 🛠️</h1>
     <p class="page-desc">AI가 가져온 50만 구독자 미만의 채널입니다. 관리자님께서는 수강생에게 보여줄 채널에 대해 ✓승인/✗제외만 눌러주세요.<br>
-    <span style="font-size:13px;color:#94a3b8;">* 유튜브는 구독자 수를 반올림해 공개하므로(채널 크기에 따라 10~1,000명 단위), 그보다 작은 하루 증가는 "미만"으로 표시됩니다.</span></p>
+    <span style="font-size:13px;color:#94a3b8;">* 구독자 증가는 유튜브 공개값(반올림)을 바탕으로 계산한 하루 평균 추정치입니다.</span></p>
 
     <div id="content"><p class="empty">확인하는 중...</p></div>
   </div>
@@ -138,7 +138,7 @@
   async function fetchRows() {
     // 승인 후보: 튜브랩에서 가져온 채널 + AI가 편집형이라 본 채널 (모두 50만 미만)
     const { data } = await sb.from("channels")
-      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,ai_confidence,ai_reason,ai_genre,ai_ref_score,ai_ref_class,ai_benchmark,ai_caution,ai_series,admin_status,source")
+      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,daily_subs_est,ai_confidence,ai_reason,ai_genre,ai_ref_score,ai_ref_class,ai_benchmark,ai_caution,ai_series,admin_status,source")
       .lt("subscriber_count", 500000)
       .or("source.eq.tubelab,ai_faceless.eq.true")
       .order("subscriber_count", { ascending: false })
@@ -337,13 +337,12 @@
       }
       // 일일 성장 표시 (튜브랩식 일일조회수)
       const fmtDelta = (n) => (n >= 0 ? "+" : "-") + fmtNum(Math.abs(n));
-      // 유튜브는 구독자 수를 앞 3자리로 반올림해 공개 → 채널 크기에 따라 10/100/1,000명 단위로만 움직임
-      // 증가가 0으로 잡히면 "집계 단위 미만"이라는 뜻이므로 그렇게 정직하게 표시
-      const subStep = (s) => (s >= 100000 ? "1천" : s >= 10000 ? "100" : s >= 1000 ? "10" : "1");
-      const subsHtml = r.daily_subs == null ? ""
-        : r.daily_subs !== 0
-          ? `<div class="gs ${r.daily_subs < 0 ? "neg" : ""}">${fmtDelta(r.daily_subs)} 구독자</div>`
-          : `<div class="gwait">구독자 +${subStep(Number(r.subscriber_count) || 0)}명 미만*</div>`;
+      // 구독자 증가: 유튜브가 반올림 공개하므로, 공개 숫자가 마지막으로 바뀐 날 대비 하루 평균 추정치를 우선 표시
+      const subsVal = (r.daily_subs_est != null && r.daily_subs_est !== 0) ? r.daily_subs_est
+        : (r.daily_subs != null && r.daily_subs !== 0) ? r.daily_subs : null;
+      const subsHtml = subsVal != null
+        ? `<div class="gs ${subsVal < 0 ? "neg" : ""}">${fmtDelta(subsVal)} 구독자*</div>`
+        : "";
       const growHtml = r.daily_views != null || r.daily_subs != null
         ? `<div class="agrow">
             ${r.daily_views != null ? `<div class="gv ${r.daily_views < 0 ? "neg" : ""}">${fmtDelta(r.daily_views)}</div><div class="gl">일일 조회수</div>` : ""}
