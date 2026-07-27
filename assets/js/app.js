@@ -64,47 +64,72 @@
     return user;
   };
 
-  // ---------- 헤더 렌더링 ----------
-  // 각 페이지의 <div id="site-header"></div> 에 공통 헤더를 그린다
+  // ---------- 헤더/사이드바 렌더링 ----------
+  // 로그인 전: 상단 간단 바 / 로그인 후: 좌측 그룹형 사이드바
   window.renderHeader = async function (active) {
     const el = $id("site-header");
     if (!el) return;
     const user = sb ? await getUser() : null;
-    const menu = [
-      ["dashboard.html", "dashboard", "홈"],
-      ["today.html", "today", "뜨는 채널"],
-      ["rocket.html", "rocket", "로켓 채널"],
-      ["channel.html", "channel", "채널 분석"],
-      ["favorites.html", "favorites", "관심 채널"],
-      ["community.html", "community", "성장 기록실"],
-      ["study.html", "study", "학습자료"],
-    ];
-    const menuHtml = menu
-      .map(([href, key, label]) =>
-        `<a href="${href}" class="${key === active ? "on" : ""}">${label}</a>`)
-      .join("");
-    const right = user
-      ? `<span class="hello">${escapeHtml(getNickname(user))} 님</span>
-         <a class="btn btn-ghost btn-sm" href="profile.html">내 정보</a>
-         <button class="btn btn-ghost btn-sm" onclick="logout()">로그아웃</button>`
-      : `<a class="btn btn-ghost btn-sm" href="login.html">로그인</a>
-         <a class="btn btn-main btn-sm" href="register.html">무료로 시작</a>`;
-    el.innerHTML = `
-      <header class="site">
-        <div class="wrap nav">
-          <a class="logo" href="${user ? "dashboard.html" : "index.html"}">인비<span>랩</span></a>
-          <nav class="menu">${menuHtml}</nav>
-          <div class="btns">${right}</div>
-        </div>
-      </header>`;
 
-    // Supabase 설정 전이면 안내 배너 표시
-    if (!sb) {
-      const b = document.createElement("div");
-      b.className = "setup-banner";
-      b.innerHTML = "⚙️ <b>미리보기 모드</b>입니다. Supabase 연결값(config.js)을 넣으면 회원가입·게시판이 실제로 작동합니다.";
-      el.appendChild(b);
+    // 로그인 전(방문자): 상단 마케팅 바
+    if (!user) {
+      document.body.classList.remove("has-sidebar", "side-open");
+      el.innerHTML = `
+        <header class="site">
+          <div class="wrap nav">
+            <a class="logo" href="index.html">인비<span>랩</span></a>
+            <div class="btns">
+              <a class="btn btn-ghost btn-sm" href="login.html">로그인</a>
+              <a class="btn btn-main btn-sm" href="register.html">무료로 시작</a>
+            </div>
+          </div>
+        </header>`;
+      if (!sb) {
+        const b = document.createElement("div");
+        b.className = "setup-banner";
+        b.innerHTML = "⚙️ <b>미리보기 모드</b>입니다. Supabase 연결값(config.js)을 넣으면 회원가입·게시판이 실제로 작동합니다.";
+        el.appendChild(b);
+      }
+      return;
     }
+
+    // 로그인 후: 좌측 사이드바 (그룹형)
+    const groups = [
+      { items: [["dashboard.html", "dashboard", "🏠", "홈"]] },
+      { label: "트렌드 발굴", items: [
+        ["today.html", "today", "🔥", "오늘 뜨는 채널"],
+        ["rocket.html", "rocket", "🚀", "로켓 채널"],
+        ["favorites.html", "favorites", "⭐", "관심 채널"],
+      ]},
+      { label: "분석", items: [
+        ["channel.html", "channel", "🔍", "채널 분석"],
+      ]},
+      { label: "커뮤니티", items: [
+        ["community.html", "community", "🏆", "성장 기록실"],
+        ["study.html", "study", "📚", "학습자료"],
+      ]},
+    ];
+    const navHtml = groups.map((g) =>
+      (g.label ? `<div class="side-label">${g.label}</div>` : "") +
+      g.items.map(([href, key, icon, label]) =>
+        `<a href="${href}" class="side-link ${key === active ? "on" : ""}"><span class="si">${icon}</span>${label}</a>`).join("")
+    ).join("");
+    el.innerHTML = `
+      <button class="side-toggle" onclick="document.body.classList.toggle('side-open')" aria-label="메뉴 열기">☰</button>
+      <div class="side-backdrop" onclick="document.body.classList.remove('side-open')"></div>
+      <aside class="sidebar">
+        <a class="logo" href="dashboard.html">인비<span>랩</span></a>
+        <nav class="side-nav">${navHtml}</nav>
+        <div class="side-user">
+          <div class="side-name">${escapeHtml(getNickname(user))} 님</div>
+          <a class="btn btn-ghost btn-sm" href="profile.html">내 정보</a>
+          <button class="btn btn-ghost btn-sm" onclick="logout()">로그아웃</button>
+        </div>
+      </aside>`;
+    document.body.classList.add("has-sidebar");
+    // 메뉴 클릭 시 모바일에서는 사이드바 닫기
+    el.querySelectorAll(".side-link").forEach((a) =>
+      a.addEventListener("click", () => document.body.classList.remove("side-open")));
   };
 
   // ---------- 푸터 ----------
