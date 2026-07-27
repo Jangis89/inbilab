@@ -6,44 +6,73 @@
 <title>채널 승인 — 인비랩</title>
 <link rel="stylesheet" href="assets/css/style.css">
 <style>
-  .admin-note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:16px 20px;font-size:17px;color:var(--blue-dark);margin-bottom:20px;line-height:1.6;}
-  .counts{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px;}
-  .count-box{flex:1;min-width:120px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;text-align:center;}
-  .count-box b{display:block;font-size:30px;color:var(--ink);}
-  .count-box span{font-size:15.5px;color:var(--sub);}
+  /* 상단 카운트 (관리자용 · 작게) */
+  .counts{display:flex;gap:8px;margin-bottom:14px;}
+  .count-box{background:#fff;border:1px solid var(--line);border-radius:10px;padding:7px 16px;text-align:center;}
+  .count-box b{display:block;font-size:18px;font-weight:800;color:var(--ink);line-height:1.2;}
+  .count-box span{font-size:12px;color:var(--sub);}
 
-  .filter-bar{background:var(--bg-soft);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:18px;}
-  .filter-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
-  .filter-row .flabel{font-size:15.5px;font-weight:700;color:var(--sub);width:74px;flex-shrink:0;}
-  .fbtn{padding:7px 15px;border-radius:999px;border:2px solid var(--line);background:#fff;font-size:15.5px;font-weight:700;cursor:pointer;color:var(--sub);font-family:inherit;}
+  /* 출처 카테고리 탭 */
+  .cat-tabs{display:flex;gap:8px;margin-bottom:14px;}
+  .cat-tabs button{flex:1;padding:12px 10px;border-radius:12px;border:2px solid var(--line);background:#fff;font-size:16px;font-weight:800;cursor:pointer;color:var(--sub);font-family:inherit;line-height:1.25;}
+  .cat-tabs button.on{border-color:var(--blue);background:#eff6ff;color:var(--blue);}
+  .cat-tabs button small{display:block;font-size:12.5px;font-weight:600;margin-top:2px;opacity:.85;}
+
+  /* 필터 */
+  .filter-bar{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:12px;}
+  .filter-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .filter-row+.filter-row{margin-top:8px;}
+  .filter-row .flabel{font-size:13.5px;font-weight:700;color:var(--sub);width:56px;flex-shrink:0;}
+  .fbtn{padding:5px 13px;border-radius:999px;border:2px solid var(--line);background:#fff;font-size:13.5px;font-weight:700;cursor:pointer;color:var(--sub);font-family:inherit;}
   .fbtn.on{border-color:var(--blue);color:var(--blue);background:#eff6ff;}
 
-  .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;margin-bottom:16px;}
-  .card-head{display:flex;align-items:center;gap:14px;}
-  .card-head img{width:60px;height:60px;border-radius:50%;object-fit:cover;background:var(--bg-soft);flex-shrink:0;}
-  .card-head .nm{font-size:20px;font-weight:800;}
-  .card-head .meta{font-size:15.5px;color:var(--sub);margin-top:2px;}
-  .conf{display:inline-block;font-size:14px;font-weight:800;padding:2px 10px;border-radius:999px;margin-left:8px;vertical-align:middle;}
-  .conf.상{background:#dcfce7;color:#166534;}
-  .conf.중{background:#fef9c3;color:#854d0e;}
-  .conf.하{background:#fee2e2;color:#991b1b;}
-  .genre-tag{display:inline-block;font-size:14px;font-weight:700;padding:2px 10px;border-radius:999px;background:#eff6ff;color:var(--blue-dark);margin-left:8px;vertical-align:middle;}
-  .src-badge{display:inline-block;font-size:14px;font-weight:800;padding:2px 10px;border-radius:999px;background:#fef3c7;color:#92400e;margin-left:8px;vertical-align:middle;}
-  .reason{background:var(--bg-soft);border-radius:12px;padding:12px 16px;font-size:16.5px;color:var(--ink);margin:14px 0;line-height:1.55;}
-  .reason b{color:var(--blue-dark);}
-  .vids{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0;}
-  .vids a{display:block;position:relative;width:112px;height:199px;border-radius:12px;overflow:hidden;background:#000;flex-shrink:0;box-shadow:0 1px 4px rgba(15,23,42,.12);}
-  .vids img{width:100%;height:100%;object-fit:cover;display:block;}
-  .vids .vt{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(transparent,rgba(0,0,0,.82));color:#fff;font-size:13.5px;font-weight:800;text-align:center;padding:16px 4px 6px;}
-  .card-actions{display:flex;gap:12px;margin-top:8px;}
-  .card-actions .btn{flex:1;text-align:center;}
-  .status-badge{font-size:16px;font-weight:800;padding:8px 0;text-align:center;border-radius:12px;}
-  .status-badge.승인{background:#dcfce7;color:#166534;}
-  .status-badge.제외{background:#fee2e2;color:#991b1b;}
-  .empty{padding:50px 0;text-align:center;color:var(--sub);font-size:18px;}
+  /* 일괄 처리 바 */
+  .bulkbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;background:#fff;border:2px solid var(--line);border-radius:12px;margin-bottom:14px;position:sticky;top:6px;z-index:20;box-shadow:0 2px 10px rgba(15,23,42,.06);}
+  .bulkbar .sa{display:flex;align-items:center;gap:8px;font-size:14.5px;font-weight:800;color:var(--ink);cursor:pointer;user-select:none;}
+  .bulkbar .selnum{font-size:13.5px;color:var(--sub);font-weight:700;}
+  .bulkbar .spacer{flex:1;}
+  .bulkbar .bk{padding:8px 15px;border-radius:9px;border:none;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;color:#fff;}
+  .bulkbar .bk.app{background:var(--blue);}
+  .bulkbar .bk.exc{background:#ef4444;}
+  .bulkbar .bk.del{background:#fff;border:1.5px solid #fecaca;color:#991b1b;}
+  .bulkbar .bk:disabled{opacity:.4;cursor:default;}
+
+  /* 컴팩트 채널 카드 */
+  .acard{display:flex;align-items:center;gap:13px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:9px;background:#fff;}
+  .acard.sel{background:#eff6ff;border-color:#93c5fd;}
+  .chk{width:20px;height:20px;flex-shrink:0;cursor:pointer;accent-color:var(--blue);}
+  .ainfo{flex:1;min-width:180px;display:flex;align-items:center;gap:11px;}
+  .ainfo img{width:46px;height:46px;border-radius:50%;object-fit:cover;background:var(--bg-soft);flex-shrink:0;}
+  .ainfo .nm{font-size:15.5px;font-weight:800;line-height:1.3;}
+  .ainfo .meta{font-size:12.5px;color:var(--sub);margin-top:2px;}
+  .ainfo .rsn{font-size:12px;color:#7c3aed;margin-top:3px;line-height:1.4;}
+  .bg-sm{display:inline-block;font-size:11.5px;font-weight:800;padding:1px 8px;border-radius:999px;margin-left:5px;vertical-align:middle;}
+  .b-src{background:#fef3c7;color:#92400e;}
+  .b-ai{background:#f3e8ff;color:#7c3aed;}
+  .b-genre{background:#eff6ff;color:var(--blue-dark);}
+  .b-상{background:#dcfce7;color:#166534;}
+  .b-중{background:#fef9c3;color:#854d0e;}
+  .b-하{background:#fee2e2;color:#991b1b;}
+  .avids{display:flex;gap:5px;flex-shrink:0;}
+  .avids a{display:block;position:relative;width:66px;height:117px;border-radius:7px;overflow:hidden;background:#000;flex-shrink:0;}
+  .avids img{width:100%;height:100%;object-fit:cover;display:block;}
+  .avids .vt{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(transparent,rgba(0,0,0,.82));color:#fff;font-size:10px;font-weight:800;text-align:center;padding:9px 1px 3px;}
+  .novids{font-size:12.5px;color:var(--sub);width:350px;flex-shrink:0;text-align:center;}
+  .aactions{display:flex;flex-direction:column;gap:5px;width:138px;flex-shrink:0;}
+  .aactions button{padding:6px 8px;border-radius:8px;border:none;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;}
+  .a-app{background:var(--blue);color:#fff;}
+  .a-exc{background:#ef4444;color:#fff;}
+  .a-rev{background:#fff;border:1.5px solid var(--line);color:var(--sub);}
+  .a-del{background:#fff;border:1.5px solid #fecaca;color:#991b1b;}
+  .stat-line{font-size:12.5px;font-weight:800;text-align:center;padding:5px 0;border-radius:7px;}
+  .stat-line.승인{background:#dcfce7;color:#166534;}
+  .stat-line.제외{background:#fee2e2;color:#991b1b;}
+
+  .empty{padding:44px 0;text-align:center;color:var(--sub);font-size:17px;}
   .noperm{padding:70px 20px;text-align:center;}
   .noperm h2{font-size:26px;margin-bottom:10px;}
   .noperm p{font-size:18px;color:var(--sub);}
+  @media(max-width:940px){.avids,.novids{display:none;}}
 </style>
 </head>
 <body>
@@ -81,9 +110,14 @@
     else { img.style.visibility = "hidden"; }
   };
 
-  const filters = { conf: "", status: "대기" }; // 기본: 대기중, 확신도 전체
+  // source: tubelab = 튜브랩 미러링 / ai = 인비남 AI 검수(그 외)
+  const filters = { conf: "", status: "대기", source: "tubelab" };
   let allRows = [];
+  let currentRows = [];              // 현재 화면에 보이는(필터 적용된) 채널
+  let selected = new Set();          // 선택된 채널 id
   let videosByChannel = {};
+
+  function isTubelab(r) { return r.source === "tubelab"; }
 
   async function fetchRows() {
     // 승인 후보: 튜브랩에서 가져온 채널 + AI가 편집형이라 본 채널 (모두 50만 미만)
@@ -112,122 +146,204 @@
     }
   }
 
+  // ---------- 개별 처리 ----------
   async function setStatus(id, status) {
     const { error } = await sb.from("channels").update({ admin_status: status }).eq("id", id);
     if (error) { alert("변경 실패: " + error.message); return; }
     const row = allRows.find((r) => r.id === id);
     if (row) row.admin_status = status;
+    selected.delete(id);
     render();
   }
   window.setStatus = setStatus;
 
-  // 채널 완전 삭제 (관리자 전용 · RLS로 서버에서도 관리자만 허용)
   async function delChannel(id) {
     const row = allRows.find((r) => r.id === id);
     const title = row ? row.title : "이 채널";
-    if (!confirm(`'${title}' 채널을 목록에서 완전히 삭제할까요?\n\n삭제하면 승인·검토 목록과 수강생 화면에서 모두 사라집니다.\n(다시 필요하면 나중에 새로 수집됩니다.)`)) return;
+    if (!confirm(`'${title}' 채널을 목록에서 완전히 삭제할까요?\n\n삭제하면 승인·검토 목록과 수강생 화면에서 모두 사라집니다.`)) return;
     const { error } = await sb.from("channels").delete().eq("id", id);
     if (error) { alert("삭제 실패: " + error.message); return; }
     allRows = allRows.filter((r) => r.id !== id);
+    selected.delete(id);
     render();
   }
   window.delChannel = delChannel;
 
-  function counts() {
+  // ---------- 일괄 처리 ----------
+  async function bulkStatus(status) {
+    const ids = [...selected];
+    if (!ids.length) return;
+    const label = status === "승인" ? "승인" : "제외";
+    if (!confirm(`선택한 ${ids.length}개 채널을 '${label}' 처리할까요?`)) return;
+    const { error } = await sb.from("channels").update({ admin_status: status }).in("id", ids);
+    if (error) { alert("일괄 변경 실패: " + error.message); return; }
+    ids.forEach((id) => { const r = allRows.find((x) => x.id === id); if (r) r.admin_status = status; });
+    selected.clear();
+    render();
+  }
+  window.bulkStatus = bulkStatus;
+
+  async function bulkDelete() {
+    const ids = [...selected];
+    if (!ids.length) return;
+    if (!confirm(`선택한 ${ids.length}개 채널을 완전히 삭제할까요?\n\n삭제하면 목록과 수강생 화면에서 모두 사라집니다.`)) return;
+    const { error } = await sb.from("channels").delete().in("id", ids);
+    if (error) { alert("일괄 삭제 실패: " + error.message); return; }
+    allRows = allRows.filter((r) => !selected.has(r.id));
+    selected.clear();
+    render();
+  }
+  window.bulkDelete = bulkDelete;
+
+  // ---------- 선택 ----------
+  window.toggleSel = function (cb, id) {
+    if (cb.checked) selected.add(id); else selected.delete(id);
+    const card = cb.closest(".acard");
+    if (card) card.classList.toggle("sel", cb.checked);
+    updateBulk();
+  };
+  window.toggleAll = function (cb) {
+    currentRows.forEach((r) => { if (cb.checked) selected.add(r.id); else selected.delete(r.id); });
+    document.querySelectorAll(".acard").forEach((card) => {
+      const on = selected.has(card.dataset.id);
+      card.classList.toggle("sel", on);
+      const c = card.querySelector(".chk"); if (c) c.checked = on;
+    });
+    updateBulk();
+  };
+  function updateBulk() {
+    const n = currentRows.filter((r) => selected.has(r.id)).length;
+    const nb = $id("sel-count"); if (nb) nb.textContent = n;
+    document.querySelectorAll(".bulkbar .bk").forEach((b) => (b.disabled = n === 0));
+    const sa = $id("select-all"); if (sa) sa.checked = currentRows.length > 0 && n === currentRows.length;
+  }
+
+  function counts(srcRows) {
     const c = { 대기: 0, 승인: 0, 제외: 0 };
-    allRows.forEach((r) => { c[r.admin_status || "대기"] = (c[r.admin_status || "대기"] || 0) + 1; });
+    srcRows.forEach((r) => { c[r.admin_status || "대기"] = (c[r.admin_status || "대기"] || 0) + 1; });
     return c;
   }
 
   function render() {
     const box = $id("content");
-    const c = counts();
+    const tubeRows = allRows.filter(isTubelab);
+    const aiRows = allRows.filter((r) => !isTubelab(r));
+    const tubePending = tubeRows.filter((r) => (r.admin_status || "대기") === "대기").length;
+    const aiPending = aiRows.filter((r) => (r.admin_status || "대기") === "대기").length;
 
-    // 필터 적용
-    let rows = allRows.slice();
-    if (filters.status) rows = rows.filter((r) => (r.admin_status || "대기") === filters.status);
-    if (filters.conf) rows = rows.filter((r) => r.ai_confidence === filters.conf);
+    const srcRows = filters.source === "tubelab" ? tubeRows : aiRows;
+    const c = counts(srcRows);
 
-    const head = `
+    // 상태 + 확신도 필터
+    currentRows = srcRows.slice();
+    if (filters.status) currentRows = currentRows.filter((r) => (r.admin_status || "대기") === filters.status);
+    if (filters.conf) currentRows = currentRows.filter((r) => r.ai_confidence === filters.conf);
+
+    const catTabs = `
+      <div class="cat-tabs">
+        <button class="${filters.source === "tubelab" ? "on" : ""}" data-src="tubelab">튜브랩<small>튜브랩에서 가져온 채널 · 대기 ${tubePending}</small></button>
+        <button class="${filters.source === "ai" ? "on" : ""}" data-src="ai">인비남 AI<small>AI 검수로 가져온 채널 · 대기 ${aiPending}</small></button>
+      </div>`;
+
+    const countsHtml = `
       <div class="counts">
         <div class="count-box"><b>${c.대기}</b><span>검토 대기</span></div>
         <div class="count-box"><b>${c.승인}</b><span>승인됨</span></div>
         <div class="count-box"><b>${c.제외}</b><span>제외됨</span></div>
-      </div>
-      <div class="filter-bar">
-        <div class="filter-row" style="margin-bottom:10px">
-          <span class="flabel">상태</span>
-          <button class="fbtn ${filters.status === "대기" ? "on" : ""}" data-f="status" data-v="대기">검토 대기</button>
-          <button class="fbtn ${filters.status === "승인" ? "on" : ""}" data-f="status" data-v="승인">승인됨</button>
-          <button class="fbtn ${filters.status === "제외" ? "on" : ""}" data-f="status" data-v="제외">제외됨</button>
-          <button class="fbtn ${filters.status === "" ? "on" : ""}" data-f="status" data-v="">전체</button>
-        </div>
-        <div class="filter-row">
-          <span class="flabel">확신도</span>
-          <button class="fbtn ${filters.conf === "" ? "on" : ""}" data-f="conf" data-v="">전체</button>
-          <button class="fbtn ${filters.conf === "상" ? "on" : ""}" data-f="conf" data-v="상">상</button>
-          <button class="fbtn ${filters.conf === "중" ? "on" : ""}" data-f="conf" data-v="중">중</button>
-          <button class="fbtn ${filters.conf === "하" ? "on" : ""}" data-f="conf" data-v="하">하</button>
-        </div>
       </div>`;
 
-    if (rows.length === 0) {
+    const confRow = filters.source === "ai"
+      ? `<div class="filter-row">
+          <span class="flabel">확신도</span>
+          ${["", "상", "중", "하"].map((v) => `<button class="fbtn ${filters.conf === v ? "on" : ""}" data-f="conf" data-v="${v}">${v || "전체"}</button>`).join("")}
+        </div>` : "";
+
+    const filterBar = `
+      <div class="filter-bar">
+        <div class="filter-row">
+          <span class="flabel">상태</span>
+          ${[["대기", "검토 대기"], ["승인", "승인됨"], ["제외", "제외됨"], ["", "전체"]].map(([v, t]) => `<button class="fbtn ${filters.status === v ? "on" : ""}" data-f="status" data-v="${v}">${t}</button>`).join("")}
+        </div>
+        ${confRow}
+      </div>`;
+
+    const bulkBar = `
+      <div class="bulkbar">
+        <label class="sa"><input type="checkbox" class="chk" id="select-all" onchange="toggleAll(this)"> 전체 선택</label>
+        <span class="selnum"><b id="sel-count">0</b>개 선택됨</span>
+        <span class="spacer"></span>
+        <button class="bk app" onclick="bulkStatus('승인')" disabled>✓ 선택 승인</button>
+        <button class="bk exc" onclick="bulkStatus('제외')" disabled>✗ 선택 제외</button>
+        <button class="bk del" onclick="bulkDelete()" disabled>🗑 선택 삭제</button>
+      </div>`;
+
+    const head = catTabs + countsHtml + filterBar + bulkBar;
+
+    if (currentRows.length === 0) {
       box.innerHTML = head + '<p class="empty">이 조건에 해당하는 채널이 없습니다. 👍</p>';
-      bindFilters();
+      bindHead();
       return;
     }
 
-    box.innerHTML = head + rows.map((r) => {
+    box.innerHTML = head + currentRows.map((r) => {
       const vids = (videosByChannel[r.id] || []).slice(0, 5);
       const st = r.admin_status || "대기";
-      const actions = st === "대기"
-        ? `<div class="card-actions">
-             <button class="btn btn-main" onclick="setStatus('${r.id}','승인')">✓ 승인 (수강생에게 보이기)</button>
-             <button class="btn btn-danger" onclick="setStatus('${r.id}','제외')">✗ 제외</button>
-           </div>`
-        : `<div class="status-badge ${st}">${st === "승인" ? "✓ 승인됨 — 수강생에게 노출 중" : "✗ 제외됨"}</div>
-           <div class="card-actions" style="margin-top:10px">
-             <button class="btn btn-ghost btn-sm" onclick="setStatus('${r.id}','대기')">↩ 다시 검토 대기로</button>
-             ${st === "승인"
-               ? `<button class="btn btn-ghost btn-sm" onclick="setStatus('${r.id}','제외')">✗ 제외로 변경</button>`
-               : `<button class="btn btn-ghost btn-sm" onclick="setStatus('${r.id}','승인')">✓ 승인으로 변경</button>`}
-           </div>`;
-      return `
-      <div class="card">
-        <div class="card-head">
-          <img src="${escapeHtml(r.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
-          <div>
-            <div class="nm">
-              ${escapeHtml(r.title)}
-              ${r.source === "tubelab" ? `<span class="src-badge">튜브랩</span>` : ""}
-              ${r.ai_confidence ? `<span class="conf ${r.ai_confidence}">확신 ${r.ai_confidence}</span>` : ""}
-              ${r.ai_genre ? `<span class="genre-tag">${escapeHtml(r.ai_genre)}</span>` : ""}
-            </div>
-            <div class="meta">구독자 ${fmtNum(r.subscriber_count)}명
-              · <a href="channel.html?id=${r.id}" target="_blank">채널 분석 열기</a></div>
-          </div>
-        </div>
-        ${r.ai_reason ? `<div class="reason"><b>AI 판단:</b> ${escapeHtml(r.ai_reason)}</div>` : ""}
-        <div class="vids">
-          ${vids.map((v) => `
+      const on = selected.has(r.id);
+      let actions;
+      if (st === "대기") {
+        actions = `
+          <button class="a-app" onclick="setStatus('${r.id}','승인')">✓ 승인</button>
+          <button class="a-exc" onclick="setStatus('${r.id}','제외')">✗ 제외</button>
+          <button class="a-del" onclick="delChannel('${r.id}')">🗑 삭제</button>`;
+      } else {
+        actions = `
+          <div class="stat-line ${st}">${st === "승인" ? "✓ 승인됨" : "✗ 제외됨"}</div>
+          <button class="a-rev" onclick="setStatus('${r.id}','대기')">↩ 되돌리기</button>
+          ${st === "승인"
+            ? `<button class="a-exc" onclick="setStatus('${r.id}','제외')">✗ 제외</button>`
+            : `<button class="a-app" onclick="setStatus('${r.id}','승인')">✓ 승인</button>`}
+          <button class="a-del" onclick="delChannel('${r.id}')">🗑 삭제</button>`;
+      }
+      const vidsHtml = vids.length
+        ? `<div class="avids">${vids.map((v) => `
             <a href="https://www.youtube.com/${v.is_short ? "shorts/" : "watch?v="}${v.video_id}" target="_blank" title="${escapeHtml(v.title)}">
               <img src="${vthumbSrc(v)}" alt="" loading="lazy" onerror="vthumbFallback(this,'${v.video_id}')">
               <span class="vt">${fmtNum(v.view_count)}회</span>
-            </a>`).join("") || '<span style="color:var(--sub);font-size:15px">최근 영상 자료 없음</span>'}
+            </a>`).join("")}</div>`
+        : `<div class="novids">최근 영상 자료 없음</div>`;
+      return `
+      <div class="acard ${on ? "sel" : ""}" data-id="${r.id}">
+        <input type="checkbox" class="chk" ${on ? "checked" : ""} onchange="toggleSel(this,'${r.id}')">
+        <div class="ainfo">
+          <img src="${escapeHtml(r.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
+          <div>
+            <div class="nm">${escapeHtml(r.title)}${r.source === "tubelab" ? `<span class="bg-sm b-src">튜브랩</span>` : `<span class="bg-sm b-ai">AI</span>`}${r.ai_confidence ? `<span class="bg-sm b-${r.ai_confidence}">확신 ${r.ai_confidence}</span>` : ""}${r.ai_genre ? `<span class="bg-sm b-genre">${escapeHtml(r.ai_genre)}</span>` : ""}</div>
+            <div class="meta">구독자 ${fmtNum(r.subscriber_count)}명 · <a href="channel.html?id=${r.id}" target="_blank">분석 열기</a></div>
+            ${r.ai_reason ? `<div class="rsn">🤖 ${escapeHtml(r.ai_reason)}</div>` : ""}
+          </div>
         </div>
-        ${actions}
-        <div style="text-align:right;margin-top:10px">
-          <button class="btn btn-ghost btn-sm" style="color:#991b1b" onclick="delChannel('${r.id}')">🗑 완전 삭제</button>
-        </div>
+        ${vidsHtml}
+        <div class="aactions">${actions}</div>
       </div>`;
     }).join("");
-    bindFilters();
+    bindHead();
+    updateBulk();
   }
 
-  function bindFilters() {
-    document.querySelectorAll(".fbtn").forEach((btn) => {
-      btn.addEventListener("click", function () {
+  function bindHead() {
+    document.querySelectorAll(".cat-tabs button").forEach((b) => {
+      b.addEventListener("click", function () {
+        if (filters.source === this.dataset.src) return;
+        filters.source = this.dataset.src;
+        filters.conf = "";
+        selected.clear();
+        render();
+      });
+    });
+    document.querySelectorAll(".filter-bar .fbtn").forEach((b) => {
+      b.addEventListener("click", function () {
         filters[this.dataset.f] = this.dataset.v;
+        selected.clear();
         render();
       });
     });
@@ -239,7 +355,6 @@
     const user = await requireLogin();
     if (!sb || !user) return;
 
-    // 관리자만 접근
     if (!(await isAdmin(user))) {
       $id("wrap").innerHTML = `
         <div class="noperm">
@@ -251,7 +366,6 @@
     }
 
     await fetchRows();
-    // 대기중 채널의 영상 미리 로드
     await fetchVideosFor(allRows.map((r) => r.id));
     render();
   })();
