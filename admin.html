@@ -53,6 +53,13 @@
   .b-상{background:#dcfce7;color:#166534;}
   .b-중{background:#fef9c3;color:#854d0e;}
   .b-하{background:#fee2e2;color:#991b1b;}
+  .b-검증후보{background:#dcfce7;color:#166534;}
+  .b-급등후보{background:#ffedd5;color:#c2410c;}
+  .b-검토필요{background:#fef9c3;color:#854d0e;}
+  .b-부적합{background:#fee2e2;color:#991b1b;}
+  .b-score{background:#eef2ff;color:#4338ca;}
+  .ainfo .bmk{font-size:12px;color:#166534;margin-top:3px;line-height:1.4;}
+  .ainfo .cau{font-size:12px;color:#b45309;margin-top:2px;line-height:1.4;}
   /* 일일 성장(튜브랩식 일일조회수) */
   .agrow{width:118px;flex-shrink:0;text-align:center;line-height:1.35;}
   .agrow .gv{font-size:16.5px;font-weight:900;color:#16a34a;}
@@ -119,7 +126,7 @@
   };
 
   // source: tubelab = 튜브랩 미러링 / ai = 인비남 AI 검수(그 외)
-  const filters = { conf: "", status: "대기", source: "tubelab", sort: "growth" };
+  const filters = { conf: "", status: "대기", source: "tubelab", sort: "growth", klass: "" };
   let allRows = [];
   let currentRows = [];              // 현재 화면에 보이는(필터 적용된) 채널
   let selected = new Set();          // 선택된 채널 id
@@ -130,7 +137,7 @@
   async function fetchRows() {
     // 승인 후보: 튜브랩에서 가져온 채널 + AI가 편집형이라 본 채널 (모두 50만 미만)
     const { data } = await sb.from("channels")
-      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,ai_confidence,ai_reason,ai_genre,admin_status,source")
+      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,ai_confidence,ai_reason,ai_genre,ai_ref_score,ai_ref_class,ai_benchmark,ai_caution,ai_series,admin_status,source")
       .lt("subscriber_count", 500000)
       .or("source.eq.tubelab,ai_faceless.eq.true")
       .order("subscriber_count", { ascending: false })
@@ -246,6 +253,7 @@
     currentRows = srcRows.slice();
     if (filters.status) currentRows = currentRows.filter((r) => (r.admin_status || "대기") === filters.status);
     if (filters.conf) currentRows = currentRows.filter((r) => r.ai_confidence === filters.conf);
+    if (filters.klass && filters.source === "ai") currentRows = currentRows.filter((r) => (r.ai_ref_class || "") === filters.klass);
 
     // 정렬: 조회수 증가순 / 구독자 증가순 / 구독자순 (증가값 없는 채널은 뒤로)
     const nl = (v) => (v == null ? -Infinity : Number(v));
@@ -268,6 +276,10 @@
 
     const confRow = filters.source === "ai"
       ? `<div class="filter-row">
+          <span class="flabel">유형</span>
+          ${[["", "전체"], ["검증후보", "✅ 검증후보"], ["급등후보", "🚀 급등후보"], ["검토필요", "🔍 검토필요"], ["부적합", "부적합"]].map(([v, t]) => `<button class="fbtn ${filters.klass === v ? "on" : ""}" data-f="klass" data-v="${v}">${t}</button>`).join("")}
+        </div>
+        <div class="filter-row">
           <span class="flabel">확신도</span>
           ${["", "상", "중", "하"].map((v) => `<button class="fbtn ${filters.conf === v ? "on" : ""}" data-f="conf" data-v="${v}">${v || "전체"}</button>`).join("")}
         </div>` : "";
@@ -343,9 +355,11 @@
         <div class="ainfo">
           <img src="${escapeHtml(r.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
           <div>
-            <div class="nm">${escapeHtml(r.title)}${r.source === "tubelab" ? `<span class="bg-sm b-src">튜브랩</span>` : `<span class="bg-sm b-ai">AI</span>`}${r.ai_confidence ? `<span class="bg-sm b-${r.ai_confidence}">확신 ${r.ai_confidence}</span>` : ""}${r.ai_genre ? `<span class="bg-sm b-genre">${escapeHtml(r.ai_genre)}</span>` : ""}</div>
+            <div class="nm">${escapeHtml(r.title)}${r.source === "tubelab" ? `<span class="bg-sm b-src">튜브랩</span>` : `<span class="bg-sm b-ai">AI</span>`}${r.ai_ref_class ? `<span class="bg-sm b-${r.ai_ref_class}">${r.ai_ref_class === "검증후보" ? "✅ 검증후보" : r.ai_ref_class === "급등후보" ? "🚀 급등(반복 미검증)" : r.ai_ref_class === "검토필요" ? "🔍 검토필요" : r.ai_ref_class}</span>` : ""}${r.ai_ref_score != null ? `<span class="bg-sm b-score">적합도 ${r.ai_ref_score}</span>` : ""}${r.ai_confidence ? `<span class="bg-sm b-${r.ai_confidence}">확신 ${r.ai_confidence}</span>` : ""}${r.ai_genre ? `<span class="bg-sm b-genre">${escapeHtml(r.ai_genre)}</span>` : ""}</div>
             <div class="meta">구독자 ${fmtNum(r.subscriber_count)}명 · <a href="channel.html?id=${r.id}" target="_blank">분석 열기</a></div>
             ${r.ai_reason ? `<div class="rsn">🤖 ${escapeHtml(r.ai_reason)}</div>` : ""}
+            ${r.ai_benchmark ? `<div class="bmk">💡 참고: ${escapeHtml(r.ai_benchmark)}</div>` : ""}
+            ${r.ai_caution ? `<div class="cau">⚠️ 주의: ${escapeHtml(r.ai_caution)}</div>` : ""}
           </div>
         </div>
         ${growHtml}
@@ -363,6 +377,7 @@
         if (filters.source === this.dataset.src) return;
         filters.source = this.dataset.src;
         filters.conf = "";
+        filters.klass = "";
         selected.clear();
         render();
       });
