@@ -342,7 +342,7 @@
         : (r.daily_subs != null && r.daily_subs !== 0) ? r.daily_subs : null;
       const subsHtml = subsVal != null
         ? `<div class="gs ${subsVal < 0 ? "neg" : ""}">${fmtDelta(subsVal)} 구독자*</div>`
-        : "";
+        : (r.daily_views != null ? `<div class="gwait">구독자 집계중*</div>` : "");
       const growHtml = r.daily_views != null || r.daily_subs != null
         ? `<div class="agrow">
             ${r.daily_views != null ? `<div class="gv ${r.daily_views < 0 ? "neg" : ""}">${fmtDelta(r.daily_views)}</div><div class="gl">일일 조회수</div>` : ""}
