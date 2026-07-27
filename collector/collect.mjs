@@ -83,6 +83,42 @@ function chunk(arr, size) {
   return out;
 }
 
+// ---------- 유튜브에서 "최근 급상승 쇼츠" 채널 발굴 (search API) ----------
+// 무출연 편집형 쇼츠가 많이 쓰는 주제어로 최근 14일 인기 쇼츠를 검색 → 채널 후보 수집
+const SHORTS_SEEDS = [
+  "영화 요약 쇼츠", "드라마 요약", "명장면 모음", "레전드 모음", "랭킹 top",
+  "이슈 정리", "해외반응", "동물 모음", "게임 하이라이트", "애니 썰",
+  "역사 이슈", "실화 사건", "썰 애니메이션", "정보 꿀팁 쇼츠", "충격 모음", "스포츠 명장면",
+];
+async function discoverShortsChannels(maxChannels = 220) {
+  const publishedAfter = new Date(Date.now() - 14 * 86400 * 1000).toISOString();
+  const hits = new Map(); // channelId -> 검색 노출 횟수(여러 검색어에 걸릴수록 관련성 높음)
+  for (const q of SHORTS_SEEDS) {
+    try {
+      const data = await ytFetch("search", {
+        part: "snippet",
+        type: "video",
+        videoDuration: "short",       // 4분 미만(쇼츠 후보) — 이후 재생시간으로 진짜 쇼츠 확정
+        order: "viewCount",           // 조회수 높은 순 = 지금 뜨는 영상
+        regionCode: "KR",
+        relevanceLanguage: "ko",
+        publishedAfter,               // 최근 14일 = 현재 성장 중
+        maxResults: "50",
+        q,
+      });
+      for (const it of data.items || []) {
+        const cid = it.snippet?.channelId;
+        if (cid) hits.set(cid, (hits.get(cid) || 0) + 1);
+      }
+    } catch (e) {
+      console.log(`  쇼츠 발굴 검색 실패(${q}): ${e.message}`);
+    }
+  }
+  const ranked = [...hits.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+  console.log(`쇼츠 발굴: 후보 채널 ${ranked.length}개 (검색어 ${SHORTS_SEEDS.length}개) → 상위 ${Math.min(maxChannels, ranked.length)}개 사용`);
+  return ranked.slice(0, maxChannels);
+}
+
 // ---------- 썸네일 이미지를 base64로 (Gemini 비전 입력용) ----------
 async function fetchImageBase64(url) {
   try {
@@ -96,17 +132,22 @@ async function fetchImageBase64(url) {
 }
 
 // ---------- Gemini로 "무출연 편집형" 여부 판정 ----------
-async function classifyChannel(ch, vids, gemKey) {
+async function classifyChannel(ch, vids, gemKey, gold = "") {
   const titles = vids.map((v, i) => `${i + 1}. ${v.title}`).join("\n");
+  const goldBlock = gold
+    ? `아래는 우리가 찾는 '정답' 유형이야 — 튜브랩이 엄선한 무출연 편집형 쇼츠 채널 예시:\n${gold}\n\n`
+    : "";
   const prompt =
-    `너는 유튜브 채널 분류 전문가야. 아래 채널이 "얼굴·목소리 출연 없이 영상 편집으로만 운영되는 무출연 편집형 채널"인지 판정해줘.\n\n` +
+    `너는 유튜브 쇼츠 채널 분류 전문가야. 대상은 "쇼츠(60초 안팎 세로영상) 위주" 채널이고, 그중 ` +
+    `"본인 얼굴·목소리 출연 없이 영상 편집으로만 운영되는 무출연 편집형"인지 판정해줘.\n\n` +
+    goldBlock +
     `채널명: ${ch.title}\n최근 영상 제목:\n${titles}\n\n` +
     `첨부된 썸네일 이미지도 함께 참고해. 판정 기준:\n` +
-    `- 편집형(무출연, faceless=true): 영화/드라마 요약·리뷰, 명장면·짤 편집, 랭킹/TOP, 이슈·정보 TTS 나레이션, 동물짤/해외반응 등. ` +
+    `- 편집형(무출연, faceless=true): 영화/드라마 요약·리뷰, 명장면·짤 편집, 랭킹/TOP, 이슈·정보 나레이션(TTS), 게임화면 편집, 애니메이션, 동물짤/해외반응 등. ` +
     `얼굴이 보여도 "남의 영상(영화·방송·경기)을 편집"한 것이면 편집형이다.\n` +
-    `- 출연형(제외, faceless=false): 본인 얼굴로 하는 브이로그, 페이스캠 게임방송, 직접 말하는 리뷰어, 먹방(직접 출연) 등.\n\n` +
+    `- 출연형(제외, faceless=false): 본인 얼굴/목소리로 하는 브이로그, 페이스캠 게임방송, 직접 말하는 리뷰어, 직접 출연 먹방 등.\n\n` +
     `반드시 아래 JSON 형식으로만 답해:\n` +
-    `{"faceless": true 또는 false, "confidence": "상"|"중"|"하", "reason": "한 줄 근거", "genre": "추정 장르(영화요약/랭킹/명장면/이슈정보/동물/해외반응/기타)"}`;
+    `{"faceless": true 또는 false, "confidence": "상"|"중"|"하", "reason": "한 줄 근거", "genre": "추정 장르(영화요약/랭킹/명장면/이슈정보/게임/애니/동물/해외반응/기타)"}`;
   const parts = [{ text: prompt }];
   for (const v of vids.slice(0, 4)) {
     if (!v.thumbnail) continue;
@@ -191,13 +232,18 @@ async function main() {
   console.log(`쇼츠 판별 완료: ${trendingRows.filter((r) => r.is_short).length}개가 진짜 쇼츠`);
   // 인기 영상 저장은 채널 구독자 수를 확인한 뒤(50만 미만만) 진행 → 아래 3단계 이후
 
+  // ========== 1.5 유튜브에서 급상승 쇼츠 채널 발굴 ==========
+  const discovered = await discoverShortsChannels(220);
+  const discoveredSet = new Set(discovered);
+
   // ========== 2. 수집 대상 채널 목록 만들기 ==========
-  // 기존 등록 채널 + 오늘 인기 영상에 등장한 채널
+  // 기존 등록 채널 + 오늘 인기 영상에 등장한 채널 + 새로 발굴한 쇼츠 채널
   const existing = await sbFetch("channels?select=id&is_active=eq.true&limit=1500");
   const idSet = new Set(existing.map((c) => c.id));
   trendingRows.forEach((r) => r.channel_id && idSet.add(r.channel_id));
+  discovered.forEach((cid) => idSet.add(cid));
   const channelIds = [...idSet];
-  console.log(`수집 대상 채널: ${channelIds.length}개`);
+  console.log(`수집 대상 채널: ${channelIds.length}개 (발굴 신규 포함)`);
 
   // ========== 3. 채널 통계 일괄 조회 (50개씩) ==========
   const stats = [];
@@ -274,10 +320,16 @@ async function main() {
 
   // ========== 6. 채널별 최근 영상 수집 (쇼츠 랭킹의 재료) ==========
   // 구독자 많은 순으로 최대 400개 채널의 최근 업로드를 확인
+  // 새로 발굴한 쇼츠 채널을 우선 처리하고, 그 다음 구독자 많은 순
   const targetChannels = chRows
     .slice()
-    .sort((a, b) => b.subscriber_count - a.subscriber_count)
-    .slice(0, 400);
+    .sort((a, b) => {
+      const da = discoveredSet.has(a.id) ? 1 : 0;
+      const db = discoveredSet.has(b.id) ? 1 : 0;
+      if (da !== db) return db - da;
+      return b.subscriber_count - a.subscriber_count;
+    })
+    .slice(0, 600);
 
   // 이미 판별해 둔 영상은 다시 검사하지 않음
   const known = await sbFetch("channel_videos?select=video_id,is_short&limit=20000");
@@ -362,22 +414,43 @@ async function main() {
   const shortCount = videoRows.filter((r) => r.is_short).length;
   console.log(`채널 영상 ${videoRows.length}개 저장 (쇼츠 ${shortCount}개, 새로 판별 ${newlyChecked}개)`);
 
-  // ========== 7. AI 무출연(편집형) 분류 — 아직 분류 안 된 채널만, 하루치 ==========
+  // ========== 7. AI 무출연(편집형) '쇼츠' 검수 — 튜브랩이 아닌 채널만 ==========
+  //   (1) 재생시간 기준 '쇼츠 위주 채널'만 통과(기계 규칙)
+  //   (2) 통과분만 튜브랩 정답 예시(few-shot)로 AI가 무출연 판정
   const GEM_KEY = process.env.GEMINI_API_KEY;
   if (GEM_KEY) {
-    const DAILY_LIMIT = 50; // 하루에 분류할 새 채널 수 (비용/속도 조절)
-    const unclassified = await sbFetch(
-      `channels?select=id,title&classified_at=is.null&is_active=eq.true&subscriber_count=lt.${MAX_SUBS}&order=subscriber_count.desc&limit=${DAILY_LIMIT}`
+    // 튜브랩 정답 예시(few-shot): "무출연 편집형 쇼츠"의 기준을 AI에게 학습시킴
+    const goldRows = await sbFetch(
+      `channels?select=title,ai_genre&source=eq.tubelab&order=daily_views.desc.nullslast&limit=18`
     );
-    console.log(`AI 분류 대상(미분류) 채널: ${unclassified.length}개`);
-    let classified = 0;
+    const gold = (goldRows || []).map((g) => `- ${g.title}${g.ai_genre ? ` (${g.ai_genre})` : ""}`).join("\n");
+
+    const AI_LIMIT = 200; // Gemini로 판정할 쇼츠 채널 최대 수 (하루)
+    // 튜브랩 채널은 이미 검증됨 → 제외. 새로 발굴/트렌딩된 채널(source 없음)만 검수. 신규 우선.
+    const unclassified = await sbFetch(
+      `channels?select=id,title&classified_at=is.null&is_active=eq.true&subscriber_count=lt.${MAX_SUBS}&source=is.null&order=added_at.desc&limit=600`
+    );
+    console.log(`AI 검수 후보(미분류·비튜브랩): ${unclassified.length}개`);
+    let aiDone = 0, facelessN = 0, notShorts = 0, noData = 0;
     for (const ch of unclassified) {
-      // 이 채널의 최근 영상 제목/썸네일 (최대 5개)
+      if (aiDone >= AI_LIMIT) break;
       const vids = await sbFetch(
-        `channel_videos?select=title,thumbnail,published_at&channel_id=eq.${ch.id}&order=published_at.desc&limit=5`
+        `channel_videos?select=title,thumbnail,is_short,published_at&channel_id=eq.${ch.id}&order=published_at.desc&limit=12`
       );
-      if (!vids || vids.length === 0) continue; // 아직 수집된 영상이 없으면 다음 기회에
-      const result = await classifyChannel(ch, vids, GEM_KEY);
+      if (!vids || vids.length === 0) { noData++; continue; } // 영상 없으면 분류 보류(다음 기회)
+      // (1) 기계 규칙: 최근 영상의 쇼츠 비율 60% 미만이면 쇼츠 채널 아님 → 제외
+      const shortRatio = vids.filter((v) => v.is_short).length / vids.length;
+      if (shortRatio < 0.6) {
+        await sbFetch(`channels?id=eq.${ch.id}`, {
+          method: "PATCH",
+          body: { ai_faceless: false, ai_confidence: "하", ai_reason: "쇼츠 위주 채널이 아님(롱폼 비중 높음)", ai_genre: null, classified_at: new Date().toISOString() },
+          prefer: "return=minimal",
+        });
+        notShorts++;
+        continue;
+      }
+      // (2) 쇼츠 채널만 AI(튜브랩 예시 기반)로 무출연 판정
+      const result = await classifyChannel(ch, vids.slice(0, 5), GEM_KEY, gold);
       if (!result) continue;
       await sbFetch(`channels?id=eq.${ch.id}`, {
         method: "PATCH",
@@ -390,9 +463,10 @@ async function main() {
         },
         prefer: "return=minimal",
       });
-      classified++;
+      aiDone++;
+      if (result.faceless) facelessN++;
     }
-    console.log(`AI 분류 완료: ${classified}개 (편집형은 관리자 승인 대기 상태로 남음)`);
+    console.log(`AI 검수 완료: 쇼츠 채널 ${aiDone}개 판정(무출연 ${facelessN}개), 쇼츠아님 제외 ${notShorts}개, 영상없음 보류 ${noData}개`);
   } else {
     console.log("GEMINI_API_KEY 없음 — AI 분류 단계 건너뜀");
   }
