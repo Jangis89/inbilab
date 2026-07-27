@@ -53,6 +53,14 @@
   .b-상{background:#dcfce7;color:#166534;}
   .b-중{background:#fef9c3;color:#854d0e;}
   .b-하{background:#fee2e2;color:#991b1b;}
+  /* 일일 성장(튜브랩식 일일조회수) */
+  .agrow{width:118px;flex-shrink:0;text-align:center;line-height:1.35;}
+  .agrow .gv{font-size:16.5px;font-weight:900;color:#16a34a;}
+  .agrow .gv.neg{color:#dc2626;}
+  .agrow .gl{font-size:11px;color:var(--sub);font-weight:700;}
+  .agrow .gs{font-size:12px;font-weight:800;color:#16a34a;margin-top:2px;}
+  .agrow .gs.neg{color:#dc2626;}
+  .agrow .gwait{font-size:12px;color:var(--sub);font-weight:600;}
   .avids{display:flex;gap:5px;flex-shrink:0;}
   .avids a{display:block;position:relative;width:66px;height:117px;border-radius:7px;overflow:hidden;background:#000;flex-shrink:0;}
   .avids img{width:100%;height:100%;object-fit:cover;display:block;}
@@ -111,7 +119,7 @@
   };
 
   // source: tubelab = 튜브랩 미러링 / ai = 인비남 AI 검수(그 외)
-  const filters = { conf: "", status: "대기", source: "tubelab" };
+  const filters = { conf: "", status: "대기", source: "tubelab", sort: "growth" };
   let allRows = [];
   let currentRows = [];              // 현재 화면에 보이는(필터 적용된) 채널
   let selected = new Set();          // 선택된 채널 id
@@ -122,7 +130,7 @@
   async function fetchRows() {
     // 승인 후보: 튜브랩에서 가져온 채널 + AI가 편집형이라 본 채널 (모두 50만 미만)
     const { data } = await sb.from("channels")
-      .select("id,title,thumbnail,subscriber_count,ai_confidence,ai_reason,ai_genre,admin_status,source")
+      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,ai_confidence,ai_reason,ai_genre,admin_status,source")
       .lt("subscriber_count", 500000)
       .or("source.eq.tubelab,ai_faceless.eq.true")
       .order("subscriber_count", { ascending: false })
@@ -239,6 +247,12 @@
     if (filters.status) currentRows = currentRows.filter((r) => (r.admin_status || "대기") === filters.status);
     if (filters.conf) currentRows = currentRows.filter((r) => r.ai_confidence === filters.conf);
 
+    // 정렬: 조회수 증가순 / 구독자 증가순 / 구독자순 (증가값 없는 채널은 뒤로)
+    const nl = (v) => (v == null ? -Infinity : Number(v));
+    if (filters.sort === "growth") currentRows.sort((a, b) => nl(b.daily_views) - nl(a.daily_views) || nl(b.daily_subs) - nl(a.daily_subs) || b.subscriber_count - a.subscriber_count);
+    else if (filters.sort === "subs_growth") currentRows.sort((a, b) => nl(b.daily_subs) - nl(a.daily_subs) || nl(b.daily_views) - nl(a.daily_views) || b.subscriber_count - a.subscriber_count);
+    else currentRows.sort((a, b) => b.subscriber_count - a.subscriber_count);
+
     const catTabs = `
       <div class="cat-tabs">
         <button class="${filters.source === "tubelab" ? "on" : ""}" data-src="tubelab">튜브랩<small>튜브랩에서 가져온 채널 · 대기 ${tubePending}</small></button>
@@ -263,6 +277,10 @@
         <div class="filter-row">
           <span class="flabel">상태</span>
           ${[["대기", "검토 대기"], ["승인", "승인됨"], ["제외", "제외됨"], ["", "전체"]].map(([v, t]) => `<button class="fbtn ${filters.status === v ? "on" : ""}" data-f="status" data-v="${v}">${t}</button>`).join("")}
+        </div>
+        <div class="filter-row">
+          <span class="flabel">정렬</span>
+          ${[["growth", "조회수 증가순"], ["subs_growth", "구독자 증가순"], ["subs", "구독자순"]].map(([v, t]) => `<button class="fbtn ${filters.sort === v ? "on" : ""}" data-f="sort" data-v="${v}">${t}</button>`).join("")}
         </div>
         ${confRow}
       </div>`;
@@ -304,6 +322,14 @@
             : `<button class="a-app" onclick="setStatus('${r.id}','승인')">✓ 승인</button>`}
           <button class="a-del" onclick="delChannel('${r.id}')">🗑 삭제</button>`;
       }
+      // 일일 성장 표시 (튜브랩식 일일조회수)
+      const fmtDelta = (n) => (n >= 0 ? "+" : "-") + fmtNum(Math.abs(n));
+      const growHtml = r.daily_views != null || r.daily_subs != null
+        ? `<div class="agrow">
+            ${r.daily_views != null ? `<div class="gv ${r.daily_views < 0 ? "neg" : ""}">${fmtDelta(r.daily_views)}</div><div class="gl">일일 조회수</div>` : ""}
+            ${r.daily_subs != null ? `<div class="gs ${r.daily_subs < 0 ? "neg" : ""}">${fmtDelta(r.daily_subs)} 구독자</div>` : ""}
+          </div>`
+        : `<div class="agrow"><div class="gwait">성장 집계중<br>(내일 새벽부터)</div></div>`;
       const vidsHtml = vids.length
         ? `<div class="avids">${vids.map((v) => `
             <a href="https://www.youtube.com/${v.is_short ? "shorts/" : "watch?v="}${v.video_id}" target="_blank" title="${escapeHtml(v.title)}">
@@ -322,6 +348,7 @@
             ${r.ai_reason ? `<div class="rsn">🤖 ${escapeHtml(r.ai_reason)}</div>` : ""}
           </div>
         </div>
+        ${growHtml}
         ${vidsHtml}
         <div class="aactions">${actions}</div>
       </div>`;
