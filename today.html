@@ -37,10 +37,11 @@
   .ch-stats .delta{font-size:14.5px;color:#dc2626;font-weight:700;}
   .ch-stats .money{font-size:16.5px;color:#16a34a;font-weight:800;margin-top:2px;}
   .ch-stats .lbl{font-size:13.5px;color:var(--sub);}
-  .ch-videos{display:flex;gap:8px;flex-shrink:0;}
-  .ch-videos a{display:block;position:relative;width:92px;height:52px;border-radius:8px;overflow:hidden;background:var(--bg-soft);}
-  .ch-videos img{width:100%;height:100%;object-fit:cover;}
-  .ch-videos .v{position:absolute;left:0;right:0;bottom:0;background:rgba(15,23,42,.75);color:#fff;font-size:11.5px;text-align:center;padding:1px 0;}
+  .ch-videos{display:flex;gap:10px;flex-shrink:0;}
+  .ch-videos a{display:block;position:relative;width:108px;height:192px;border-radius:12px;overflow:hidden;background:#000;flex-shrink:0;box-shadow:0 1px 4px rgba(15,23,42,.12);}
+  .ch-videos img{width:100%;height:100%;object-fit:cover;display:block;}
+  .ch-videos .v{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(transparent,rgba(0,0,0,.82));color:#fff;font-size:14px;font-weight:800;text-align:center;padding:16px 4px 6px;}
+  @media(max-width:1180px){.ch-videos a:nth-child(n+4){display:none;}}
   /* 필터 바 */
   .filter-bar{background:var(--bg-soft);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:18px;}
   .filter-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
@@ -133,6 +134,16 @@
   }
   // 예상 수익: 일일 조회수 증가 × 유형별 추정 단가(원/조회수)
   const RATE = { "숏폼": 0.15, "혼합": 0.8, "롱폼": 2.5, "": 0.8 };
+
+  // 영상 썸네일: 숏츠는 세로형(oardefault), 일반 영상은 가로형(hqdefault)
+  function vthumbSrc(v) {
+    return `https://i.ytimg.com/vi/${v.video_id}/${v.is_short ? "oardefault" : "hqdefault"}.jpg`;
+  }
+  // 세로 썸네일이 없으면 가로 썸네일로 대체
+  window.vthumbFallback = function (img, id) {
+    if (!img.dataset.fb) { img.dataset.fb = "1"; img.src = "https://i.ytimg.com/vi/" + id + "/hqdefault.jpg"; }
+    else { img.style.visibility = "hidden"; }
+  };
 
   let allChannels = [];       // 서버에서 받아온 채널
   let videosByChannel = {};   // 채널별 최근 영상
@@ -241,7 +252,7 @@
         <div class="ch-videos">
           ${vids.map((v) => `
             <a href="https://www.youtube.com/${v.is_short ? "shorts/" : "watch?v="}${v.video_id}" target="_blank" title="${escapeHtml(v.title)}">
-              <img src="${escapeHtml(v.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
+              <img src="${vthumbSrc(v)}" alt="" loading="lazy" onerror="vthumbFallback(this,'${v.video_id}')">
               <span class="v">${fmtNum(v.view_count)}</span>
             </a>`).join("")}
         </div>
