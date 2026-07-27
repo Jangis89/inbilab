@@ -48,6 +48,12 @@
   .filter-row .flabel{font-size:15.5px;font-weight:700;color:var(--sub);width:74px;flex-shrink:0;}
   .fbtn{padding:7px 15px;border-radius:999px;border:2px solid var(--line);background:#fff;font-size:15.5px;font-weight:700;cursor:pointer;color:var(--sub);font-family:inherit;}
   .fbtn.on{border-color:var(--blue);color:var(--blue);background:#eff6ff;}
+  /* 무출연 편집형 큰 스위치 */
+  .face-switch{display:flex;gap:0;background:var(--bg-soft);border:2px solid var(--line);border-radius:14px;padding:6px;margin-bottom:16px;max-width:520px;}
+  .face-switch button{flex:1;padding:14px 10px;border:none;background:transparent;border-radius:10px;font-size:18px;font-weight:800;color:var(--sub);cursor:pointer;font-family:inherit;line-height:1.3;}
+  .face-switch button.on{background:var(--blue);color:#fff;}
+  .face-switch button small{display:block;font-size:13.5px;font-weight:600;opacity:.85;margin-top:2px;}
+  .genre-tag{display:inline-block;font-size:13.5px;font-weight:700;padding:2px 9px;border-radius:999px;background:#f0fdf4;color:#166534;margin-left:6px;vertical-align:middle;}
   @media(max-width:1000px){.ch-videos{display:none;}}
 </style>
 </head>
@@ -59,6 +65,11 @@
   <div class="wrap">
     <h1 class="page-title">오늘 뜨는 채널 🚀</h1>
     <p class="page-desc">매일 새벽 자동으로 갱신되는 대한민국 급상승 채널과 인기 영상입니다.</p>
+
+    <div class="face-switch" id="face-switch">
+      <button class="on" data-face="1">🎬 무출연 편집형만<small>얼굴·목소리 없이 편집하는 채널</small></button>
+      <button data-face="0">전체 채널<small>모든 급상승 채널 보기</small></button>
+    </div>
 
     <div class="board-tools">
       <div class="tabs" id="tabs">
@@ -133,14 +144,14 @@
 
   let allChannels = [];       // 서버에서 받아온 채널
   let videosByChannel = {};   // 채널별 최근 영상
-  const filters = { type: "", subs: "", sort: "daily_views" };
+  const filters = { type: "", subs: "", sort: "daily_views", faceless: true };
 
   // ---------- 채널 데이터 로드 ----------
   async function fetchChannels() {
     const { data } = await sb.from("channels")
-      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date")
+      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date,ai_genre,admin_status")
       .order("subscriber_count", { ascending: false })
-      .limit(300);
+      .limit(600);
     allChannels = data || [];
   }
 
@@ -179,8 +190,17 @@
       return;
     }
 
-    // 1) 구독자 필터
+    // 0) 무출연 편집형만: 관리자가 '승인'한 채널만
     let list = allChannels.slice();
+    if (filters.faceless) {
+      list = list.filter((c) => c.admin_status === "승인");
+      if (list.length === 0) {
+        box.innerHTML = '<p class="empty">아직 <b>승인된 무출연 편집형 채널</b>이 없습니다.<br>매일 새벽 AI가 채널을 분류하고, 강사님이 승인하면 여기에 표시됩니다.<br><br>지금 전체 채널을 보려면 위에서 <b>[전체 채널]</b>을 눌러주세요.</p>';
+        $id("update-info").textContent = "";
+        return;
+      }
+    }
+    // 1) 구독자 필터
     if (filters.subs) {
       const [lo, hi] = filters.subs.split("-").map(Number);
       list = list.filter((c) => c.subscriber_count >= lo && c.subscriber_count < hi);
@@ -197,9 +217,10 @@
     if (filters.type) rows = rows.filter((r) => r.type === filters.type);
     rows = rows.slice(0, 50);
 
-    $id("update-info").textContent = hasDaily
+    const modeTxt = filters.faceless ? "🎬 무출연 편집형(승인된 채널) · " : "전체 채널 · ";
+    $id("update-info").textContent = modeTxt + (hasDaily
       ? "기준일: " + (rows[0] && rows[0].stats_date || "") + " · 등급/수익은 인비랩 자체 추정치입니다"
-      : "지금은 구독자순입니다. 데이터가 이틀 이상 쌓이면 급상승순으로 자동 전환됩니다 · 등급/수익은 자체 추정치";
+      : "지금은 구독자순입니다. 데이터가 이틀 이상 쌓이면 급상승순으로 자동 전환됩니다 · 등급/수익은 자체 추정치");
 
     if (rows.length === 0) {
       box.innerHTML = '<p class="empty">조건에 맞는 채널이 없습니다. 필터를 바꿔보세요.</p>';
@@ -217,7 +238,7 @@
           <img src="${escapeHtml(c.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
           <div>
             <div class="ch-name" onclick="location.href='channel.html?id=${c.id}'">
-              ${g ? `<span class="grade ${g}">${g}</span>` : ""}${escapeHtml(c.title)}${c.type ? `<span class="tag">${c.type}</span>` : ""}
+              ${g ? `<span class="grade ${g}">${g}</span>` : ""}${escapeHtml(c.title)}${c.type ? `<span class="tag">${c.type}</span>` : ""}${c.ai_genre ? `<span class="genre-tag">${escapeHtml(c.ai_genre)}</span>` : ""}
             </div>
             <div class="ch-meta">구독자 ${fmtNum(c.subscriber_count)}명${c.daily_subs > 0 ? " · +" + fmtNum(c.daily_subs) : ""}</div>
           </div>
@@ -318,7 +339,9 @@
         document.querySelectorAll("#tabs .tab").forEach((b) => b.classList.remove("on"));
         this.classList.add("on");
         const t = this.dataset.tab;
-        $id("filter-bar").style.display = (t === "channels") ? "block" : "none";
+        const showCh = (t === "channels");
+        $id("filter-bar").style.display = showCh ? "block" : "none";
+        $id("face-switch").style.display = showCh ? "flex" : "none";
         $id("list").innerHTML = '<p class="empty">불러오는 중...</p>';
         if (t === "channels") await loadChannels();
         else if (t === "videos") await loadVideos();
@@ -330,9 +353,19 @@
     document.querySelectorAll(".fbtn").forEach((btn) => {
       btn.addEventListener("click", async function () {
         const f = this.dataset.f;
-        document.querySelectorAll(`.fbtn[data-f=\"${f}\"]`).forEach((b) => b.classList.remove("on"));
+        document.querySelectorAll(`.fbtn[data-f="${f}"]`).forEach((b) => b.classList.remove("on"));
         this.classList.add("on");
         filters[f] = this.dataset.v;
+        await loadChannels();
+      });
+    });
+
+    // 무출연 편집형 / 전체 스위치
+    document.querySelectorAll("#face-switch button").forEach((btn) => {
+      btn.addEventListener("click", async function () {
+        document.querySelectorAll("#face-switch button").forEach((b) => b.classList.remove("on"));
+        this.classList.add("on");
+        filters.faceless = this.dataset.face === "1";
         await loadChannels();
       });
     });
