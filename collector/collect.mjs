@@ -325,6 +325,19 @@ async function main() {
   );
   const yMap = new Map(yRows.map((r) => [r.channel_id, r]));
 
+  // 구독자 하루 증가 '추정'용: 최근 14일 기록
+  // (유튜브는 구독자 수를 반올림해 공개하므로 하루 변화가 0으로 보일 수 있음
+  //  → 공개 숫자가 마지막으로 달랐던 날과 비교해 하루 평균 증가량을 계산)
+  const histRows = await sbFetch(
+    `channel_snapshots?select=channel_id,date,subscriber_count&date=gte.${kstDate(-14)}&order=date.desc&limit=20000`
+  );
+  const histMap = new Map();
+  for (const h of histRows) {
+    const a = histMap.get(h.channel_id) || [];
+    a.push(h);
+    histMap.set(h.channel_id, a);
+  }
+
   // ========== 5. 오늘 기록 저장 + 채널 정보 갱신 ==========
   const snapRows = [];
   const chRows = [];
@@ -338,6 +351,19 @@ async function main() {
       subscriber_count: subs, view_count: views, video_count: vids,
     });
     const y = yMap.get(c.id);
+    // 구독자 하루 증가 추정: 공개 숫자가 마지막으로 달랐던 날과 비교해 하루 평균으로 환산
+    let subsEst = null;
+    for (const h of histMap.get(c.id) || []) {
+      if (h.date >= TODAY) continue;
+      if (Number(h.subscriber_count) !== subs) {
+        const days = Math.max(1, Math.round((Date.parse(TODAY) - Date.parse(h.date)) / 86400000));
+        const perDay = (subs - Number(h.subscriber_count)) / days;
+        const abs = Math.abs(perDay);
+        const unit = abs >= 1000 ? 100 : abs >= 100 ? 10 : 1; // 보기 좋은 단위로 반올림
+        subsEst = Math.round(perDay / unit) * unit;
+        break;
+      }
+    }
     chRows.push({
       id: c.id,
       title: (c.snippet?.title || "").slice(0, 200),
@@ -347,6 +373,7 @@ async function main() {
       subscriber_count: subs, view_count: views, video_count: vids,
       daily_views: y ? views - Number(y.view_count) : null,
       daily_subs: y ? subs - Number(y.subscriber_count) : null,
+      daily_subs_est: subsEst,
       stats_date: TODAY,
       is_active: true,
     });
