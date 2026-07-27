@@ -364,6 +364,26 @@ async function main() {
   }
   console.log("채널 정보/일일 기록 저장 완료");
 
+  // ========== 5.5 안전장치: 오늘 통계가 안 잡힌 채널은 자동 강등 ==========
+  // 유튜브에서 삭제·정지된 채널은 새 데이터가 안 잡혀 마지막 증가량이 얼어붙음
+  // → 오늘 갱신 안 된 채널은 증가량을 0으로 만들어 순위 아래로 내려보냄
+  try {
+    await sbFetch(`channels?stats_date=lt.${TODAY}&is_active=eq.true`, {
+      method: "PATCH",
+      body: { daily_views: 0, daily_subs: 0 },
+      prefer: "return=minimal",
+    });
+    // 7일 넘게 데이터가 안 잡히면 휴면 처리(수집·표시 대상에서 제외)
+    await sbFetch(`channels?stats_date=lt.${kstDate(-7)}&is_active=eq.true`, {
+      method: "PATCH",
+      body: { is_active: false },
+      prefer: "return=minimal",
+    });
+    console.log("안전장치: 오늘 데이터 누락 채널 증가량 0 처리 + 7일 무응답 채널 휴면 처리 완료");
+  } catch (e) {
+    console.log(`안전장치 처리 실패(다음 실행에서 재시도): ${e.message}`);
+  }
+
   // 발견 경로 기록: 유튜브 검색(14일·조회수순)으로 발굴된 채널 표시 (이미 기록된 채널은 유지)
   for (const ids of chunk([...discoveredSet], 100)) {
     try {
