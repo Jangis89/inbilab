@@ -76,7 +76,7 @@
   };
 
   // ---------- 헤더/사이드바 렌더링 ----------
-  // 로그인 전: 상단 간단 바 / 로그인 후: 좌측 그��형 사이드바
+  // 로그인 전: 상단 간단 바 / 로그인 후: 좌측 그룹형 사이드바
   window.renderHeader = async function (active) {
     const el = $id("site-header");
     if (!el) return;
@@ -109,6 +109,7 @@
       { items: [["dashboard.html", "dashboard", "🏠", "홈"]] },
       { label: "트렌드 발굴", items: [
         ["today.html", "today", "🔥", "오늘 뜨는 채널"],
+        ["reference.html", "reference", "🎬", "레퍼런스 영상"],
         ["rocket.html", "rocket", "🚀", "로켓 채널"],
         ["favorites.html", "favorites", "⭐", "관심 채널"],
       ]},
