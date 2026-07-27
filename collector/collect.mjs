@@ -156,7 +156,7 @@ async function classifyChannel(ch, vids, gemKey, gold = "") {
   }
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${gemKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-latest:generateContent?key=${gemKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -377,12 +377,10 @@ async function main() {
     let isShort;
     if (knownMap.has(v.id)) {
       isShort = knownMap.get(v.id);
-    } else if (dur === 0 || dur > 190) {
-      isShort = false;
     } else {
-      const real = await checkRealShort(v.id);
+      // 재생시간 기준 빠른 판정(90초 이하 = 쇼츠). 대량 HEAD 요청 제거로 속도 대폭 개선
+      isShort = dur > 0 && dur <= 90;
       newlyChecked++;
-      isShort = real === null ? dur <= 60 : real;
     }
     const views = Number(v.statistics?.viewCount || 0);
     const y = yvMap.get(v.id);
