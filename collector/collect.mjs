@@ -594,6 +594,17 @@ async function main() {
     console.log(`카테고리 Gemini 분류: ${gemDone}개 완료`);
   }
 
+  // ========== 9. 오래된 일일 기록 자동 청소 (90일 보관) ==========
+  //   급상승 계산엔 최근 기록만 필요 → 90일 지난 스냅샷/인기영상 기록 삭제로 저장 용량 관리
+  try {
+    const cutoff = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    await sbFetch(`video_snapshots?date=lt.${cutoff}`, { method: "DELETE", prefer: "return=minimal" });
+    await sbFetch(`trending_videos?date=lt.${cutoff}`, { method: "DELETE", prefer: "return=minimal" });
+    console.log(`일일 기록 청소 완료 (${cutoff} 이전 기록 삭제, 90일 보관)`);
+  } catch (e) {
+    console.log(`일일 기록 청소 오류(다음 실행에 재시도): ${e.message}`);
+  }
+
   console.log("[인비랩 수집 로봇] 정상 종료 ✅");
 }
 
