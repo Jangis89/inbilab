@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>소스 창고 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  .devnote{background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:9px 14px;font-size:13px;color:#854d0e;margin-bottom:16px;}
+  .s-intro{font-size:14.5px;color:var(--sub);line-height:1.7;margin-bottom:14px;}
+
+  .add-box{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:16px;}
+  .add-box h3{font-size:15.5px;font-weight:800;margin:0 0 10px;}
+  .add-row{display:flex;gap:9px;margin-bottom:9px;flex-wrap:wrap;}
+  .add-row input,.add-row select{padding:11px 13px;border:2px solid var(--line);border-radius:10px;font-size:14px;font-family:inherit;}
+  .add-row input:focus,.add-row select:focus{outline:none;border-color:var(--blue);}
+  .add-row .grow{flex:1;min-width:200px;}
+  .add-box button.submit{padding:11px 22px;border-radius:10px;border:none;background:var(--blue);color:#fff;font-size:14.5px;font-weight:800;cursor:pointer;font-family:inherit;}
+  .add-box button.submit:disabled{opacity:.5;}
+  .add-hint{font-size:12.5px;color:#94a3b8;margin-top:7px;line-height:1.5;}
+  .add-msg{display:none;margin-top:9px;font-size:13.5px;border-radius:9px;padding:9px 13px;}
+  .add-msg.err{display:block;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;}
+  .add-msg.ok{display:block;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;}
+
+  .filters{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px;}
+  .filters button{padding:6px 15px;border-radius:999px;border:1.5px solid var(--line);background:#fff;font-size:13px;font-weight:700;color:var(--sub);cursor:pointer;font-family:inherit;}
+  .filters button.on{background:var(--blue);border-color:var(--blue);color:#fff;}
+
+  .src-list{background:#fff;border:1px solid var(--line);border-radius:14px;padding:4px 18px;}
+  .s-item{display:flex;gap:13px;align-items:flex-start;padding:14px 0;border-top:1px solid var(--line);}
+  .s-item:first-child{border-top:none;}
+  .s-type{font-size:11.5px;font-weight:800;padding:3px 10px;border-radius:999px;background:#eff6ff;color:#1d4ed8;flex-shrink:0;margin-top:2px;white-space:nowrap;}
+  .s-main{flex:1;min-width:0;}
+  .s-title a{font-size:15px;font-weight:800;color:var(--ink);text-decoration:none;}
+  .s-title a:hover{color:var(--blue);text-decoration:underline;}
+  .s-domain{font-size:12px;color:#94a3b8;font-weight:600;margin-left:7px;}
+  .s-desc{font-size:13.5px;color:#475569;line-height:1.6;margin-top:3px;}
+  .s-meta{font-size:12px;color:#94a3b8;margin-top:4px;}
+  .s-actions{display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;}
+  .like-btn{padding:6px 13px;border-radius:999px;border:1.5px solid var(--line);background:#fff;font-size:13px;font-weight:800;color:var(--sub);cursor:pointer;font-family:inherit;white-space:nowrap;}
+  .like-btn.mine{border-color:#f43f5e;color:#f43f5e;background:#fff1f2;}
+  .del-btn{padding:4px 11px;border-radius:999px;border:1.5px solid #fecaca;background:#fff;font-size:12px;font-weight:700;color:#b91c1c;cursor:pointer;font-family:inherit;}
+  .empty{padding:26px 0;text-align:center;color:var(--sub);font-size:14px;}
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+
+<main class="page">
+  <div class="wrap" style="max-width:860px;">
+    <h1 class="page-title">소스 창고 📦</h1>
+    <div class="devnote" id="devnote" style="display:none;">🔒 이 기능은 아직 <b>비공개(관리자 전용)</b>입니다. 공개하려면 작업실에서 스위치를 켜세요.</div>
+    <p class="s-intro">쇼츠를 만들며 발견한 <b>좋은 소스처를 함께 모으는 창고</b>입니다. 좋은 소스를 찾았다면 링크로 공유하고, 유용했다면 추천을 눌러주세요. (파일 업로드는 안 됩니다 — 링크만 등록해야 저작권이 안전합니다)</p>
+
+    <div class="add-box">
+      <h3>➕ 소스 등록</h3>
+      <div class="add-row">
+        <input id="a-url" type="url" class="grow" placeholder="https://…  소스 사이트/페이지 주소">
+        <select id="a-type">
+          <option>영상 클립</option>
+          <option>이미지</option>
+          <option>음악·효과음</option>
+          <option>게임 화면</option>
+          <option>공공 자료</option>
+          <option>AI 도구</option>
+          <option>기타</option>
+        </select>
+      </div>
+      <div class="add-row">
+        <input id="a-title" type="text" class="grow" placeholder="제목 (예: 세로 요리 영상 많은 무료 스톡)">
+        <input id="a-desc" type="text" class="grow" placeholder="설명 (선택 — 어떤 재료가 있고 뭐가 좋은지)">
+      </div>
+      <button class="submit" id="btn-add" onclick="addSource()">등록하기</button>
+      <div class="add-hint">💡 등록 전 확인: 상업(수익) 사용이 가능한 곳인가요? 확실하지 않으면 설명에 "라이선스 확인 필요"라고 적어주세요.</div>
+      <div class="add-msg" id="add-msg"></div>
+    </div>
+
+    <div class="filters" id="filters"></div>
+    <div class="src-list" id="src-list"><div class="empty">불러오는 중…</div></div>
+  </div>
+</main>
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  const TYPES = ["전체", "영상 클립", "이미지", "음악·효과음", "게임 화면", "공공 자료", "AI 도구", "기타"];
+  let me = null;
+  let amAdmin = false;
+  let curFilter = "전체";
+  let items = [];
+  let likes = {};   // id -> count
+  let myLikes = {}; // id -> true
+
+  function domainOf(u) {
+    try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; }
+  }
+
+  function renderFilters() {
+    $id("filters").innerHTML = TYPES.map((t) =>
+      `<button class="${t === curFilter ? "on" : ""}" onclick="setFilter('${t}')">${t}</button>`).join("");
+  }
+  function setFilter(t) { curFilter = t; renderFilters(); renderList(); }
+
+  async function loadAll() {
+    const { data } = await sb.from("source_library").select("*").order("created_at", { ascending: false }).limit(300);
+    items = data || [];
+    likes = {}; myLikes = {};
+    if (items.length) {
+      const ids = items.map((s) => s.id);
+      const { data: lk } = await sb.from("source_likes").select("source_id,user_id").in("source_id", ids);
+      (lk || []).forEach((l) => {
+        likes[l.source_id] = (likes[l.source_id] || 0) + 1;
+        if (l.user_id === me.id) myLikes[l.source_id] = true;
+      });
+    }
+    renderList();
+  }
+
+  function renderList() {
+    const list = curFilter === "전체" ? items : items.filter((s) => s.source_type === curFilter);
+    // 추천 많은 순 → 최신 순
+    list.sort((a, b) => (likes[b.id] || 0) - (likes[a.id] || 0) || (new Date(b.created_at) - new Date(a.created_at)));
+    $id("src-list").innerHTML = list.length ? list.map((s) => `
+      <div class="s-item">
+        <span class="s-type">${escapeHtml(s.source_type)}</span>
+        <div class="s-main">
+          <div class="s-title"><a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.title)}</a><span class="s-domain">${escapeHtml(domainOf(s.url))}</span></div>
+          ${s.description ? `<div class="s-desc">${escapeHtml(s.description)}</div>` : ""}
+          <div class="s-meta">${escapeHtml(s.nickname || "회원")} · ${fmtDate(s.created_at)}</div>
+        </div>
+        <div class="s-actions">
+          <button class="like-btn ${myLikes[s.id] ? "mine" : ""}" onclick="toggleLike(${s.id})">❤ ${likes[s.id] || 0}</button>
+          ${(amAdmin || s.created_by === me.id) ? `<button class="del-btn" onclick="delSource(${s.id})">삭제</button>` : ""}
+        </div>
+      </div>`).join("") : `<div class="empty">아직 등록된 소스가 없습니다. 첫 번째 소스를 등록해 보세요!</div>`;
+  }
+
+  async function addSource() {
+    const url = $id("a-url").value.trim();
+    const title = $id("a-title").value.trim();
+    const type = $id("a-type").value;
+    const desc = $id("a-desc").value.trim();
+    const msg = $id("add-msg");
+    msg.className = "add-msg";
+    if (!/^https?:\/\/.+\..+/.test(url)) { msg.textContent = "올바른 주소(https://…)를 입력해 주세요."; msg.className = "add-msg err"; return; }
+    if (!title) { msg.textContent = "제목을 입력해 주세요."; msg.className = "add-msg err"; return; }
+    $id("btn-add").disabled = true;
+    const { error } = await sb.from("source_library").insert({
+      url: url, title: title.slice(0, 100), source_type: type,
+      description: desc.slice(0, 300) || null,
+      nickname: getNickname(me), created_by: me.id,
+    });
+    $id("btn-add").disabled = false;
+    if (error) { msg.textContent = "등록 실패: " + error.message; msg.className = "add-msg err"; return; }
+    msg.textContent = "등록되었습니다. 공유 감사합니다! 🙌"; msg.className = "add-msg ok";
+    $id("a-url").value = ""; $id("a-title").value = ""; $id("a-desc").value = "";
+    await loadAll();
+  }
+
+  async function toggleLike(id) {
+    if (myLikes[id]) {
+      await sb.from("source_likes").delete().eq("source_id", id).eq("user_id", me.id);
+      delete myLikes[id]; likes[id] = Math.max(0, (likes[id] || 1) - 1);
+    } else {
+      const { error } = await sb.from("source_likes").insert({ source_id: id, user_id: me.id });
+      if (!error) { myLikes[id] = true; likes[id] = (likes[id] || 0) + 1; }
+    }
+    renderList();
+  }
+
+  async function delSource(id) {
+    if (!confirm("이 소스를 삭제할까요?")) return;
+    await sb.from("source_library").delete().eq("id", id);
+    await loadAll();
+  }
+
+  (async function init() {
+    me = await requireLogin();
+    if (!me) return;
+    amAdmin = await isAdmin(me);
+    if (!amAdmin) {
+      const { data } = await sb.from("feature_flags").select("is_public").eq("key", "source_library").maybeSingle();
+      if (!data || !data.is_public) { location.replace("dashboard.html"); return; }
+    } else {
+      const { data } = await sb.from("feature_flags").select("is_public").eq("key", "source_library").maybeSingle();
+      if (!data || !data.is_public) $id("devnote").style.display = "block";
+    }
+    renderFilters();
+    await renderHeader("sources");
+    renderFooter();
+    await loadAll();
+  })();
+</script>
+</body>
+</html>
