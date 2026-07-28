@@ -111,9 +111,9 @@
     <div class="an-hint">쇼츠·일반 영상 모두 가능 · 분석에 20~60초 정도 걸립니다</div>
 
     <div class="model-sel" id="model-sel">
-      <span class="ml">🤖 AI 모델 (비교 테스트용):</span>
-      <label><input type="radio" name="msel" value="auto" checked> 자동 (Pro 우선, 한도시 Flash)</label>
-      <label><input type="radio" name="msel" value="pro"> Pro만</label>
+      <span class="ml">🤖 AI 모델:</span>
+      <label><input type="radio" name="msel" value="auto" checked> 자동 (Flash 기본, 한도시 Pro)</label>
+      <label><input type="radio" name="msel" value="pro"> Pro만 (고성능 · 하루 한도 있음)</label>
       <label><input type="radio" name="msel" value="flash"> Flash만</label>
     </div>
 
@@ -203,7 +203,7 @@
   function modelLabel(m, what) {
     if (!m) return "";
     if (m.indexOf("pro") >= 0) return "🤖 " + what + " 모델: Gemini Pro (고성능)";
-    return "🤖 " + what + " 모델: Gemini Flash (Pro 하루 한도 소진 시 자동 대체)";
+    return "🤖 " + what + " 모델: Gemini Flash (기본)";
   }
   let lastAnalysis = null;
   let lastVideoId = null;
