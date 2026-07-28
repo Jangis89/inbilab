@@ -120,8 +120,24 @@
         ["study.html", "study", "📚", "학습자료"],
       ]},
     ];
+    // AI 제작 도구 메뉴: 공개 스위치가 켜진 기능만 수강생에게 표시 (관리자는 🔒 표시로 미리 보임)
+    const adm = await isAdmin(user);
+    const aiPages = {
+      video_analyze: ["analyze.html", "analyze", "🎬", "영상 분석"],
+    };
+    try {
+      const { data: ff } = await sb.from("feature_flags").select("key,is_public");
+      const aiItems = [];
+      (ff || []).forEach((f) => {
+        const p = aiPages[f.key];
+        if (!p) return;
+        if (f.is_public) aiItems.push(p);
+        else if (adm) aiItems.push([p[0], p[1], p[2], p[3] + " 🔒"]);
+      });
+      if (aiItems.length) groups.splice(3, 0, { label: "AI 제작 도구", items: aiItems });
+    } catch {}
     // 관리자에게만 '운영' 메뉴 노출
-    if (await isAdmin(user)) {
+    if (adm) {
       groups.push({ label: "운영", items: [
         ["admin.html", "admin", "🛠️", "채널 승인"],
         ["lab.html", "lab", "🧪", "작업실 (개발중)"],
