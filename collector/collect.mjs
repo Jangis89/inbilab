@@ -526,7 +526,7 @@ async function main() {
     ["랭킹·순위 정보", /랭킹|순위|인포그래픽|모음/],
     ["정치·시사", /정치|시사|사회|뉴스|국방|사건/],
     ["지식·역사·교양", /역사|지식|교양|인문|상식|미스터리|교육|어학|건강|운세|재테크|부동산|경제|정보|산업|실화|스토리텔링/],
-    ["푸드", /푸드|음식|먹|쇼핑|공예/],
+    ["푸드", /푸드|음식|먹방|요리|레시피/],
   ];
   function catFromGenre(g) {
     if (!g || g === "기타/혼합" || g === "종합/기타") return null;
@@ -597,6 +597,87 @@ async function main() {
       }
     }
     console.log(`카테고리 Gemini 분류: ${gemDone}개 완료`);
+  }
+
+  // ========== 8.5 카테고리 정밀 재검수 (이미 분류된 채널도 순환 재검수) ==========
+  //   실행마다 '가장 오래 검수 안 된 채널'부터 200개를 채널별 개별 판정.
+  //   근거: 최근 영상 제목 8개 + 썸네일 4장 (채널명 추측 금지, 내용 기반 판정)
+  //   확신도 0.5 이상일 때만 교정 → 재검수가 오히려 망치는 일 방지.
+  if (GEM_KEY) {
+    const RECHECK_LIMIT = 200;
+    const CAT_DEF =
+      `[카테고리 정의 — 반드시 이 15개 중 하나]\n` +
+      `- 영화·드라마 요약: 영화/드라마 줄거리 요약·리뷰·명장면 편집\n` +
+      `- 연예 이슈: 연예인·아이돌 소식/열애/근황 등 연예 뉴스 (방송 장면 편집이 핵심이면 방송·예능)\n` +
+      `- 유머·밈·바이럴: 웃긴 영상 모음, 밈, 해외 바이럴 클립, 공감 유머\n` +
+      `- 지식·역사·교양: 역사·상식·과학·건강·재테크·교육·미스터리 등 지식 정보\n` +
+      `- 스포츠: 축구·야구·격투기 등 경기 하이라이트/선수 이슈/스포츠 랭킹\n` +
+      `- 정치·시사: 정치, 사회 이슈, 사건사고, 뉴스 해설\n` +
+      `- 국뽕·해외반응: 한국 관련 해외 반응·국위선양 소재\n` +
+      `- 방송·예능: TV 방송/예능 프로그램 클립 편집 (프로그램 장면 자체가 콘텐츠)\n` +
+      `- 게임: 게임 플레이·편집·e스포츠\n` +
+      `- 동물·펫: 동물·반려동물 영상\n` +
+      `- 음악: 노래·무대·커버·플레이리스트가 핵심\n` +
+      `- 썰·사연·애니툰: 커뮤니티 썰/사연 낭독, 애니메이션·툰 형식\n` +
+      `- 푸드: 요리·레시피·먹방·음식 리뷰가 '핵심 소재'인 채널만 (음식이 잠깐 나오는 예능/이슈는 아님)\n` +
+      `- 랭킹·순위 정보: 특정 소재에 속하지 않는 순수 순위·비교·인포그래픽 정보\n` +
+      `- 기타: 위 어디에도 명확히 속하지 않음\n`;
+    const targets = await sbFetch(
+      `channels?select=id,title,subscriber_count,category&category=not.is.null&or=(source.eq.tubelab,ai_faceless.is.true)&order=category_checked_at.asc.nullsfirst&limit=${RECHECK_LIMIT}`
+    );
+    console.log(`카테고리 정밀 재검수 대상: ${(targets || []).length}개`);
+    let checked = 0, fixed = 0;
+    for (const ch of targets || []) {
+      const vids = await sbFetch(
+        `channel_videos?select=title,thumbnail&channel_id=eq.${ch.id}&order=published_at.desc&limit=8`
+      );
+      const titles = (vids || []).map((v, i) => `${i + 1}. ${v.title}`).join("\n");
+      const prompt =
+        `너는 유튜브 채널 카테고리 검수 전문가야. 아래 채널을 정확히 하나의 카테고리로 분류해.\n\n` +
+        CAT_DEF +
+        `\n[판정 규칙]\n` +
+        `- 채널 이름으로 추측하지 말고, 반드시 '영상 제목들'과 '첨부된 썸네일'의 실제 내용을 근거로 판단해.\n` +
+        `- 두 카테고리에 걸치면 영상 수가 더 많은 쪽을 선택해.\n` +
+        `- 확신이 없으면 confidence를 0.5 미만으로 표시해.\n\n` +
+        `채널명: ${ch.title} (구독자 ${ch.subscriber_count || "?"}명)\n` +
+        `현재 분류: ${ch.category}\n` +
+        `최근 영상 제목:\n${titles || "(영상 정보 없음)"}\n\n` +
+        `JSON만 반환: {"category":"...","confidence":0.0,"reason":"한 줄 근거"}`;
+      const parts = [{ text: prompt }];
+      for (const v of (vids || []).slice(0, 4)) {
+        if (!v.thumbnail) continue;
+        const b64 = await fetchImageBase64(v.thumbnail);
+        if (b64) parts.push({ inline_data: { mime_type: "image/jpeg", data: b64 } });
+      }
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-latest:generateContent?key=${GEM_KEY}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts }],
+              generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
+            }),
+          }
+        );
+        const data = await res.json();
+        if (data.error) { console.log(`  재검수 오류(${ch.title}): ${data.error.message}`); continue; }
+        const o = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+        const body = { category_checked_at: new Date().toISOString() };
+        const conf = typeof o.confidence === "number" ? o.confidence : 0;
+        if (CATEGORIES.includes(o.category) && conf >= 0.5 && o.category !== ch.category) {
+          body.category = o.category;
+          fixed++;
+          console.log(`  교정: ${ch.title} — ${ch.category} → ${o.category} (${(o.reason || "").slice(0, 60)})`);
+        }
+        await sbFetch(`channels?id=eq.${ch.id}`, { method: "PATCH", body, prefer: "return=minimal" });
+        checked++;
+      } catch (e) {
+        console.log(`  재검수 실패(${ch.title}): ${e.message}`);
+      }
+    }
+    console.log(`카테고리 정밀 재검수: ${checked}개 확인, ${fixed}개 교정`);
   }
 
   // ========== 9. 오래된 일일 기록 자동 청소 (90일 보관) ==========
