@@ -547,7 +547,12 @@ async function main() {
       forGemini.push(ch);
     }
   }
-  console.log(`카테고리 규칙 매핑: ${ruleDone}개 완료, Gemini 판정 대상 ${forGemini.length}개`);
+  // '기타'로 분류된 채널도 매일 재분류 시도 — 영상이 쌓여 판단 근거가 생기면 제 카테고리로 이동
+  const etcRows = await sbFetch(
+    `channels?select=id,title,ai_genre&category=eq.${encodeURIComponent("기타")}&limit=200`
+  );
+  for (const ch of etcRows || []) forGemini.push(ch);
+  console.log(`카테고리 규칙 매핑: ${ruleDone}개 완료, Gemini 판정 대상 ${forGemini.length}개 (기타 재시도 ${(etcRows || []).length}개 포함)`);
   // (2) Gemini 객관식 분류 (15개씩 묶어서)
   if (GEM_KEY && forGemini.length > 0) {
     let gemDone = 0;
