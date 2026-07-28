@@ -87,6 +87,34 @@ const ANALYZE_PROMPT = `당신은 유튜브 쇼츠 제작 전문 분석가입니
   "tip": "이 포맷을 따라 만들 때 가장 중요한 팁 한 줄 (그대로 베끼지 말고 새 소재로 재구성하는 방향)"
 }`;
 
+const SCRIPT_PROMPT = `당신은 유튜브 쇼츠 전문 작가입니다. 아래는 성공한 쇼츠 영상의 분석 결과입니다:
+__ANALYSIS__
+
+__TOPIC__
+
+이 성공 포맷(훅 방식·구성·전개 원리)을 따르되, 원본 영상을 베끼지 말고 완전히 새로운 소재로 쇼츠 대본을 쓰세요.
+
+규칙:
+- 문장은 짧고 명확하게 (TTS 프로그램에 바로 붙여넣기 좋게)
+- 전체 낭독 시간 30~60초 분량
+- 첫 문장은 2초 안에 궁금증을 만드는 강한 훅
+- 마지막은 다음 영상 시청이나 구독을 자연스럽게 유도
+- 초보자가 얼굴·목소리 노출 없이 만들 수 있는 구성
+- 모든 값은 한국어
+
+아래 JSON 형식으로만 출력하세요:
+{
+  "topic": "선택한 새 소재 한 줄",
+  "title": "영상 제목 추천 (호기심 유발형)",
+  "target_length_sec": 45,
+  "lines": [
+    { "text": "낭독할 문장 (첫 항목이 훅)", "scene": "이 문장에 얹을 화면 설명 (어떤 영상/이미지를 보여줄지)" }
+  ],
+  "outro": "마무리 문장",
+  "hashtags": ["#해시태그 3~5개"],
+  "notes": "제작 팁 1~2문장"
+}`;
+
 module.exports = async (req, res) => {
   try {
     if (req.method !== "POST") {
@@ -216,6 +244,50 @@ module.exports = async (req, res) => {
       }
       if (!isAdmin) await recordUsage(user.id, feature, token);
       res.status(200).json({ ok: true, video_id: vid, analysis: analysis });
+      return;
+    }
+
+    // ---------- 액션: 대본 작성 ----------
+    if (action === "script") {
+      if (!key) {
+        res.status(500).json({ error: "서버에 GEMINI_API_KEY가 설정되지 않았습니다" });
+        return;
+      }
+      const analysis = body.analysis;
+      if (!analysis || typeof analysis !== "object") {
+        res.status(400).json({ error: "분석 결과가 필요합니다. 먼저 영상을 분석해 주세요." });
+        return;
+      }
+      const topic = String(body.topic || "").trim().slice(0, 200);
+      const prompt = SCRIPT_PROMPT
+        .replace("__ANALYSIS__", JSON.stringify(analysis).slice(0, 4000))
+        .replace(
+          "__TOPIC__",
+          topic
+            ? "사용자가 원하는 새 소재: " + topic
+            : "새 소재는 당신이 직접 제안하세요. 원본과 같은 카테고리에서, 한국 시청자가 궁금해할 검증된 흥미 소재로."
+        );
+      const g = await fetch(GEMINI_BASE + "gemini-pro-latest:generateContent?key=" + key, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0.8 },
+        }),
+      });
+      const gj = await g.json().catch(() => null);
+      if (!g.ok) {
+        const detail = gj && gj.error && gj.error.message ? gj.error.message : "HTTP " + g.status;
+        res.status(502).json({ error: "대본 생성 실패", detail: detail });
+        return;
+      }
+      const script = parseJsonLoose(geminiText(gj));
+      if (!script || !Array.isArray(script.lines) || !script.lines.length) {
+        res.status(502).json({ error: "대본 결과 해석에 실패했습니다. 다시 시도해 주세요." });
+        return;
+      }
+      if (!isAdmin) await recordUsage(user.id, feature, token);
+      res.status(200).json({ ok: true, script: script });
       return;
     }
 
