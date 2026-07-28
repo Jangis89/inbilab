@@ -1,10 +1,12 @@
 // ============================================
-// 인비랩 AI 중계 서버 (Step 0)
+// 인비랩 AI 중계 서버 (Step 0 + Step 1)
 // - Gemini API 키는 서버 환경변수(GEMINI_API_KEY)에만 보관 (사이트에 노출 안 됨)
 // - 순서: 로그인 확인 → 관리자 여부 → (비관리자) 공개 여부 + 하루 한도 → AI 호출 → 사용 기록
+// - 액션: ping(연결 테스트), analyze(영상 분석)
 // ============================================
 const SUPABASE_URL = "https://bdbwawskwdgdsqmoqodt.supabase.co";
 const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJkYndhd3Nrd2RnZHNxbW9xb2R0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUwNzcxNzcsImV4cCI6MjEwMDY1MzE3N30.sOJU4L75T7MDaeZFIXmzEvWN_ZW4eiZKpX9cWOzqwF4";
+const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
 
 async function supaGet(path, token) {
   try {
@@ -40,6 +42,50 @@ function kstDayStartIso() {
   kst.setUTCHours(0, 0, 0, 0);
   return new Date(kst.getTime() - 9 * 3600 * 1000).toISOString();
 }
+
+// Gemini 응답에서 텍스트 꺼내기
+function geminiText(gj) {
+  try {
+    return gj.candidates[0].content.parts.map(function (p) { return p.text || ""; }).join("");
+  } catch {
+    return "";
+  }
+}
+
+// 텍스트에서 JSON 안전하게 파싱
+function parseJsonLoose(text) {
+  if (!text) return null;
+  try { return JSON.parse(text); } catch {}
+  const m = text.match(/\{[\s\S]*\}/);
+  if (m) { try { return JSON.parse(m[0]); } catch {} }
+  return null;
+}
+
+// 유튜브 주소에서 영상 ID 추출
+function extractVideoId(url) {
+  const m = String(url || "").match(
+    /(?:youtube\.com\/(?:watch\?[^#]*v=|shorts\/|embed\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/
+  );
+  return m ? m[1] : null;
+}
+
+const ANALYZE_PROMPT = `당신은 유튜브 쇼츠 제작 전문 분석가입니다. 이 영상을 직접 보고 아래 JSON 형식으로만 답하세요. 다른 텍스트 없이 JSON만 출력하세요. 모든 값은 한국어로 작성하세요.
+
+{
+  "category": "카테고리 한 단어~두 단어 (예: 게임, 스포츠, 동물, 영화요약, 음식, 교육, 이슈정리, 애니메이션 등)",
+  "topic": "이 영상의 주제 한 줄",
+  "summary": "영상 내용 요약 2~3문장",
+  "keywords": ["핵심 키워드 5~10개 (검색에 쓸 수 있는 단어들)"],
+  "hook": "첫 1~3초가 시청자를 붙잡는 방식 한 줄 (화면과 소리 기준)",
+  "format": "콘텐츠 형식 (예: 랭킹, TTS 정보전달, 하이라이트 편집, 밈 편집, 스토리텔링, 비교, 실험 등)",
+  "voice_type": "음성 종류: AI음성 | 원본소리 | 음악만 | 무음 | 사람나레이션",
+  "creator_face": "제작자 본인 얼굴 노출: 없음 | 잠깐 | 계속",
+  "faceless_grade": "무출연 재현 가능성: 가능 | 부분가능 | 어려움  (입문자가 자기 얼굴·목소리 없이 비슷한 포맷을 만들 수 있는가)",
+  "faceless_reason": "그렇게 판단한 이유 한 줄",
+  "needed_sources": ["이 포맷을 재현할 때 필요한 소스 종류 (예: 무료 스톡영상, 게임 플레이 화면, AI 이미지, 자료 사진, 경기 영상 등)"],
+  "difficulty": "편집 난이도 1~5 사이 숫자 (1=아주 쉬움, 5=전문가급)",
+  "tip": "이 포맷을 따라 만들 때 가장 중요한 팁 한 줄 (그대로 베끼지 말고 새 소재로 재구성하는 방향)"
+}`;
 
 module.exports = async (req, res) => {
   try {
@@ -96,34 +142,80 @@ module.exports = async (req, res) => {
       }
     }
 
-    // 4) 요청 처리
+    const key = process.env.GEMINI_API_KEY;
+
+    // ---------- 액션: 연결 테스트 ----------
     if (action === "ping") {
-      // 서버-Gemini 연결 테스트 (아주 작은 호출)
-      const key = process.env.GEMINI_API_KEY;
       if (!key) {
         res.status(500).json({ error: "서버에 GEMINI_API_KEY가 아직 설정되지 않았습니다 (Vercel 환경변수 필요)" });
         return;
       }
-      const g = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=" + key,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: "테스트입니다. '연결 성공' 네 글자만 답하세요." }] }],
-          }),
-        }
-      );
+      const g = await fetch(GEMINI_BASE + "gemini-flash-latest:generateContent?key=" + key, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: "테스트입니다. '연결 성공' 네 글자만 답하세요." }] }],
+        }),
+      });
       const gj = await g.json().catch(() => null);
       if (!g.ok) {
         const detail = gj && gj.error && gj.error.message ? gj.error.message : "HTTP " + g.status;
         res.status(502).json({ error: "Gemini 호출 실패", detail: detail });
         return;
       }
-      let text = "";
-      try { text = gj.candidates[0].content.parts[0].text || ""; } catch {}
       if (!isAdmin) await recordUsage(user.id, feature, token);
-      res.status(200).json({ ok: true, admin: isAdmin, answer: text.trim() });
+      res.status(200).json({ ok: true, admin: isAdmin, answer: geminiText(gj).trim() });
+      return;
+    }
+
+    // ---------- 액션: 영상 분석 ----------
+    if (action === "analyze") {
+      if (!key) {
+        res.status(500).json({ error: "서버에 GEMINI_API_KEY가 설정되지 않았습니다" });
+        return;
+      }
+      const vid = extractVideoId(body.video_url);
+      if (!vid) {
+        res.status(400).json({ error: "유튜브 영상 주소가 아닙니다. 예: https://youtube.com/shorts/XXXXXXXXXXX" });
+        return;
+      }
+      const videoUrl = "https://www.youtube.com/watch?v=" + vid;
+
+      const g = await fetch(GEMINI_BASE + "gemini-pro-latest:generateContent?key=" + key, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { file_data: { file_uri: videoUrl } },
+                { text: ANALYZE_PROMPT },
+              ],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: "application/json",
+            mediaResolution: "MEDIA_RESOLUTION_LOW",
+            temperature: 0.2,
+          },
+        }),
+      });
+      const gj = await g.json().catch(() => null);
+      if (!g.ok) {
+        let detail = gj && gj.error && gj.error.message ? gj.error.message : "HTTP " + g.status;
+        if (/not\s*found|unsupported|invalid/i.test(detail)) {
+          detail = "영상을 불러올 수 없습니다 (비공개·삭제·연령제한 영상일 수 있음)";
+        }
+        res.status(502).json({ error: "영상 분석 실패", detail: detail });
+        return;
+      }
+      const analysis = parseJsonLoose(geminiText(gj));
+      if (!analysis) {
+        res.status(502).json({ error: "분석 결과 해석에 실패했습니다. 다시 시도해 주세요." });
+        return;
+      }
+      if (!isAdmin) await recordUsage(user.id, feature, token);
+      res.status(200).json({ ok: true, video_id: vid, analysis: analysis });
       return;
     }
 
