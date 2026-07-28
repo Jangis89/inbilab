@@ -44,6 +44,32 @@
   .stars{color:#f59e0b;font-size:16px;letter-spacing:2px;}
   .tipbox{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:14px;padding:15px 17px;font-size:14.5px;line-height:1.65;color:#14532d;}
   .tipbox b{display:block;margin-bottom:4px;font-size:13.5px;}
+
+  /* 대본 만들기 */
+  .sc-box{margin-top:16px;background:#fff;border:2px solid #ddd6fe;border-radius:14px;padding:18px;}
+  .sc-box h3{font-size:16.5px;font-weight:800;margin:0 0 4px;}
+  .sc-box .sc-desc{font-size:13.5px;color:var(--sub);margin-bottom:12px;line-height:1.55;}
+  .sc-input{display:flex;gap:10px;}
+  .sc-input input{flex:1;padding:12px 15px;border:2px solid var(--line);border-radius:11px;font-size:14.5px;font-family:inherit;}
+  .sc-input input:focus{outline:none;border-color:#7c3aed;}
+  .sc-input button{padding:12px 22px;border-radius:11px;border:none;background:#7c3aed;color:#fff;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;}
+  .sc-input button:disabled{opacity:.5;}
+  .sc-res{display:none;margin-top:16px;}
+  .sc-res.show{display:block;}
+  .sc-title{background:#f5f3ff;border:1px solid #ddd6fe;border-radius:11px;padding:12px 15px;margin-bottom:10px;}
+  .sc-title .tt{font-size:16px;font-weight:800;line-height:1.4;}
+  .sc-title .tm{font-size:12.5px;color:#7c3aed;font-weight:700;margin-top:3px;}
+  .sc-line{display:flex;gap:12px;padding:10px 4px;border-top:1px solid var(--line);}
+  .sc-line .no{width:26px;height:26px;border-radius:50%;background:#f5f3ff;color:#7c3aed;font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .sc-line .lt{flex:1;}
+  .sc-line .lt .tx{font-size:14.5px;font-weight:700;line-height:1.5;}
+  .sc-line .lt .sc{font-size:12.5px;color:var(--sub);margin-top:3px;line-height:1.5;}
+  .sc-line .lt .sc:before{content:"🎬 ";}
+  .sc-tags{margin:10px 0 4px;font-size:13.5px;color:#7c3aed;font-weight:700;}
+  .sc-note{font-size:13px;color:var(--sub);line-height:1.55;}
+  .sc-dl{display:flex;gap:9px;margin-top:14px;flex-wrap:wrap;}
+  .sc-dl button{padding:10px 16px;border-radius:10px;border:1.5px solid #ddd6fe;background:#fff;color:#7c3aed;font-size:13.5px;font-weight:800;cursor:pointer;font-family:inherit;}
+  .sc-dl button.main{background:#7c3aed;color:#fff;border-color:#7c3aed;}
 </style>
 </head>
 <body>
@@ -90,6 +116,31 @@
       </div>
 
       <div class="tipbox"><b>💡 따라 만들기 팁</b><span id="r-tip"></span></div>
+
+      <div class="sc-box" id="sc-box" style="display:none;">
+        <h3>✍️ 이 포맷으로 대본 만들기</h3>
+        <div class="sc-desc">이 영상의 성공 포맷을 따라 <b>완전히 새로운 소재</b>의 쇼츠 대본을 만들어 드립니다. 만든 대본은 파일로 받아 타입캐스트 같은 TTS 서비스에 바로 붙여넣으면 됩니다.</div>
+        <div class="sc-input">
+          <input id="sc-topic" placeholder="원하는 새 소재 (비워두면 AI가 제안합니다)" onkeydown="if(event.key==='Enter')runScript()">
+          <button id="btn-sc" onclick="runScript()">대본 만들기</button>
+        </div>
+        <div class="an-load" id="sc-load" style="margin-top:12px;"><div class="spin"></div><span id="sc-load-txt">AI가 대본을 쓰고 있습니다…</span></div>
+        <div class="an-err" id="sc-err" style="margin-top:12px;"></div>
+        <div class="sc-res" id="sc-res">
+          <div class="sc-title">
+            <div class="tt" id="sc-title"></div>
+            <div class="tm" id="sc-meta"></div>
+          </div>
+          <div id="sc-lines"></div>
+          <div class="sc-tags" id="sc-tags"></div>
+          <div class="sc-note" id="sc-note"></div>
+          <div class="sc-dl">
+            <button class="main" onclick="dlTts()">🎙️ TTS용 대본 다운로드 (.txt)</button>
+            <button onclick="dlFull()">📋 전체 제작 노트 다운로드 (.txt)</button>
+            <button onclick="copyTts()">복사</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </main>
@@ -101,6 +152,10 @@
 <script src="assets/js/app.js"></script>
 <script>
   let loadTimer = null;
+  let lastAnalysis = null;
+  let lastVideoId = null;
+  let lastScript = null;
+  let canScript = false;
 
   async function runAnalyze() {
     const url = $id("vurl").value.trim();
@@ -131,8 +186,14 @@
         err.textContent = "분석 실패: " + (j.error || "HTTP " + r.status) + (j.detail ? " — " + j.detail : "");
         err.className = "an-err show";
       } else {
-        renderResult(j.video_id, j.analysis || {});
+        lastAnalysis = j.analysis || {};
+        lastVideoId = j.video_id;
+        renderResult(j.video_id, lastAnalysis);
         resBox.className = "an-res show";
+        $id("sc-box").style.display = canScript ? "block" : "none";
+        $id("sc-res").className = "sc-res";
+        $id("sc-err").className = "an-err";
+        $id("sc-topic").value = "";
       }
     } catch (e) {
       err.textContent = "요청이 실패했습니다: " + e.message;
@@ -167,6 +228,99 @@
     $id("r-tip").textContent = a.tip || "";
   }
 
+  // ---------- 대본 만들기 ----------
+  let scTimer = null;
+
+  async function runScript() {
+    if (!lastAnalysis) return;
+    const btn = $id("btn-sc");
+    const load = $id("sc-load");
+    const err = $id("sc-err");
+    err.className = "an-err";
+    $id("sc-res").className = "sc-res";
+    btn.disabled = true;
+    load.className = "an-load show";
+    let sec = 0;
+    $id("sc-load-txt").textContent = "AI가 대본을 쓰고 있습니다… (0초)";
+    scTimer = setInterval(() => { sec++; $id("sc-load-txt").textContent = "AI가 대본을 쓰고 있습니다… (" + sec + "초)"; }, 1000);
+    try {
+      const { data } = await sb.auth.getSession();
+      const token = data && data.session ? data.session.access_token : "";
+      const r = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ feature: "script_gen", action: "script", analysis: lastAnalysis, topic: $id("sc-topic").value.trim() }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        err.textContent = "대본 생성 실패: " + (j.error || "HTTP " + r.status) + (j.detail ? " — " + j.detail : "");
+        err.className = "an-err show";
+      } else {
+        lastScript = j.script;
+        renderScript(j.script);
+        $id("sc-res").className = "sc-res show";
+      }
+    } catch (e) {
+      err.textContent = "요청이 실패했습니다: " + e.message;
+      err.className = "an-err show";
+    }
+    clearInterval(scTimer);
+    load.className = "an-load";
+    btn.disabled = false;
+  }
+
+  function renderScript(s) {
+    $id("sc-title").textContent = s.title || s.topic || "제목 없음";
+    $id("sc-meta").textContent = "소재: " + (s.topic || "-") + " · 예상 길이 약 " + (s.target_length_sec || "?") + "초";
+    const lines = (s.lines || []).slice();
+    $id("sc-lines").innerHTML = lines.map((l, i) => `
+      <div class="sc-line">
+        <div class="no">${i + 1}</div>
+        <div class="lt">
+          <div class="tx">${escapeHtml(l.text || "")}</div>
+          ${l.scene ? `<div class="sc">${escapeHtml(l.scene)}</div>` : ""}
+        </div>
+      </div>`).join("") +
+      (s.outro ? `<div class="sc-line"><div class="no">끝</div><div class="lt"><div class="tx">${escapeHtml(s.outro)}</div></div></div>` : "");
+    $id("sc-tags").textContent = (s.hashtags || []).join(" ");
+    $id("sc-note").textContent = s.notes ? "💡 " + s.notes : "";
+  }
+
+  function ttsText() {
+    if (!lastScript) return "";
+    const parts = (lastScript.lines || []).map((l) => l.text || "");
+    if (lastScript.outro) parts.push(lastScript.outro);
+    return parts.join("\n");
+  }
+
+  function fullText() {
+    const s = lastScript || {};
+    let t = "[인비랩 쇼츠 제작 노트]\n\n";
+    t += "제목: " + (s.title || "") + "\n소재: " + (s.topic || "") + "\n예상 길이: 약 " + (s.target_length_sec || "?") + "초\n\n";
+    t += "== 대본 + 화면 구성 ==\n";
+    (s.lines || []).forEach((l, i) => {
+      t += (i + 1) + ". " + (l.text || "") + "\n";
+      if (l.scene) t += "   [화면] " + l.scene + "\n";
+    });
+    if (s.outro) t += "끝. " + s.outro + "\n";
+    t += "\n해시태그: " + ((s.hashtags || []).join(" ")) + "\n";
+    if (s.notes) t += "제작 팁: " + s.notes + "\n";
+    return t;
+  }
+
+  function dlFile(name, text) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["﻿" + text], { type: "text/plain;charset=utf-8" }));
+    a.download = name;
+    a.click();
+  }
+  function dlTts() { dlFile("쇼츠대본_TTS용.txt", ttsText()); }
+  function dlFull() { dlFile("쇼츠제작노트.txt", fullText()); }
+  async function copyTts() {
+    try { await navigator.clipboard.writeText(ttsText()); alert("대본이 복사되었습니다. TTS 서비스에 붙여넣으세요."); }
+    catch { alert("복사에 실패했습니다. 다운로드 버튼을 이용해 주세요."); }
+  }
+
   (async function init() {
     const user = await requireLogin();
     if (!user) return;
@@ -175,9 +329,12 @@
     if (!admin) {
       const { data } = await sb.from("feature_flags").select("is_public").eq("key", "video_analyze").maybeSingle();
       if (!data || !data.is_public) { location.replace("dashboard.html"); return; }
+      const { data: sf } = await sb.from("feature_flags").select("is_public").eq("key", "script_gen").maybeSingle();
+      canScript = !!(sf && sf.is_public);
     } else {
       const { data } = await sb.from("feature_flags").select("is_public").eq("key", "video_analyze").maybeSingle();
       if (!data || !data.is_public) $id("devnote").style.display = "block";
+      canScript = true;
     }
     await renderHeader("analyze");
     renderFooter();
