@@ -548,8 +548,9 @@ async function main() {
     }
   }
   // '기타'로 분류된 채널도 매일 재분류 시도 — 영상이 쌓여 판단 근거가 생기면 제 카테고리로 이동
+  // (관리자가 직접 지정·잠금한 채널은 제외)
   const etcRows = await sbFetch(
-    `channels?select=id,title,ai_genre&category=eq.${encodeURIComponent("기타")}&limit=200`
+    `channels?select=id,title,ai_genre&category=eq.${encodeURIComponent("기타")}&category_locked=not.is.true&limit=200`
   );
   for (const ch of etcRows || []) forGemini.push(ch);
   console.log(`카테고리 규칙 매핑: ${ruleDone}개 완료, Gemini 판정 대상 ${forGemini.length}개 (기타 재시도 ${(etcRows || []).length}개 포함)`);
@@ -622,8 +623,9 @@ async function main() {
       `- 푸드: 요리·레시피·먹방·음식 리뷰가 '핵심 소재'인 채널만 (음식이 잠깐 나오는 예능/이슈는 아님)\n` +
       `- 랭킹·순위 정보: 특정 소재에 속하지 않는 순수 순위·비교·인포그래픽 정보\n` +
       `- 기타: 위 어디에도 명확히 속하지 않음\n`;
+    // 관리자가 직접 지정·잠금한 채널(category_locked)은 AI가 절대 건드리지 않음
     const targets = await sbFetch(
-      `channels?select=id,title,subscriber_count,category&category=not.is.null&or=(source.eq.tubelab,ai_faceless.is.true)&order=category_checked_at.asc.nullsfirst&limit=${RECHECK_LIMIT}`
+      `channels?select=id,title,subscriber_count,category&category=not.is.null&category_locked=not.is.true&or=(source.eq.tubelab,ai_faceless.is.true)&order=category_checked_at.asc.nullsfirst&limit=${RECHECK_LIMIT}`
     );
     console.log(`카테고리 정밀 재검수 대상: ${(targets || []).length}개`);
     let checked = 0, fixed = 0;
