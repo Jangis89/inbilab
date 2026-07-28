@@ -50,24 +50,13 @@
   .b-src{background:#fef3c7;color:#92400e;}
   .b-ai{background:#f3e8ff;color:#7c3aed;}
   .b-genre{background:#eff6ff;color:var(--blue-dark);}
+  .b-chk{background:#dcfce7;color:#166534;}
+  .b-lock{background:#fef3c7;color:#92400e;}
+  .cat-line{margin-top:5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .cat-line .cat-sel{padding:3px 7px;border-radius:8px;border:1.5px solid var(--line);font-size:12.5px;font-weight:700;color:var(--sub);font-family:inherit;background:#fff;cursor:pointer;}
   .b-상{background:#dcfce7;color:#166534;}
   .b-중{background:#fef9c3;color:#854d0e;}
   .b-하{background:#fee2e2;color:#991b1b;}
-  .b-검증후보{background:#dcfce7;color:#166534;}
-  .b-급등후보{background:#ffedd5;color:#c2410c;}
-  .b-검토필요{background:#fef9c3;color:#854d0e;}
-  .b-부적합{background:#fee2e2;color:#991b1b;}
-  .b-score{background:#eef2ff;color:#4338ca;}
-  .ainfo .bmk{font-size:12px;color:#166534;margin-top:3px;line-height:1.4;}
-  .ainfo .cau{font-size:12px;color:#b45309;margin-top:2px;line-height:1.4;}
-  /* 일일 성장(튜브랩식 일일조회수) */
-  .agrow{width:118px;flex-shrink:0;text-align:center;line-height:1.35;}
-  .agrow .gv{font-size:16.5px;font-weight:900;color:#16a34a;}
-  .agrow .gv.neg{color:#dc2626;}
-  .agrow .gl{font-size:11px;color:var(--sub);font-weight:700;}
-  .agrow .gs{font-size:12px;font-weight:800;color:#16a34a;margin-top:2px;}
-  .agrow .gs.neg{color:#dc2626;}
-  .agrow .gwait{font-size:12px;color:var(--sub);font-weight:600;}
   .avids{display:flex;gap:5px;flex-shrink:0;}
   .avids a{display:block;position:relative;width:66px;height:117px;border-radius:7px;overflow:hidden;background:#000;flex-shrink:0;}
   .avids img{width:100%;height:100%;object-fit:cover;display:block;}
@@ -97,8 +86,7 @@
 <div class="page">
   <div class="wrap" id="wrap">
     <h1 class="page-title">채널 승인 🛠️</h1>
-    <p class="page-desc">AI가 가져온 50만 구독자 미만의 채널입니다. 관리자님께서는 수강생에게 보여줄 채널에 대해 ✓승인/✗제외만 눌러주세요.<br>
-    <span style="font-size:13px;color:#94a3b8;">* 구독자 증가는 유튜브 공개값(반올림)을 바탕으로 계산한 하루 평균 추정치입니다.</span></p>
+    <p class="page-desc">AI가 가져온 50만 구독자 미만의 채널입니다. 관리자님께서는 수강생에게 보여줄 채널에 대해 ✓승인/✗제외만 눌러주세요.</p>
 
     <div id="content"><p class="empty">확인하는 중...</p></div>
   </div>
@@ -127,7 +115,7 @@
   };
 
   // source: tubelab = 튜브랩 미러링 / ai = 인비남 AI 검수(그 외)
-  const filters = { conf: "", status: "대기", source: "tubelab", sort: "growth", klass: "" };
+  const filters = { conf: "", status: "대기", source: "tubelab" };
   let allRows = [];
   let currentRows = [];              // 현재 화면에 보이는(필터 적용된) 채널
   let selected = new Set();          // 선택된 채널 id
@@ -138,29 +126,47 @@
   async function fetchRows() {
     // 승인 후보: 튜브랩에서 가져온 채널 + AI가 편집형이라 본 채널 (모두 50만 미만)
     const { data } = await sb.from("channels")
-      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,daily_subs_est,ai_confidence,ai_reason,ai_genre,ai_ref_score,ai_ref_class,ai_benchmark,ai_caution,ai_series,admin_status,source")
+      .select("id,title,thumbnail,subscriber_count,ai_confidence,ai_reason,ai_genre,admin_status,source,category,category_locked,category_checked_at")
       .lt("subscriber_count", 500000)
       .or("source.eq.tubelab,ai_faceless.eq.true")
       .order("subscriber_count", { ascending: false })
-      .limit(1200);
+      .limit(500);
     allRows = data || [];
   }
 
-  // 채널마다 개별 조회 (묶음 조회 시 조회수 높은 채널이 다른 채널 영상을 밀어내는 문제 방지)
   async function fetchVideosFor(ids) {
     const need = ids.filter((id) => !(id in videosByChannel));
-    for (let i = 0; i < need.length; i += 12) {
-      const part = need.slice(i, i + 12);
-      await Promise.all(part.map(async (id) => {
-        const { data } = await sb.from("channel_videos")
-          .select("channel_id,video_id,title,thumbnail,view_count,is_short")
-          .eq("channel_id", id)
-          .order("view_count", { ascending: false })
-          .limit(8);
-        videosByChannel[id] = data || [];
-      }));
+    for (let i = 0; i < need.length; i += 50) {
+      const part = need.slice(i, i + 50);
+      const { data } = await sb.from("channel_videos")
+        .select("channel_id,video_id,title,thumbnail,view_count,is_short")
+        .in("channel_id", part)
+        .order("view_count", { ascending: false })
+        .limit(part.length * 8);
+      part.forEach((id) => { videosByChannel[id] = videosByChannel[id] || []; });
+      (data || []).forEach((v) => {
+        (videosByChannel[v.channel_id] = videosByChannel[v.channel_id] || []).push(v);
+      });
     }
   }
+
+  // ---------- 관리자 전용: 카테고리 직접 지정 (지정하면 AI가 못 바꾸게 잠금) ----------
+  const CATEGORIES = [
+    "영화·드라마 요약", "연예 이슈", "유머·밈·바이럴", "지식·역사·교양", "스포츠",
+    "정치·시사", "국뽕·해외반응", "방송·예능", "게임", "동물·펫",
+    "음악", "썰·사연·애니툰", "푸드", "랭킹·순위 정보", "기타",
+  ];
+  async function adminSetCategory(id, cat) {
+    if (!cat) return;
+    const { error } = await sb.from("channels")
+      .update({ category: cat, category_locked: true })
+      .eq("id", id);
+    if (error) { alert("변경 실패: " + error.message); return; }
+    const row = allRows.find((r) => r.id === id);
+    if (row) { row.category = cat; row.category_locked = true; }
+    render();
+  }
+  window.adminSetCategory = adminSetCategory;
 
   // ---------- 개별 처리 ----------
   async function setStatus(id, status) {
@@ -254,13 +260,6 @@
     currentRows = srcRows.slice();
     if (filters.status) currentRows = currentRows.filter((r) => (r.admin_status || "대기") === filters.status);
     if (filters.conf) currentRows = currentRows.filter((r) => r.ai_confidence === filters.conf);
-    if (filters.klass && filters.source === "ai") currentRows = currentRows.filter((r) => (r.ai_ref_class || "") === filters.klass);
-
-    // 정렬: 조회수 증가순 / 구독자 증가순 / 구독자순 (증가값 없는 채널은 뒤로)
-    const nl = (v) => (v == null ? -Infinity : Number(v));
-    if (filters.sort === "growth") currentRows.sort((a, b) => nl(b.daily_views) - nl(a.daily_views) || nl(b.daily_subs) - nl(a.daily_subs) || b.subscriber_count - a.subscriber_count);
-    else if (filters.sort === "subs_growth") currentRows.sort((a, b) => nl(b.daily_subs) - nl(a.daily_subs) || nl(b.daily_views) - nl(a.daily_views) || b.subscriber_count - a.subscriber_count);
-    else currentRows.sort((a, b) => b.subscriber_count - a.subscriber_count);
 
     const catTabs = `
       <div class="cat-tabs">
@@ -277,10 +276,6 @@
 
     const confRow = filters.source === "ai"
       ? `<div class="filter-row">
-          <span class="flabel">유형</span>
-          ${[["", "전체"], ["검증후보", "✅ 검증후보"], ["급등후보", "🚀 급등후보"], ["검토필요", "🔍 검토필요"]].map(([v, t]) => `<button class="fbtn ${filters.klass === v ? "on" : ""}" data-f="klass" data-v="${v}">${t}</button>`).join("")}
-        </div>
-        <div class="filter-row">
           <span class="flabel">확신도</span>
           ${["", "상", "중", "하"].map((v) => `<button class="fbtn ${filters.conf === v ? "on" : ""}" data-f="conf" data-v="${v}">${v || "전체"}</button>`).join("")}
         </div>` : "";
@@ -290,10 +285,6 @@
         <div class="filter-row">
           <span class="flabel">상태</span>
           ${[["대기", "검토 대기"], ["승인", "승인됨"], ["제외", "제외됨"], ["", "전체"]].map(([v, t]) => `<button class="fbtn ${filters.status === v ? "on" : ""}" data-f="status" data-v="${v}">${t}</button>`).join("")}
-        </div>
-        <div class="filter-row">
-          <span class="flabel">정렬</span>
-          ${[["growth", "조회수 증가순"], ["subs_growth", "구독자 증가순"], ["subs", "구독자순"]].map(([v, t]) => `<button class="fbtn ${filters.sort === v ? "on" : ""}" data-f="sort" data-v="${v}">${t}</button>`).join("")}
         </div>
         ${confRow}
       </div>`;
@@ -335,20 +326,6 @@
             : `<button class="a-app" onclick="setStatus('${r.id}','승인')">✓ 승인</button>`}
           <button class="a-del" onclick="delChannel('${r.id}')">🗑 삭제</button>`;
       }
-      // 일일 성장 표시 (튜브랩식 일일조회수)
-      const fmtDelta = (n) => (n >= 0 ? "+" : "-") + fmtNum(Math.abs(n));
-      // 구독자 증가: 유튜브가 반올림 공개하므로, 공개 숫자가 마지막으로 바뀐 날 대비 하루 평균 추정치를 우선 표시
-      const subsVal = (r.daily_subs_est != null && r.daily_subs_est !== 0) ? r.daily_subs_est
-        : (r.daily_subs != null && r.daily_subs !== 0) ? r.daily_subs : null;
-      const subsHtml = subsVal != null
-        ? `<div class="gs ${subsVal < 0 ? "neg" : ""}">${fmtDelta(subsVal)} 구독자*</div>`
-        : (r.daily_views != null ? `<div class="gwait">구독자 집계중*</div>` : "");
-      const growHtml = r.daily_views != null || r.daily_subs != null
-        ? `<div class="agrow">
-            ${r.daily_views != null ? `<div class="gv ${r.daily_views < 0 ? "neg" : ""}">${fmtDelta(r.daily_views)}</div><div class="gl">일일 조회수</div>` : ""}
-            ${subsHtml}
-          </div>`
-        : `<div class="agrow"><div class="gwait">성장 집계중<br>(내일 새벽부터)</div></div>`;
       const vidsHtml = vids.length
         ? `<div class="avids">${vids.map((v) => `
             <a href="https://www.youtube.com/${v.is_short ? "shorts/" : "watch?v="}${v.video_id}" target="_blank" title="${escapeHtml(v.title)}">
@@ -362,14 +339,19 @@
         <div class="ainfo">
           <img src="${escapeHtml(r.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
           <div>
-            <div class="nm">${escapeHtml(r.title)}${r.source === "tubelab" ? `<span class="bg-sm b-src">튜브랩</span>` : `<span class="bg-sm b-ai">AI</span>`}${r.ai_ref_class ? `<span class="bg-sm b-${r.ai_ref_class}">${r.ai_ref_class === "검증후보" ? "✅ 검증후보" : r.ai_ref_class === "급등후보" ? "🚀 급등(반복 미검증)" : r.ai_ref_class === "검토필요" ? "🔍 검토필요" : r.ai_ref_class}</span>` : ""}${r.ai_ref_score != null ? `<span class="bg-sm b-score">적합도 ${r.ai_ref_score}</span>` : ""}${r.ai_confidence ? `<span class="bg-sm b-${r.ai_confidence}">확신 ${r.ai_confidence}</span>` : ""}${r.ai_genre ? `<span class="bg-sm b-genre">${escapeHtml(r.ai_genre)}</span>` : ""}</div>
+            <div class="nm">${escapeHtml(r.title)}${r.source === "tubelab" ? `<span class="bg-sm b-src">튜브랩</span>` : `<span class="bg-sm b-ai">AI</span>`}${r.ai_confidence ? `<span class="bg-sm b-${r.ai_confidence}">확신 ${r.ai_confidence}</span>` : ""}${r.ai_genre ? `<span class="bg-sm b-genre">${escapeHtml(r.ai_genre)}</span>` : ""}</div>
             <div class="meta">구독자 ${fmtNum(r.subscriber_count)}명 · <a href="channel.html?id=${r.id}" target="_blank">분석 열기</a></div>
             ${r.ai_reason ? `<div class="rsn">🤖 ${escapeHtml(r.ai_reason)}</div>` : ""}
-            ${r.ai_benchmark ? `<div class="bmk">💡 참고: ${escapeHtml(r.ai_benchmark)}</div>` : ""}
-            ${r.ai_caution ? `<div class="cau">⚠️ 주의: ${escapeHtml(r.ai_caution)}</div>` : ""}
+            <div class="cat-line">
+              <select class="cat-sel" onchange="adminSetCategory('${r.id}', this.value)">
+                <option value="" ${!r.category ? "selected" : ""}>카테고리 선택</option>
+                ${CATEGORIES.map((k) => `<option value="${k}" ${r.category === k ? "selected" : ""}>${k}</option>`).join("")}
+              </select>
+              ${r.category_locked ? `<span class="bg-sm b-lock">🔒 관리자 지정</span>` : ""}
+              ${r.category_checked_at ? `<span class="bg-sm b-chk">✓ 정밀검수 완료</span>` : ""}
+            </div>
           </div>
         </div>
-        ${growHtml}
         ${vidsHtml}
         <div class="aactions">${actions}</div>
       </div>`;
@@ -384,7 +366,6 @@
         if (filters.source === this.dataset.src) return;
         filters.source = this.dataset.src;
         filters.conf = "";
-        filters.klass = "";
         selected.clear();
         render();
       });
