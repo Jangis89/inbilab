@@ -61,6 +61,32 @@ function parseJsonLoose(text) {
   return null;
 }
 
+// Gemini 호출: 앞 모델이 하루 한도(429)에 걸리면 다음 모델로 자동 전환
+async function callGemini(models, key, requestBody) {
+  let last = null;
+  for (let i = 0; i < models.length; i++) {
+    const m = models[i];
+    let g, gj;
+    try {
+      g = await fetch(GEMINI_BASE + m + ":generateContent?key=" + key, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+      gj = await g.json().catch(() => null);
+    } catch (e) {
+      last = { ok: false, status: 0, detail: String(e && e.message || e) };
+      continue;
+    }
+    if (g.ok) return { ok: true, gj: gj, model: m };
+    const msg = (gj && gj.error && gj.error.message) || "";
+    last = { ok: false, status: g.status, detail: msg || ("HTTP " + g.status) };
+    // 한도 초과(429)면 다음 모델로 넘어가고, 다른 에러면 중단
+    if (!(g.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(msg))) break;
+  }
+  return last;
+}
+
 // 유튜브 주소에서 영상 ID 추출
 function extractVideoId(url) {
   const m = String(url || "").match(
@@ -209,41 +235,38 @@ module.exports = async (req, res) => {
       }
       const videoUrl = "https://www.youtube.com/watch?v=" + vid;
 
-      const g = await fetch(GEMINI_BASE + "gemini-pro-latest:generateContent?key=" + key, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { file_data: { file_uri: videoUrl } },
-                { text: ANALYZE_PROMPT },
-              ],
-            },
-          ],
-          generationConfig: {
-            responseMimeType: "application/json",
-            mediaResolution: "MEDIA_RESOLUTION_LOW",
-            temperature: 0.2,
+      const r = await callGemini(["gemini-pro-latest", "gemini-flash-latest"], key, {
+        contents: [
+          {
+            parts: [
+              { file_data: { file_uri: videoUrl } },
+              { text: ANALYZE_PROMPT },
+            ],
           },
-        }),
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          mediaResolution: "MEDIA_RESOLUTION_LOW",
+          temperature: 0.2,
+        },
       });
-      const gj = await g.json().catch(() => null);
-      if (!g.ok) {
-        let detail = gj && gj.error && gj.error.message ? gj.error.message : "HTTP " + g.status;
+      if (!r.ok) {
+        let detail = r.detail || "";
         if (/not\s*found|unsupported|invalid/i.test(detail)) {
           detail = "영상을 불러올 수 없습니다 (비공개·삭제·연령제한 영상일 수 있음)";
+        } else if (r.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(detail)) {
+          detail = "오늘 AI 사용량이 모두 소진되었습니다. 몇 시간 후 다시 시도해 주세요.";
         }
         res.status(502).json({ error: "영상 분석 실패", detail: detail });
         return;
       }
-      const analysis = parseJsonLoose(geminiText(gj));
+      const analysis = parseJsonLoose(geminiText(r.gj));
       if (!analysis) {
         res.status(502).json({ error: "분석 결과 해석에 실패했습니다. 다시 시도해 주세요." });
         return;
       }
       if (!isAdmin) await recordUsage(user.id, feature, token);
-      res.status(200).json({ ok: true, video_id: vid, analysis: analysis });
+      res.status(200).json({ ok: true, video_id: vid, analysis: analysis, model: r.model });
       return;
     }
 
@@ -267,27 +290,25 @@ module.exports = async (req, res) => {
             ? "사용자가 원하는 새 소재: " + topic
             : "새 소재는 당신이 직접 제안하세요. 원본과 같은 카테고리에서, 한국 시청자가 궁금해할 검증된 흥미 소재로."
         );
-      const g = await fetch(GEMINI_BASE + "gemini-pro-latest:generateContent?key=" + key, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.8 },
-        }),
+      const r = await callGemini(["gemini-pro-latest", "gemini-flash-latest"], key, {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json", temperature: 0.8 },
       });
-      const gj = await g.json().catch(() => null);
-      if (!g.ok) {
-        const detail = gj && gj.error && gj.error.message ? gj.error.message : "HTTP " + g.status;
+      if (!r.ok) {
+        let detail = r.detail || "";
+        if (r.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(detail)) {
+          detail = "오늘 AI 사용량이 모두 소진되었습니다. 몇 시간 후 다시 시도해 주세요.";
+        }
         res.status(502).json({ error: "대본 생성 실패", detail: detail });
         return;
       }
-      const script = parseJsonLoose(geminiText(gj));
+      const script = parseJsonLoose(geminiText(r.gj));
       if (!script || !Array.isArray(script.lines) || !script.lines.length) {
         res.status(502).json({ error: "대본 결과 해석에 실패했습니다. 다시 시도해 주세요." });
         return;
       }
       if (!isAdmin) await recordUsage(user.id, feature, token);
-      res.status(200).json({ ok: true, script: script });
+      res.status(200).json({ ok: true, script: script, model: r.model });
       return;
     }
 
