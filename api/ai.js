@@ -113,6 +113,20 @@ const ANALYZE_PROMPT = `당신은 유튜브 쇼츠 제작 전문 분석가입니
   "tip": "이 포맷을 따라 만들 때 가장 중요한 팁 한 줄 (그대로 베끼지 말고 새 소재로 재구성하는 방향)"
 }`;
 
+const TRANSCRIPT_PROMPT = `당신은 영상 대본 추출 전문가입니다. 이 영상을 직접 보고 들으며 실제 내용을 그대로 추출하세요. 절대 창작하거나 요약하지 말고, 들리는/보이는 그대로 옮기세요.
+
+아래 JSON 형식으로만 출력하세요:
+{
+  "language": "영상 음성 언어 (예: 한국어)",
+  "voice_type": "AI음성 | 사람나레이션 | 원본소리 | 음악만 | 무음",
+  "lines": [ { "t": "0:03", "text": "나레이션·대사 한 문장 (들리는 그대로, 시간 순서대로)" } ],
+  "onscreen": ["화면에 표시되는 자막·텍스트 중 음성과 다른 것만 순서대로 (없으면 빈 배열)"],
+  "note": "참고사항 한 줄 (예: 음성 없음 — 화면 자막만 추출)"
+}
+
+- 나레이션이 없고 화면 자막만 있는 영상이면 lines에 화면 자막을 시간 순서대로 담고 note에 그 사실을 적으세요.
+- t는 그 문장이 시작되는 대략적인 시각(분:초)입니다.`;
+
 const SCRIPT_PROMPT = `당신은 유튜브 쇼츠 전문 작가입니다. 아래는 성공한 쇼츠 영상의 분석 결과입니다:
 __ANALYSIS__
 
@@ -167,6 +181,13 @@ module.exports = async (req, res) => {
     const body = req.body || {};
     const feature = String(body.feature || "");
     const action = String(body.action || "");
+
+    // 모델 선택: auto(기본, Pro 우선→Flash 대체) | pro | flash
+    const pref = String(body.model_pref || "auto");
+    const MODELS =
+      pref === "pro" ? ["gemini-pro-latest"]
+      : pref === "flash" ? ["gemini-flash-latest"]
+      : ["gemini-pro-latest", "gemini-flash-latest"];
 
     // 3) 비관리자: 공개된 기능만 + 하루 한도 확인
     if (!isAdmin) {
@@ -235,7 +256,7 @@ module.exports = async (req, res) => {
       }
       const videoUrl = "https://www.youtube.com/watch?v=" + vid;
 
-      const r = await callGemini(["gemini-pro-latest", "gemini-flash-latest"], key, {
+      const r = await callGemini(MODELS, key, {
         contents: [
           {
             parts: [
@@ -270,6 +291,53 @@ module.exports = async (req, res) => {
       return;
     }
 
+    // ---------- 액션: 영상 대본 따기 (실제 나레이션·자막 추출) ----------
+    if (action === "transcript") {
+      if (!key) {
+        res.status(500).json({ error: "서버에 GEMINI_API_KEY가 설정되지 않았습니다" });
+        return;
+      }
+      const vid = extractVideoId(body.video_url);
+      if (!vid) {
+        res.status(400).json({ error: "유튜브 영상 주소가 아닙니다" });
+        return;
+      }
+      const videoUrl = "https://www.youtube.com/watch?v=" + vid;
+      const r = await callGemini(MODELS, key, {
+        contents: [
+          {
+            parts: [
+              { file_data: { file_uri: videoUrl } },
+              { text: TRANSCRIPT_PROMPT },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          mediaResolution: "MEDIA_RESOLUTION_LOW",
+          temperature: 0.1,
+        },
+      });
+      if (!r.ok) {
+        let detail = r.detail || "";
+        if (/not\s*found|unsupported|invalid/i.test(detail)) {
+          detail = "영상을 불러올 수 없습니다 (비공개·삭제·연령제한 영상일 수 있음)";
+        } else if (r.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(detail)) {
+          detail = "오늘 AI 사용량이 모두 소진되었습니다. 몇 시간 후 다시 시도해 주세요.";
+        }
+        res.status(502).json({ error: "대본 추출 실패", detail: detail });
+        return;
+      }
+      const tr = parseJsonLoose(geminiText(r.gj));
+      if (!tr || !Array.isArray(tr.lines)) {
+        res.status(502).json({ error: "대본 추출 결과 해석에 실패했습니다. 다시 시도해 주세요." });
+        return;
+      }
+      if (!isAdmin) await recordUsage(user.id, feature, token);
+      res.status(200).json({ ok: true, video_id: vid, transcript: tr, model: r.model });
+      return;
+    }
+
     // ---------- 액션: 대본 작성 ----------
     if (action === "script") {
       if (!key) {
@@ -290,7 +358,7 @@ module.exports = async (req, res) => {
             ? "사용자가 원하는 새 소재: " + topic
             : "새 소재는 당신이 직접 제안하세요. 원본과 같은 카테고리에서, 한국 시청자가 궁금해할 검증된 흥미 소재로."
         );
-      const r = await callGemini(["gemini-pro-latest", "gemini-flash-latest"], key, {
+      const r = await callGemini(MODELS, key, {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { responseMimeType: "application/json", temperature: 0.8 },
       });
