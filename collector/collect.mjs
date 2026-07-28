@@ -702,10 +702,40 @@ async function main() {
       `- 랭킹·순위 정보: 특정 소재에 속하지 않는 순수 순위·비교·인포그래픽 정보\n` +
       `- 기타: 위 어디에도 명확히 속하지 않음\n`;
     // 관리자가 직접 지정·잠금한 채널(category_locked)은 AI가 절대 건드리지 않음
-    const targets = await sbFetch(
-      `channels?select=id,title,subscriber_count,category&category=not.is.null&category_locked=not.is.true&or=(source.eq.tubelab,ai_faceless.is.true)&order=category_checked_at.asc.nullsfirst&limit=${RECHECK_LIMIT}`
+    // 우선순위: ① 검토 대기(승인 후보 — 노출 전 원천 차단) ② 승인·노출 중 ③ 나머지 순환
+    const baseSel = `channels?select=id,title,subscriber_count,category&category=not.is.null&category_locked=not.is.true`;
+    const poolCond = `or=(source.eq.tubelab,ai_faceless.is.true)`;
+    const seenIds = new Set();
+    const targets = [];
+    const addTier = async (query, label) => {
+      if (targets.length >= RECHECK_LIMIT) return;
+      const rows = await sbFetch(`${query}&limit=${RECHECK_LIMIT}`);
+      let added = 0;
+      for (const r of rows || []) {
+        if (targets.length >= RECHECK_LIMIT) break;
+        if (seenIds.has(r.id)) continue;
+        seenIds.add(r.id);
+        targets.push(r);
+        added++;
+      }
+      console.log(`  재검수 ${label}: ${added}개 선정`);
+    };
+    // ① 검토 대기: 승인되기 전에 정밀 검증을 끝내 잘못된 카테고리 노출을 원천 차단
+    await addTier(
+      `${baseSel}&and=(or(source.eq.tubelab,ai_faceless.is.true),or(admin_status.is.null,admin_status.eq.${encodeURIComponent("대기")}))&order=category_checked_at.asc.nullsfirst`,
+      "1순위(검토 대기)"
     );
-    console.log(`카테고리 정밀 재검수 대상: ${(targets || []).length}개`);
+    // ② 승인·노출 중: 검수 안 받은 것 → 오래된 것 순, 같은 조건이면 조회수 상위부터
+    await addTier(
+      `${baseSel}&${poolCond}&admin_status=eq.${encodeURIComponent("승인")}&order=category_checked_at.asc.nullsfirst,daily_views.desc.nullslast`,
+      "2순위(승인·노출 중)"
+    );
+    // ③ 나머지: 오래 검수 안 받은 순서로 순환
+    await addTier(
+      `${baseSel}&${poolCond}&order=category_checked_at.asc.nullsfirst`,
+      "3순위(순환)"
+    );
+    console.log(`카테고리 정밀 재검수 대상: ${targets.length}개`);
     let checked = 0, fixed = 0;
     for (const ch of targets || []) {
       const vids = await sbFetch(
