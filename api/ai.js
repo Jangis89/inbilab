@@ -2,7 +2,7 @@
 // 인비랩 AI 중계 서버 (Step 0 + Step 1)
 // - Gemini API 키는 서버 환경변수(GEMINI_API_KEY)에만 보관 (사이트에 노출 안 됨)
 // - 순서: 로그인 확인 → 관리자 여부 → (비관리자) 공개 여부 + 하루 한도 → AI 호출 → 사용 기록
-// - 액션: ping(연결 테스트), analyze(영상 분석)
+// - 액션: ping(연결 테스트), analyze(영상 분석), sources(원본 후보), transcript(대본 따기), script(대본 작성), blueprint(제작 설계도)
 // ============================================
 const SUPABASE_URL = "https://bdbwawskwdgdsqmoqodt.supabase.co";
 const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJkYndhd3Nrd2RnZHNxbW9xb2R0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUwNzcxNzcsImV4cCI6MjEwMDY1MzE3N30.sOJU4L75T7MDaeZFIXmzEvWN_ZW4eiZKpX9cWOzqwF4";
@@ -199,6 +199,43 @@ __TOPIC__
   "hashtags": ["#해시태그 3~5개"],
   "notes": "제작 팁 1~2문장"
 }`;
+
+const BLUEPRINT_PROMPT = `당신은 유튜브 쇼츠 제작 설계 전문가입니다. 이 영상을 직접 보고, 초보자가 "같은 방식의 영상"을 새 소재로 만들 수 있도록 장면(컷) 단위로 분해한 제작 설계도를 만드세요.
+
+규칙:
+- 비슷한 연속 컷은 하나의 장면으로 묶어서 장면은 최대 12개.
+- "베끼기"가 아니라 "같은 방식으로 새로 만들기"가 목적. 확보 방법도 그 관점으로 쓰세요.
+- 재료 확보 방법은 40~60대 컴퓨터 초보도 따라할 수 있게 구체적으로 한 줄.
+- 시간·비용 같은 숫자 예측은 하지 말고 난이도 등급만 사용하세요.
+- 모든 값은 한국어 (kw_en과 ai_prompt만 영어).
+
+JSON만 출력하세요:
+{
+  "scenes": [
+    {
+      "t0": "0:00", "t1": "0:03",
+      "type": "영상클립|정지이미지|화면캡처|텍스트카드|AI생성|게임화면|직접촬영|기타",
+      "visual": "화면에 보이는 것 한 줄",
+      "how": "이 재료를 확보하는 방법 한 줄 (예: 네이버뉴스에서 해당 기사 검색 후 캡처)",
+      "alt": "더 쉬운 대체 방법 한 줄 (없으면 빈 문자열)",
+      "difficulty": "쉬움|보통|어려움",
+      "kw_ko": "이 재료를 찾을 한국어 검색어 (검색이 필요 없는 장면이면 빈 문자열)",
+      "kw_en": "무료 스톡 사이트용 영어 검색어 (스톡에서 구할 수 있는 장면일 때만, 아니면 빈 문자열)",
+      "ai_prompt": "AI 이미지/영상 생성이 적합한 장면이면 바로 붙여넣을 영어 프롬프트 (vertical 9:16 포함), 아니면 빈 문자열"
+    }
+  ],
+  "summary": {
+    "recipe": "조립 공식 (예: 화면캡처 40% + 스톡클립 30% + 텍스트카드 30%)",
+    "source_types": ["사용된 재료 종류 목록"],
+    "cut_count": 9,
+    "effects": ["사용된 편집 효과 (예: 줌인, 화면전환, 상단 고정 타이틀)"],
+    "bottleneck": "가장 구하기 어려운 재료 하나와 이유 한 줄",
+    "difficulty": "쉬움|보통|어려움",
+    "go": "GO|주의|비추천",
+    "verdict": "무출연 초보자가 이 방식으로 만들 수 있는지 한 줄 판단"
+  }
+}
+cut_count에는 실제 컷 수(숫자)를 넣으세요.`;
 
 module.exports = async (req, res) => {
   try {
@@ -568,6 +605,83 @@ module.exports = async (req, res) => {
       }
       if (!isAdmin) await recordUsage(user.id, feature, token);
       res.status(200).json({ ok: true, script: script, model: r.model });
+      return;
+    }
+
+    // ---------- 액션: 제작 설계도 (장면 분해 BOM) ----------
+    if (action === "blueprint") {
+      if (!key) {
+        res.status(500).json({ error: "서버에 GEMINI_API_KEY가 설정되지 않았습니다" });
+        return;
+      }
+      const vid = extractVideoId(body.video_url);
+      if (!vid) {
+        res.status(400).json({ error: "유튜브 영상 주소가 아닙니다. 예: https://youtube.com/shorts/XXXXXXXXXXX" });
+        return;
+      }
+      const videoUrl = "https://www.youtube.com/watch?v=" + vid;
+
+      // 1) 캐시 확인: 같은 영상은 다시 분석하지 않음 (비용 0원, 한도 차감 없음)
+      const force = isAdmin && body.force === true;
+      if (!force) {
+        const cached = await supaGet(
+          "/rest/v1/video_blueprints?video_id=eq." + vid + "&select=blueprint,model,created_at",
+          token
+        );
+        if (Array.isArray(cached) && cached.length && cached[0].blueprint) {
+          res.status(200).json({
+            ok: true, video_id: vid,
+            blueprint: cached[0].blueprint,
+            model: cached[0].model || "",
+            cached: true, cached_at: cached[0].created_at,
+          });
+          return;
+        }
+      }
+
+      // 2) 새로 분석
+      const r = await callGemini(MODELS, key, {
+        contents: [
+          { parts: [{ file_data: { file_uri: videoUrl } }, { text: BLUEPRINT_PROMPT }] },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          mediaResolution: "MEDIA_RESOLUTION_LOW",
+          temperature: 0.2,
+        },
+      });
+      if (!r.ok) {
+        let detail = r.detail || "";
+        if (/not\s*found|unsupported|invalid/i.test(detail)) {
+          detail = "영상을 불러올 수 없습니다 (비공개·삭제·연령제한 영상일 수 있음)";
+        } else if (r.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(detail)) {
+          detail = "오늘 AI 사용량이 모두 소진되었습니다. 몇 시간 후 다시 시도해 주세요.";
+        }
+        res.status(502).json({ error: "제작 설계도 생성 실패", detail: detail });
+        return;
+      }
+      const bp = parseJsonLoose(geminiText(r.gj));
+      if (!bp || !Array.isArray(bp.scenes) || !bp.scenes.length) {
+        res.status(502).json({ error: "설계도 결과 해석에 실패했습니다. 다시 시도해 주세요." });
+        return;
+      }
+
+      // 3) 캐시 저장 (실패해도 결과는 정상 반환)
+      try {
+        await fetch(SUPABASE_URL + "/rest/v1/video_blueprints?on_conflict=video_id", {
+          method: "POST",
+          headers: {
+            apikey: ANON_KEY,
+            Authorization: "Bearer " + token,
+            "Content-Type": "application/json",
+            Prefer: "resolution=merge-duplicates,return=minimal",
+          },
+          body: JSON.stringify({ video_id: vid, blueprint: bp, model: r.model, created_by: user.id }),
+        });
+      } catch {}
+
+      if (!isAdmin) await recordUsage(user.id, feature, token);
+      res.status(200).json({ ok: true, video_id: vid, blueprint: bp, model: r.model, cached: false });
       return;
     }
 
