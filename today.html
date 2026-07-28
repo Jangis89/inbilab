@@ -175,12 +175,14 @@
   const PAGE_SIZE = 50;       // 페이지당 채널 수
 
   // ---------- 채널 데이터 로드 ----------
+  // 수강생 화면은 '조회수 증가' 상위 2,000위까지만 표시.
+  // 2,000위 밖 채널은 삭제가 아니라 자동 숨김 — 다시 성장해 순위에 들면 자동 복귀.
   async function fetchChannels() {
     const { data } = await sb.from("channels")
       .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date,ai_genre,admin_status")
       .eq("admin_status", "승인")
       .lt("subscriber_count", 500000)
-      .order("subscriber_count", { ascending: false })
+      .order("daily_views", { ascending: false, nullsFirst: false })
       .limit(2000);
     allChannels = data || [];
   }
