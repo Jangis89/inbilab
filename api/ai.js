@@ -87,6 +87,21 @@ async function callGemini(models, key, requestBody) {
   return last;
 }
 
+// 유튜브 데이터 API 호출 (서버 키가 있을 때만)
+async function ytApi(path, params) {
+  const ytKey = process.env.YOUTUBE_API_KEY;
+  if (!ytKey) return null;
+  const p = Object.assign({}, params, { key: ytKey });
+  const qs = Object.keys(p).map((k) => k + "=" + encodeURIComponent(p[k])).join("&");
+  try {
+    const r = await fetch("https://www.googleapis.com/youtube/v3/" + path + "?" + qs);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
 // 유튜브 주소에서 영상 ID 추출
 function extractVideoId(url) {
   const m = String(url || "").match(
@@ -112,6 +127,33 @@ const ANALYZE_PROMPT = `당신은 유튜브 쇼츠 제작 전문 분석가입니
   "difficulty": "편집 난이도 1~5 사이 숫자 (1=아주 쉬움, 5=전문가급)",
   "tip": "이 포맷을 따라 만들 때 가장 중요한 팁 한 줄 (그대로 베끼지 말고 새 소재로 재구성하는 방향)"
 }`;
+
+const SOURCE_PROMPT = `당신은 영상 원본 추적 전문가입니다. 이 영상을 직접 보고, 이 영상이 어떤 원본 소스를 재활용·편집했는지 추적할 단서를 뽑으세요.
+
+아래 JSON 형식으로만 출력하세요:
+{
+  "origin_guess": "원본으로 추정되는 것 (예: 'UFC 302 경기 중계', '영화 인터스텔라', '중국 SNS 요리 영상', '커뮤니티 게시글 캡처', '직접 촬영 추정')",
+  "origin_type": "방송/경기 | 영화/드라마 | 해외 SNS 영상 | 뉴스 | 게임 화면 | 커뮤니티/캡처 | 직접 촬영 추정 | 스톡/자료 영상 | 기타",
+  "confidence": "높음 | 중간 | 낮음",
+  "watermark": "영상 속 워터마크·계정명·로고 텍스트 (없으면 빈 문자열)",
+  "language": "영상 언어",
+  "queries": [ { "q": "검색어", "lang": "ko" } ],
+  "stock_keywords": ["비슷한 소스를 무료 스톡 사이트에서 찾을 영어 키워드 2~3개"]
+}
+
+- queries는 원본을 찾기 위한 검색어 3~5개: 한국어 1개 + 영어 1개 필수, 원산지로 추정되는 언어(중국어·일본어 등)가 있으면 그 언어로도.
+- 워터마크·계정명이 보이면 그 텍스트 자체를 검색어에 반드시 포함하세요 (가장 강력한 단서).`;
+
+const RANK_PROMPT = `원본 후보 판정 작업입니다.
+대상 쇼츠: __TARGET__
+추정 원본: __ORIGIN__
+후보 목록: __CANDS__
+
+각 후보가 대상 쇼츠의 원본(또는 원본에 가까운 소스)일 가능성을 판정하세요.
+규칙: 대상보다 늦게 게시된 후보(days_earlier가 음수)는 원본일 수 없으니 '참고'로. 제목·채널이 추정 원본과 잘 맞고 먼저 게시됐으면 '높음'.
+
+JSON만 출력 (가능성 높은 순, 최대 5개):
+{ "ranked": [ { "video_id": "...", "grade": "높음|중간|참고", "reason": "한 줄 근거" } ] }`;
 
 const TRANSCRIPT_PROMPT = `당신은 영상 대본 추출 전문가입니다. 이 영상을 직접 보고 들으며 실제 내용을 그대로 추출하세요. 절대 창작하거나 요약하지 말고, 들리는/보이는 그대로 옮기세요.
 
@@ -289,6 +331,147 @@ module.exports = async (req, res) => {
       }
       if (!isAdmin) await recordUsage(user.id, feature, token);
       res.status(200).json({ ok: true, video_id: vid, analysis: analysis, model: r.model });
+      return;
+    }
+
+    // ---------- 액션: 원본 후보 탐색 ----------
+    if (action === "sources") {
+      if (!key) {
+        res.status(500).json({ error: "서버에 GEMINI_API_KEY가 설정되지 않았습니다" });
+        return;
+      }
+      const vid = extractVideoId(body.video_url);
+      if (!vid) {
+        res.status(400).json({ error: "유튜브 영상 주소가 아닙니다" });
+        return;
+      }
+      const videoUrl = "https://www.youtube.com/watch?v=" + vid;
+
+      // 1) 영상 판독: 원본 단서 + 다국어 검색어 추출
+      const r1 = await callGemini(MODELS, key, {
+        contents: [
+          { parts: [{ file_data: { file_uri: videoUrl } }, { text: SOURCE_PROMPT }] },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          mediaResolution: "MEDIA_RESOLUTION_LOW",
+          temperature: 0.2,
+        },
+      });
+      if (!r1.ok) {
+        let detail = r1.detail || "";
+        if (/not\s*found|unsupported|invalid/i.test(detail)) {
+          detail = "영상을 불러올 수 없습니다 (비공개·삭제·연령제한 영상일 수 있음)";
+        } else if (r1.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(detail)) {
+          detail = "오늘 AI 사용량이 모두 소진되었습니다. 몇 시간 후 다시 시도해 주세요.";
+        }
+        res.status(502).json({ error: "원본 단서 분석 실패", detail: detail });
+        return;
+      }
+      const clue = parseJsonLoose(geminiText(r1.gj));
+      if (!clue) {
+        res.status(502).json({ error: "분석 결과 해석에 실패했습니다. 다시 시도해 주세요." });
+        return;
+      }
+      const queries = (Array.isArray(clue.queries) ? clue.queries : [])
+        .filter((q) => q && q.q).slice(0, 3);
+
+      // 2) 대상 영상 게시일 (유튜브 API 키가 서버에 있을 때)
+      const ytAvailable = !!process.env.YOUTUBE_API_KEY;
+      let target = { video_id: vid };
+      if (ytAvailable) {
+        const tj = await ytApi("videos", { part: "snippet", id: vid });
+        if (tj && tj.items && tj.items[0]) {
+          target.title = tj.items[0].snippet.title;
+          target.published_at = tj.items[0].snippet.publishedAt;
+        }
+      }
+
+      // 3) 후보 수집 (유튜브 검색, 링크만 다룸)
+      let candidates = [];
+      const seen = {}; seen[vid] = true;
+      if (ytAvailable) {
+        for (let i = 0; i < queries.length; i++) {
+          const sj = await ytApi("search", {
+            part: "snippet", q: queries[i].q, type: "video", maxResults: "4",
+          });
+          if (!sj || !sj.items) continue;
+          for (let k = 0; k < sj.items.length; k++) {
+            const it = sj.items[k];
+            const id2 = it.id && it.id.videoId;
+            if (!id2 || seen[id2]) continue;
+            seen[id2] = true;
+            candidates.push({
+              video_id: id2,
+              title: it.snippet.title,
+              channel: it.snippet.channelTitle,
+              published_at: it.snippet.publishedAt,
+            });
+          }
+        }
+      }
+      if (target.published_at) {
+        candidates.forEach((c) => {
+          c.days_earlier = Math.round((new Date(target.published_at) - new Date(c.published_at)) / 86400000);
+        });
+      }
+      candidates = candidates.slice(0, 10);
+
+      // 4) 가벼운 검증: 제목·게시일 기준 가능성 등급 (Flash 텍스트 호출)
+      let ranked = [];
+      if (candidates.length) {
+        const rp = RANK_PROMPT
+          .replace("__TARGET__", JSON.stringify(target))
+          .replace("__ORIGIN__", String(clue.origin_guess || ""))
+          .replace("__CANDS__", JSON.stringify(candidates));
+        const r2 = await callGemini(["gemini-flash-latest"], key, {
+          contents: [{ parts: [{ text: rp }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
+        });
+        if (r2.ok) {
+          const rr = parseJsonLoose(geminiText(r2.gj));
+          if (rr && Array.isArray(rr.ranked)) ranked = rr.ranked;
+        }
+      }
+      const byId = {};
+      candidates.forEach((c) => { byId[c.video_id] = c; });
+      let finalCands = ranked
+        .map((r) => (byId[r.video_id] ? Object.assign({}, byId[r.video_id], { grade: r.grade, reason: r.reason }) : null))
+        .filter(Boolean);
+      if (!finalCands.length && candidates.length) {
+        finalCands = candidates.slice(0, 5).map((c) => Object.assign({}, c, { grade: "참고", reason: "" }));
+      }
+      finalCands = finalCands.slice(0, 5);
+
+      // 5) 무료 스톡 검색 링크 + 유튜브 검색 링크 (전부 링크만 제공)
+      const stock = (Array.isArray(clue.stock_keywords) ? clue.stock_keywords : []).slice(0, 3).map((k2) => ({
+        keyword: k2,
+        pexels: "https://www.pexels.com/search/videos/" + encodeURIComponent(k2) + "/",
+        pixabay: "https://pixabay.com/videos/search/" + encodeURIComponent(k2) + "/",
+      }));
+      const ytLinks = queries.map((q) => ({
+        q: q.q,
+        url: "https://www.youtube.com/results?search_query=" + encodeURIComponent(q.q),
+      }));
+
+      if (!isAdmin) await recordUsage(user.id, feature, token);
+      res.status(200).json({
+        ok: true,
+        video_id: vid,
+        origin: {
+          guess: clue.origin_guess || "",
+          type: clue.origin_type || "",
+          confidence: clue.confidence || "",
+          watermark: clue.watermark || "",
+          language: clue.language || "",
+        },
+        target: target,
+        candidates: finalCands,
+        stock: stock,
+        yt_links: ytLinks,
+        yt_searched: ytAvailable,
+        model: r1.model,
+      });
       return;
     }
 
