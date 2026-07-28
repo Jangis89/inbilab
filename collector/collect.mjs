@@ -90,10 +90,61 @@ const SHORTS_SEEDS = [
   "이슈 정리", "해외반응", "동물 모음", "게임 하이라이트", "애니 썰",
   "역사 이슈", "실화 사건", "썰 애니메이션", "정보 꿀팁 쇼츠", "충격 모음", "스포츠 명장면",
 ];
+// Phase 1: 탐색용 신규 검색어 풀 — 매일 일부를 골라 새 소재를 시험한다
+const SEEDS_EXPLORE = [
+  "영화 결말포함", "드라마 명대사", "무서운 이야기 쇼츠", "미스터리 사건 정리",
+  "축구 레전드 순위", "야구 명장면", "격투기 하이라이트", "연예인 근황 정리",
+  "국뽕 모음", "한국 위엄", "동물 웃긴 영상", "고양이 쇼츠",
+  "강아지 웃김", "게임 매드무비", "지식 상식 쇼츠", "건강 꿀팁 쇼츠",
+  "돈 버는 법 쇼츠", "AI 목소리 사연", "썰만화", "공감 모음",
+  "인포그래픽 순위", "세계 랭킹 비교", "유머 모음 쇼츠", "음식 순위",
+];
 async function discoverShortsChannels(maxChannels = 220) {
+  // ---- Phase 1: 검색어 성적 기반 자동 배분 ----
+  //   과거에 각 검색어가 발굴한 채널이 얼마나 '무출연 통과/관리자 승인'됐는지 성적을 매겨
+  //   검색 쿼터의 80%는 성적 좋은 검색어에, 20%는 아직 안 써본 새 검색어 탐색에 배분한다.
+  const SEARCH_BUDGET = 16; // 하루 검색 횟수(유튜브 쿼터 보호: 16회 × 100units)
+  const allTerms = [...new Set([...SHORTS_SEEDS, ...SEEDS_EXPLORE])];
+  const perf = new Map();
+  try {
+    const rows = await sbFetch(
+      `channels?select=found_by,ai_faceless,admin_status&found_by=not.is.null&limit=3000`
+    );
+    for (const r of rows || []) {
+      const p = perf.get(r.found_by) || { found: 0, faceless: 0, approved: 0 };
+      p.found++;
+      if (r.ai_faceless === true) p.faceless++;
+      if (r.admin_status === "승인") p.approved++;
+      perf.set(r.found_by, p);
+    }
+  } catch (e) {
+    console.log(`검색어 성적 조회 실패(기본 순서 사용): ${e.message}`);
+  }
+  const score = (t) => {
+    const p = perf.get(t);
+    if (!p) return null; // 기록 없음 = 탐색 대상
+    return (p.approved * 3 + p.faceless) / (p.found + 4); // 승인 3점 + 무출연 1점 (스무딩)
+  };
+  const tried = allTerms.filter((t) => score(t) !== null).sort((a, b) => score(b) - score(a));
+  const untried = allTerms.filter((t) => score(t) === null);
+  const exploitN = Math.min(tried.length, Math.round(SEARCH_BUDGET * 0.8));
+  const exploreN = SEARCH_BUDGET - exploitN;
+  const dayIdx = Math.floor(Date.now() / 86400000); // 날짜 기준 순환(매일 다른 새 검색어 시도)
+  const explorePick = [];
+  for (let i = 0; i < exploreN && untried.length > 0; i++) {
+    const t = untried[(dayIdx + i) % untried.length];
+    if (!explorePick.includes(t)) explorePick.push(t);
+  }
+  const terms = [...new Set([...tried.slice(0, exploitN), ...explorePick])];
+  for (const t of tried) { if (terms.length >= SEARCH_BUDGET) break; if (!terms.includes(t)) terms.push(t); }
+  for (const t of untried) { if (terms.length >= SEARCH_BUDGET) break; if (!terms.includes(t)) terms.push(t); }
+  console.log(`검색어 배분: 성과순 ${Math.min(exploitN, tried.length)}개 + 신규 탐색 ${explorePick.length}개 = 총 ${terms.length}개`);
+
   const publishedAfter = new Date(Date.now() - 14 * 86400 * 1000).toISOString();
-  const hits = new Map(); // channelId -> 검색 노출 횟수(여러 검색어에 걸릴수록 관련성 높음)
-  for (const q of SHORTS_SEEDS) {
+  const hits = new Map();    // channelId -> 검색 노출 횟수(여러 검색어에 걸릴수록 관련성 높음)
+  const foundBy = new Map(); // channelId -> 처음 발견한 검색어 (성적 추적용)
+  const termHits = new Map();// 검색어 -> 결과 수
+  for (const q of terms) {
     try {
       const data = await ytFetch("search", {
         part: "snippet",
@@ -106,17 +157,22 @@ async function discoverShortsChannels(maxChannels = 220) {
         maxResults: "50",
         q,
       });
+      let n = 0;
       for (const it of data.items || []) {
         const cid = it.snippet?.channelId;
-        if (cid) hits.set(cid, (hits.get(cid) || 0) + 1);
+        if (!cid) continue;
+        n++;
+        hits.set(cid, (hits.get(cid) || 0) + 1);
+        if (!foundBy.has(cid)) foundBy.set(cid, q);
       }
+      termHits.set(q, n);
     } catch (e) {
       console.log(`  쇼츠 발굴 검색 실패(${q}): ${e.message}`);
     }
   }
   const ranked = [...hits.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
-  console.log(`쇼츠 발굴: 후보 채널 ${ranked.length}개 (검색어 ${SHORTS_SEEDS.length}개) → 상위 ${Math.min(maxChannels, ranked.length)}개 사용`);
-  return ranked.slice(0, maxChannels);
+  console.log(`쇼츠 발굴: 후보 채널 ${ranked.length}개 (검색어 ${terms.length}개) → 상위 ${Math.min(maxChannels, ranked.length)}개 사용`);
+  return { ids: ranked.slice(0, maxChannels), foundBy, termHits, terms };
 }
 
 // ---------- 썸네일 이미지를 base64로 (Gemini 비전 입력용) ----------
@@ -252,13 +308,15 @@ async function main() {
   // 인기 영상 저장은 채널 구독자 수를 확인한 뒤(50만 미만만) 진행 → 아래 3단계 이후
 
   // ========== 1.5 유튜브에서 급상승 쇼츠 채널 발굴 ==========
-  const discovered = await discoverShortsChannels(220);
+  const disc = await discoverShortsChannels(220);
+  const discovered = disc.ids;
   const discoveredSet = new Set(discovered);
 
   // ========== 2. 수집 대상 채널 목록 만들기 ==========
   // 기존 등록 채널 + 오늘 인기 영상에 등장한 채널 + 새로 발굴한 쇼츠 채널
-  const existing = await sbFetch("channels?select=id&is_active=eq.true&limit=1500");
-  const idSet = new Set(existing.map((c) => c.id));
+  const existing = await sbFetch("channels?select=id,is_active&limit=3000");
+  const preexisting = new Set(existing.map((c) => c.id)); // 이미 DB에 있던 채널 (신규 판별용)
+  const idSet = new Set(existing.filter((c) => c.is_active !== false).map((c) => c.id));
   trendingRows.forEach((r) => r.channel_id && idSet.add(r.channel_id));
   discovered.forEach((cid) => idSet.add(cid));
   const channelIds = [...idSet];
@@ -322,6 +380,8 @@ async function main() {
       daily_subs: y ? subs - Number(y.subscriber_count) : null,
       stats_date: TODAY,
       is_active: true,
+      // Phase 1: 새로 발굴된 채널에는 '어떤 검색어가 찾아냈는지' 기록 (검색어 성적 추적용)
+      ...(disc.foundBy.has(c.id) && !preexisting.has(c.id) ? { found_by: disc.foundBy.get(c.id) } : {}),
     });
   }
   // 순서 중요: 채널 명단을 먼저 등록한 뒤에 일일 기록을 저장해야 함
@@ -336,6 +396,24 @@ async function main() {
     });
   }
   console.log("채널 정보/일일 기록 저장 완료");
+
+  // Phase 1: 오늘의 검색어 성적표 저장 (검색어별 결과 수·신규 발굴 수)
+  try {
+    const statRows = disc.terms.map((t) => ({
+      term: t,
+      run_date: TODAY,
+      hits: disc.termHits.get(t) || 0,
+      new_channels: [...disc.foundBy.entries()].filter(([cid, q]) => q === t && !preexisting.has(cid)).length,
+    }));
+    if (statRows.length > 0) {
+      await sbFetch("search_term_stats?on_conflict=term,run_date", {
+        method: "POST", body: statRows, prefer: "resolution=merge-duplicates",
+      });
+      console.log(`검색어 성적표 저장: ${statRows.length}개`);
+    }
+  } catch (e) {
+    console.log(`검색어 성적표 저장 실패: ${e.message}`);
+  }
 
   // ========== 6. 채널별 최근 영상 수집 (쇼츠 랭킹의 재료) ==========
   // 구독자 많은 순으로 최대 400개 채널의 최근 업로드를 확인
