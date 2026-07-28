@@ -136,6 +136,18 @@
         else if (adm) aiItems.push([p[0], p[1], p[2], p[3] + " 🔒"]);
       });
       if (aiItems.length) groups.splice(3, 0, { label: "AI 제작 도구", items: aiItems });
+      // 커뮤니티 그룹에 들어가는 기능들 (공개 스위치 연동)
+      const commPages = {
+        source_library: ["sources.html", "sources", "📦", "소스 창고"],
+        sources_guide: ["sources-guide.html", "sources-guide", "🗺️", "소스 지도"],
+      };
+      const comm = groups.find((g) => g.label === "커뮤니티");
+      (ff || []).forEach((f) => {
+        const p = commPages[f.key];
+        if (!p || !comm) return;
+        if (f.is_public) comm.items.push(p);
+        else if (adm) comm.items.push([p[0], p[1], p[2], p[3] + " 🔒"]);
+      });
     } catch {}
     // 관리자에게만 '운영' 메뉴 노출
     if (adm) {
