@@ -61,6 +61,11 @@
   .admin-ctrl{width:100%;display:flex;justify-content:flex-end;gap:8px;margin-top:4px;padding-top:8px;border-top:1px dashed var(--line);}
   .admin-ctrl button{padding:5px 11px;border-radius:999px;border:2px solid var(--line);background:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;color:var(--sub);}
   .admin-ctrl button.del{color:#991b1b;border-color:#fecaca;}
+  .pager{display:flex;justify-content:center;align-items:center;gap:6px;margin:22px 0 6px;flex-wrap:wrap;}
+  .pager button{min-width:38px;height:38px;padding:0 10px;border-radius:10px;border:2px solid var(--line);background:#fff;font-size:15px;font-weight:800;color:var(--sub);cursor:pointer;font-family:inherit;}
+  .pager button.on{border-color:var(--blue);background:var(--blue);color:#fff;}
+  .pager button:disabled{opacity:.35;cursor:default;}
+  .pager .pinfo{font-size:13.5px;color:var(--sub);margin-left:8px;font-weight:700;}
   @media(max-width:940px){.ch-videos,.list-head .h-vids{display:none;}}
 </style>
 </head>
@@ -72,9 +77,6 @@
   <div class="wrap">
     <h1 class="page-title">오늘 뜨는 채널 🚀</h1>
     <p class="page-desc">매일 새벽 자동으로 갱신되는 대한민국 급상승 채널과 인기 영상입니다.</p>
-    <p style="font-size:13.5px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:9px 14px;margin:-6px 0 18px;line-height:1.55;">
-      ⚠️ 여기 영상들은 <b>그대로 복제하기 위한 자료가 아닙니다.</b> 성과가 난 훅·스토리·편집 구조를 분석하고, 새로운 소재와 나만의 독창적인 내용으로 재구성하세요.
-    </p>
 
     <div class="board-tools">
       <div class="tabs" id="tabs">
@@ -169,30 +171,33 @@
   let allChannels = [];       // 서버에서 받아온 채널
   let videosByChannel = {};   // 채널별 최근 영상
   const filters = { type: "", subs: "", sort: "daily_views" };
+  let page = 1;               // 현재 페이지
+  const PAGE_SIZE = 50;       // 페이지당 채널 수
 
   // ---------- 채널 데이터 로드 ----------
   async function fetchChannels() {
     const { data } = await sb.from("channels")
       .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date,ai_genre,admin_status")
+      .eq("admin_status", "승인")
       .lt("subscriber_count", 500000)
       .order("subscriber_count", { ascending: false })
-      .limit(600);
+      .limit(2000);
     allChannels = data || [];
   }
 
-  // 채널마다 개별 조회 (묶음 조회 시 조회수 높은 채널이 다른 채널 영상을 밀어내는 문제 방지)
   async function fetchVideosFor(ids) {
     const need = ids.filter((id) => !(id in videosByChannel));
-    for (let i = 0; i < need.length; i += 12) {
-      const part = need.slice(i, i + 12);
-      await Promise.all(part.map(async (id) => {
-        const { data } = await sb.from("channel_videos")
-          .select("channel_id,video_id,title,thumbnail,view_count,is_short")
-          .eq("channel_id", id)
-          .order("view_count", { ascending: false })
-          .limit(10);
-        videosByChannel[id] = data || [];
-      }));
+    for (let i = 0; i < need.length; i += 60) {
+      const part = need.slice(i, i + 60);
+      const { data } = await sb.from("channel_videos")
+        .select("channel_id,video_id,title,thumbnail,view_count,is_short")
+        .in("channel_id", part)
+        .order("view_count", { ascending: false })
+        .limit(part.length * 10);
+      part.forEach((id) => { videosByChannel[id] = videosByChannel[id] || []; });
+      (data || []).forEach((v) => {
+        (videosByChannel[v.channel_id] = videosByChannel[v.channel_id] || []).push(v);
+      });
     }
   }
 
@@ -232,16 +237,25 @@
     const key = (!hasDaily && filters.sort !== "subscriber_count") ? "subscriber_count" : filters.sort;
     list.sort((a, b) => Number(b[key] || 0) - Number(a[key] || 0));
 
-    // 3) 상위 120개의 영상을 불러와 유형 판정 → 유형 필터 → 상위 50개 표시
-    const top = list.slice(0, 120);
-    await fetchVideosFor(top.map((c) => c.id));
-    let rows = top.map((c) => ({ ...c, type: typeOf(c) }));
-    if (filters.type) rows = rows.filter((r) => r.type === filters.type);
-    rows = rows.slice(0, 50);
+    // 3) 유형 필터 (유형 판정에는 영상 데이터가 필요 → 전체 영상 로드 후 판정)
+    if (filters.type) {
+      await fetchVideosFor(list.map((c) => c.id));
+      list = list.filter((c) => typeOf(c) === filters.type);
+    }
+
+    // 4) 페이지 나누기: 50개씩 (승인 채널 수만큼 페이지 자동 생성)
+    const totalCount = list.length;
+    const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+    if (page > totalPages) page = totalPages;
+    if (page < 1) page = 1;
+    const pageRows = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    await fetchVideosFor(pageRows.map((c) => c.id));
+    const rows = pageRows.map((c) => ({ ...c, type: typeOf(c) }));
 
     $id("update-info").textContent = (hasDaily
       ? "기준일: " + (rows[0] && rows[0].stats_date || "") + " · 등급/수익은 인비랩 자체 추정치입니다"
-      : "지금은 구독자순입니다. 데이터가 이틀 이상 쌓이면 급상승순으로 자동 전환됩니다 · 등급/수익은 자체 추정치");
+      : "지금은 구독자순입니다. 데이터가 이틀 이상 쌓이면 급상승순으로 자동 전환됩니다 · 등급/수익은 자체 추정치")
+      + ` · 승인 채널 ${fmtNum(totalCount)}개 · ${page}/${totalPages}페이지`;
 
     if (rows.length === 0) {
       box.innerHTML = '<p class="empty">조건에 맞는 채널이 없습니다. 필터를 바꿔보세요.</p>';
@@ -261,7 +275,7 @@
         ? fmtWon(c.daily_views * (RATE[c.type] ?? 0.8)) : null;
       return `
       <div class="ch-row">
-        <div class="rank-no">${i + 1}</div>
+        <div class="rank-no">${(page - 1) * PAGE_SIZE + i + 1}</div>
         <div class="ch-info">
           <img src="${escapeHtml(c.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
           <div>
@@ -291,8 +305,28 @@
           <button class="del" onclick="adminDelete('${c.id}')">🗑 삭제</button>
         </div>` : ""}
       </div>`;
-    }).join("");
+    }).join("") + renderPager(totalPages, totalCount);
   }
+
+  // ---------- 페이지 이동 버튼 ----------
+  function renderPager(totalPages, totalCount) {
+    if (totalPages <= 1) return "";
+    let btns = "";
+    for (let p = 1; p <= totalPages; p++) {
+      btns += `<button class="${p === page ? "on" : ""}" onclick="goPage(${p})">${p}</button>`;
+    }
+    return `<div class="pager">
+      <button onclick="goPage(${page - 1})" ${page === 1 ? "disabled" : ""}>‹</button>
+      ${btns}
+      <button onclick="goPage(${page + 1})" ${page === totalPages ? "disabled" : ""}>›</button>
+      <span class="pinfo">총 ${fmtNum(totalCount)}개</span>
+    </div>`;
+  }
+  window.goPage = async function (p) {
+    page = p;
+    await loadChannels();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   // ---------- 관리자 전용: 승인 취소 / 삭제 (RLS로 서버에서도 관리자만 허용) ----------
   async function adminRevert(id) {
@@ -411,6 +445,7 @@
         document.querySelectorAll(`.fbtn[data-f="${f}"]`).forEach((b) => b.classList.remove("on"));
         this.classList.add("on");
         filters[f] = this.dataset.v;
+        page = 1; // 필터를 바꾸면 1페이지부터
         await loadChannels();
       });
     });
