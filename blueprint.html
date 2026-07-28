@@ -65,6 +65,15 @@
   .s-links{margin-top:7px;}
   .s-links a{display:inline-block;background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12.5px;font-weight:700;color:var(--ink);text-decoration:none;margin:0 6px 5px 0;}
   .s-links a:hover{border-color:#4f46e5;color:#4f46e5;}
+  .s-links button{display:inline-block;background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12.5px;font-weight:700;color:var(--ink);margin:0 6px 5px 0;cursor:pointer;font-family:inherit;}
+  .s-links button:hover{border-color:#4f46e5;color:#4f46e5;}
+  .prev-grid{display:none;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px;}
+  .prev-grid.show{display:grid;}
+  .prev-grid a{display:block;position:relative;border-radius:8px;overflow:hidden;background:#000;}
+  .prev-grid img{width:100%;height:110px;object-fit:cover;display:block;}
+  .prev-grid .pv-d{position:absolute;right:4px;bottom:4px;background:rgba(0,0,0,.7);color:#fff;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:6px;}
+  .prev-msg{grid-column:1/4;font-size:12.5px;color:var(--sub);padding:5px 0;line-height:1.5;}
+  .prev-note{grid-column:1/4;font-size:11.5px;color:#94a3b8;margin-top:2px;}
   .s-ai{margin-top:7px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;padding:8px 12px;font-size:12.5px;color:#6b21a8;line-height:1.55;display:flex;gap:10px;align-items:center;}
   .s-ai .ap{flex:1;min-width:0;word-break:break-all;}
   .s-ai button{padding:5px 12px;border-radius:8px;border:1.5px solid #9333ea;background:#fff;color:#9333ea;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;flex-shrink:0;}
@@ -246,6 +255,7 @@
       if (sc.kw_en) {
         links += `<a href="https://www.pexels.com/search/videos/${encodeURIComponent(sc.kw_en)}/" target="_blank" rel="noopener">🎞️ Pexels: ${escapeHtml(sc.kw_en)}</a>`;
         links += `<a href="https://pixabay.com/videos/search/${encodeURIComponent(sc.kw_en)}/" target="_blank" rel="noopener">🎞️ Pixabay</a>`;
+        links += `<button data-kw="${escapeHtml(sc.kw_en)}" onclick="previewStock(${i},this.dataset.kw)">🖼️ 미리보기</button>`;
       }
       if (sc.kw_ko) {
         links += `<a href="https://search.naver.com/search.naver?query=${encodeURIComponent(sc.kw_ko)}" target="_blank" rel="noopener">🔍 네이버: ${escapeHtml(sc.kw_ko)}</a>`;
@@ -265,9 +275,46 @@
         <div class="s-how"><b>확보:</b> ${escapeHtml(sc.how || "")}</div>
         ${sc.alt ? `<div class="s-alt">💡 더 쉬운 방법: ${escapeHtml(sc.alt)}</div>` : ""}
         ${links ? `<div class="s-links">${links}</div>` : ""}
+        ${sc.kw_en ? `<div class="prev-grid" id="bp-prev-${i}"></div>` : ""}
         ${ai}
       </div>`;
     }).join("") || "<div style='padding:14px 0;color:var(--sub);font-size:14px;'>장면 정보가 없습니다.</div>";
+  }
+
+  // 스톡 미리보기 (Pexels) — 클릭한 장면만 검색 (키가 없으면 안내만)
+  async function previewStock(i, kw) {
+    const box = $id("bp-prev-" + i);
+    if (!box || !kw) return;
+    if (box.className.indexOf("show") >= 0) { box.className = "prev-grid"; return; } // 다시 누르면 접기
+    box.innerHTML = "<div class='prev-msg'>스톡 영상을 찾는 중…</div>";
+    box.className = "prev-grid show";
+    try {
+      const { data } = await sb.auth.getSession();
+      const token = data && data.session ? data.session.access_token : "";
+      const r = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ feature: "blueprint", action: "stock", query: kw }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        box.innerHTML = "<div class='prev-msg'>미리보기 실패: " + escapeHtml(j.error || "HTTP " + r.status) + "</div>";
+        return;
+      }
+      if (!j.available) {
+        box.innerHTML = "<div class='prev-msg'>🖼️ 미리보기 기능은 준비 중입니다. 위의 Pexels·Pixabay 버튼으로 직접 검색해 주세요.</div>";
+        return;
+      }
+      if (!j.items || !j.items.length) {
+        box.innerHTML = "<div class='prev-msg'>'" + escapeHtml(kw) + "' 검색 결과가 없습니다. Pexels 버튼에서 다른 검색어로 시도해 보세요.</div>";
+        return;
+      }
+      box.innerHTML = j.items.map((it) =>
+        `<a href="${escapeHtml(it.url)}" target="_blank" rel="noopener"><img src="${escapeHtml(it.image)}" alt="" loading="lazy">${it.duration ? `<span class="pv-d">${it.duration}초</span>` : ""}</a>`
+      ).join("") + "<div class='prev-note'>출처: Pexels (무료 스톡) · 썸네일을 누르면 다운로드 페이지가 열립니다</div>";
+    } catch (e) {
+      box.innerHTML = "<div class='prev-msg'>요청이 실패했습니다: " + escapeHtml(e.message) + "</div>";
+    }
   }
 
   async function copyAi(i) {

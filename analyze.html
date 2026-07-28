@@ -118,6 +118,18 @@
   .sc-line .lt .sc:before{content:"🎬 ";}
   .sc-tags{margin:10px 0 4px;font-size:13.5px;color:#7c3aed;font-weight:700;}
   .sc-note{font-size:13px;color:var(--sub);line-height:1.55;}
+  /* 대본 재료 링크 + 스톡 미리보기 */
+  .mat-links{margin-top:6px;}
+  .mat-links a,.mat-links button{display:inline-block;background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;padding:3px 11px;font-size:12px;font-weight:700;color:var(--ink);text-decoration:none;margin:0 5px 5px 0;cursor:pointer;font-family:inherit;}
+  .mat-links a:hover,.mat-links button:hover{border-color:#7c3aed;color:#7c3aed;}
+  .prev-grid{display:none;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px;}
+  .prev-grid.show{display:grid;}
+  .prev-grid a{display:block;position:relative;border-radius:8px;overflow:hidden;background:#000;}
+  .prev-grid img{width:100%;height:110px;object-fit:cover;display:block;}
+  .prev-grid .pv-d{position:absolute;right:4px;bottom:4px;background:rgba(0,0,0,.7);color:#fff;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:6px;}
+  .prev-msg{grid-column:1/4;font-size:12.5px;color:var(--sub);padding:5px 0;line-height:1.5;}
+  .prev-note{grid-column:1/4;font-size:11.5px;color:#94a3b8;margin-top:2px;}
+
   .sc-dl{display:flex;gap:9px;margin-top:14px;flex-wrap:wrap;}
   .sc-dl button{padding:10px 16px;border-radius:10px;border:1.5px solid #ddd6fe;background:#fff;color:#7c3aed;font-size:13.5px;font-weight:800;cursor:pointer;font-family:inherit;}
   .sc-dl button.main{background:#7c3aed;color:#fff;border-color:#7c3aed;}
@@ -554,14 +566,25 @@
     $id("sc-title").textContent = s.title || s.topic || "제목 없음";
     $id("sc-meta").textContent = "소재: " + (s.topic || "-") + " · 예상 길이 약 " + (s.target_length_sec || "?") + "초";
     const lines = (s.lines || []).slice();
-    $id("sc-lines").innerHTML = lines.map((l, i) => `
+    $id("sc-lines").innerHTML = lines.map((l, i) => {
+      let mat = "";
+      if (l.kw_en) {
+        mat = `<div class="mat-links">
+          <a href="https://www.pexels.com/search/videos/${encodeURIComponent(l.kw_en)}/" target="_blank" rel="noopener">🎞️ Pexels: ${escapeHtml(l.kw_en)}</a>
+          <a href="https://pixabay.com/videos/search/${encodeURIComponent(l.kw_en)}/" target="_blank" rel="noopener">🎞️ Pixabay</a>
+          <button data-kw="${escapeHtml(l.kw_en)}" onclick="previewStock('sc',${i},this.dataset.kw,'script_gen')">🖼️ 미리보기</button>
+        </div><div class="prev-grid" id="sc-prev-${i}"></div>`;
+      }
+      return `
       <div class="sc-line">
         <div class="no">${i + 1}</div>
         <div class="lt">
           <div class="tx">${escapeHtml(l.text || "")}</div>
           ${l.scene ? `<div class="sc">${escapeHtml(l.scene)}</div>` : ""}
+          ${mat}
         </div>
-      </div>`).join("") +
+      </div>`;
+    }).join("") +
       (s.outro ? `<div class="sc-line"><div class="no">끝</div><div class="lt"><div class="tx">${escapeHtml(s.outro)}</div></div></div>` : "");
     $id("sc-tags").textContent = (s.hashtags || []).join(" ");
     $id("sc-note").textContent = s.notes ? "💡 " + s.notes : "";
@@ -582,11 +605,48 @@
     (s.lines || []).forEach((l, i) => {
       t += (i + 1) + ". " + (l.text || "") + "\n";
       if (l.scene) t += "   [화면] " + l.scene + "\n";
+      if (l.kw_en) t += "   [재료 검색] " + l.kw_en + " → https://www.pexels.com/search/videos/" + encodeURIComponent(l.kw_en) + "/\n";
     });
     if (s.outro) t += "끝. " + s.outro + "\n";
     t += "\n해시태그: " + ((s.hashtags || []).join(" ")) + "\n";
     if (s.notes) t += "제작 팁: " + s.notes + "\n";
     return t;
+  }
+
+  // 스톡 미리보기 (Pexels) — 클릭한 장면만 검색 (키가 없으면 안내만)
+  async function previewStock(prefix, i, kw, feature) {
+    const box = $id(prefix + "-prev-" + i);
+    if (!box || !kw) return;
+    if (box.className.indexOf("show") >= 0) { box.className = "prev-grid"; return; } // 다시 누르면 접기
+    box.innerHTML = "<div class='prev-msg'>스톡 영상을 찾는 중…</div>";
+    box.className = "prev-grid show";
+    try {
+      const { data } = await sb.auth.getSession();
+      const token = data && data.session ? data.session.access_token : "";
+      const r = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ feature: feature, action: "stock", query: kw }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        box.innerHTML = "<div class='prev-msg'>미리보기 실패: " + escapeHtml(j.error || "HTTP " + r.status) + "</div>";
+        return;
+      }
+      if (!j.available) {
+        box.innerHTML = "<div class='prev-msg'>🖼️ 미리보기 기능은 준비 중입니다. 위의 Pexels·Pixabay 버튼으로 직접 검색해 주세요.</div>";
+        return;
+      }
+      if (!j.items || !j.items.length) {
+        box.innerHTML = "<div class='prev-msg'>'" + escapeHtml(kw) + "' 검색 결과가 없습니다. Pexels 버튼에서 다른 검색어로 시도해 보세요.</div>";
+        return;
+      }
+      box.innerHTML = j.items.map((it) =>
+        `<a href="${escapeHtml(it.url)}" target="_blank" rel="noopener"><img src="${escapeHtml(it.image)}" alt="" loading="lazy">${it.duration ? `<span class="pv-d">${it.duration}초</span>` : ""}</a>`
+      ).join("") + "<div class='prev-note'>출처: Pexels (무료 스톡) · 썸네일을 누르면 다운로드 페이지가 열립니다</div>";
+    } catch (e) {
+      box.innerHTML = "<div class='prev-msg'>요청이 실패했습니다: " + escapeHtml(e.message) + "</div>";
+    }
   }
 
   function dlFile(name, text) {
