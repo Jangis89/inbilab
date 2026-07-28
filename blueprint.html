@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>제작 설계도 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  .an-input{display:flex;gap:10px;margin-bottom:8px;}
+  .an-input input{flex:1;padding:13px 16px;border:2px solid var(--line);border-radius:12px;font-size:15px;font-family:inherit;}
+  .an-input input:focus{outline:none;border-color:#4f46e5;}
+  .an-input button{padding:13px 26px;border-radius:12px;border:none;background:#4f46e5;color:#fff;font-size:15.5px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;}
+  .an-input button:disabled{opacity:.5;cursor:default;}
+  .an-hint{font-size:13px;color:var(--sub);margin-bottom:18px;}
+  .devnote{background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:9px 14px;font-size:13px;color:#854d0e;margin-bottom:16px;}
+
+  .an-load{display:none;align-items:center;gap:12px;padding:26px 20px;background:#fff;border:1px solid var(--line);border-radius:14px;margin-bottom:16px;font-size:15px;font-weight:700;color:var(--sub);}
+  .an-load.show{display:flex;}
+  .spin{width:22px;height:22px;border:3px solid #e0e7ff;border-top-color:#4f46e5;border-radius:50%;animation:sp 0.8s linear infinite;flex-shrink:0;}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .an-err{display:none;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:12px;padding:13px 16px;font-size:14px;margin-bottom:16px;line-height:1.55;}
+  .an-err.show{display:block;}
+
+  /* 모델 선택 (관리자용) */
+  .model-sel{display:flex;align-items:center;gap:14px;margin:-8px 0 16px;font-size:13.5px;color:var(--sub);flex-wrap:wrap;}
+  .model-sel .ml{font-weight:800;}
+  .model-sel label{display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:600;}
+  .model-sel input{accent-color:#4f46e5;width:16px;height:16px;cursor:pointer;}
+
+  .bp-res{display:none;}
+  .bp-res.show{display:block;}
+
+  /* 요약 카드 */
+  .bp-top{display:flex;gap:18px;align-items:flex-start;background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:12px;}
+  .bp-top img{width:100px;height:178px;object-fit:cover;border-radius:11px;background:#000;flex-shrink:0;}
+  .go-badge{display:inline-block;font-size:13px;font-weight:800;padding:3px 13px;border-radius:999px;margin-right:6px;}
+  .go-GO{background:#dcfce7;color:#166534;}
+  .go-주의{background:#fef9c3;color:#854d0e;}
+  .go-비추천{background:#fee2e2;color:#991b1b;}
+  .d-chip{display:inline-block;font-size:12px;font-weight:800;padding:2px 10px;border-radius:999px;}
+  .d-쉬움{background:#dcfce7;color:#166534;}
+  .d-보통{background:#fef9c3;color:#854d0e;}
+  .d-어려움{background:#fee2e2;color:#991b1b;}
+  .bp-recipe{font-size:16px;font-weight:800;line-height:1.5;margin:8px 0 6px;}
+  .bp-verdict{font-size:14px;color:var(--sub);line-height:1.6;}
+  .bp-bneck{margin-top:9px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:9px 13px;font-size:13.5px;color:#9a3412;line-height:1.55;}
+  .bp-meta{margin-top:9px;font-size:12.5px;color:#94a3b8;font-weight:600;line-height:1.7;}
+  .eff{display:inline-block;background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;padding:3px 11px;font-size:12.5px;font-weight:700;margin:6px 6px 0 0;}
+  .cachenote{display:none;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:9px 13px;font-size:13px;color:#3730a3;margin-bottom:12px;line-height:1.55;}
+  .cachenote.show{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .cachenote button{padding:6px 13px;border-radius:9px;border:1.5px solid #4f46e5;background:#fff;color:#4f46e5;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;}
+
+  /* 장면 목록 */
+  .sc-wrap{background:#fff;border:1px solid var(--line);border-radius:14px;padding:6px 18px 14px;margin-bottom:12px;}
+  .sc-head{font-size:15.5px;font-weight:800;padding:12px 0 4px;}
+  .scene{padding:13px 0;border-top:1px solid var(--line);}
+  .scene:first-of-type{border-top:none;}
+  .s-row1{display:flex;align-items:center;gap:9px;flex-wrap:wrap;}
+  .s-time{font-size:13px;font-weight:800;color:#4f46e5;background:#eef2ff;border-radius:8px;padding:2px 9px;flex-shrink:0;}
+  .s-type{font-size:12.5px;font-weight:800;color:#334155;background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;padding:2px 10px;}
+  .s-visual{font-size:14.5px;font-weight:700;line-height:1.5;margin-top:6px;}
+  .s-how{font-size:13.5px;color:#334155;line-height:1.6;margin-top:4px;}
+  .s-how b{color:#166534;}
+  .s-alt{font-size:13px;color:var(--sub);line-height:1.55;margin-top:2px;}
+  .s-links{margin-top:7px;}
+  .s-links a{display:inline-block;background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12.5px;font-weight:700;color:var(--ink);text-decoration:none;margin:0 6px 5px 0;}
+  .s-links a:hover{border-color:#4f46e5;color:#4f46e5;}
+  .s-ai{margin-top:7px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;padding:8px 12px;font-size:12.5px;color:#6b21a8;line-height:1.55;display:flex;gap:10px;align-items:center;}
+  .s-ai .ap{flex:1;min-width:0;word-break:break-all;}
+  .s-ai button{padding:5px 12px;border-radius:8px;border:1.5px solid #9333ea;background:#fff;color:#9333ea;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;flex-shrink:0;}
+
+  .bp-dl{display:flex;gap:9px;margin-top:2px;flex-wrap:wrap;}
+  .bp-dl button{padding:11px 18px;border-radius:10px;border:1.5px solid #c7d2fe;background:#fff;color:#4f46e5;font-size:13.5px;font-weight:800;cursor:pointer;font-family:inherit;}
+  .bp-dl button.main{background:#4f46e5;color:#fff;border-color:#4f46e5;}
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+
+<main class="page">
+  <div class="wrap" style="max-width:860px;">
+    <h1 class="page-title">제작 설계도 🧩</h1>
+    <div class="devnote" id="devnote" style="display:none;">🔒 이 기능은 아직 <b>비공개(관리자 전용)</b>입니다. 공개하려면 작업실에서 스위치를 켜세요.</div>
+    <p class="an-hint" style="font-size:14.5px;margin-bottom:14px;">유튜브 쇼츠 주소를 붙여넣으면, AI가 영상을 장면(컷) 단위로 분해해서 <b>무엇으로 만들었고, 각 재료를 어디서 어떻게 구하는지</b>를 설계도로 만들어 드립니다. 그대로 베끼는 용도가 아니라 <b>같은 방식으로 새 소재를 만드는 용도</b>입니다.</p>
+
+    <div class="an-input">
+      <input id="vurl" type="url" placeholder="https://youtube.com/shorts/…  주소를 붙여넣으세요" onkeydown="if(event.key==='Enter')runBlueprint()">
+      <button id="btn-bp" onclick="runBlueprint()">설계도 만들기</button>
+    </div>
+    <div class="an-hint">쇼츠·일반 영상 모두 가능 · 처음 분석은 30~90초 · 이미 분석된 영상은 바로 나옵니다</div>
+
+    <div class="model-sel" id="model-sel">
+      <span class="ml">🤖 AI 모델:</span>
+      <label><input type="radio" name="msel" value="auto" checked> 자동 (Flash 기본, 한도시 Pro)</label>
+      <label><input type="radio" name="msel" value="pro"> Pro만 (고성능 · 하루 한도 있음)</label>
+      <label><input type="radio" name="msel" value="flash"> Flash만</label>
+    </div>
+
+    <div class="an-load" id="bp-load"><div class="spin"></div><span id="load-txt">AI가 영상을 장면별로 분해하고 있습니다…</span></div>
+    <div class="an-err" id="bp-err"></div>
+
+    <div class="bp-res" id="bp-res">
+      <div class="cachenote" id="cachenote"><span id="cache-txt"></span><button id="btn-force" style="display:none;" onclick="runBlueprint(true)">🔄 새로 분석 (관리자)</button></div>
+
+      <div class="bp-top">
+        <img id="b-thumb" src="" alt="">
+        <div style="flex:1;min-width:0;">
+          <div><span class="go-badge" id="b-go"></span><span class="d-chip" id="b-diff"></span></div>
+          <div class="bp-recipe" id="b-recipe"></div>
+          <div class="bp-verdict" id="b-verdict"></div>
+          <div class="bp-bneck" id="b-bneck"></div>
+          <div id="b-effects"></div>
+          <div class="bp-meta" id="b-meta"></div>
+          <a id="b-open" href="#" target="_blank" rel="noopener" style="display:inline-block;margin-top:8px;font-size:13.5px;font-weight:700;color:#4f46e5;text-decoration:none;">▶ 유튜브에서 영상 보기</a>
+        </div>
+      </div>
+
+      <div class="sc-wrap">
+        <div class="sc-head">🎬 장면별 재료와 확보 방법</div>
+        <div id="b-scenes"></div>
+      </div>
+
+      <div class="bp-dl">
+        <button class="main" onclick="dlBlueprint()">📄 설계도.txt 다운로드</button>
+        <button onclick="copyBlueprint()">📋 전체 복사</button>
+      </div>
+    </div>
+  </div>
+</main>
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  let loadTimer = null;
+  let lastBp = null;
+  let lastVideoId = null;
+  let amAdmin = false;
+
+  const TYPE_ICON = { "영상클립":"🎞️", "정지이미지":"🖼️", "화면캡처":"📰", "텍스트카드":"🔤", "AI생성":"🎨", "게임화면":"🎮", "직접촬영":"📱", "기타":"🔹" };
+
+  function modelPref() {
+    const el = document.querySelector('input[name="msel"]:checked');
+    return el ? el.value : "auto";
+  }
+  function modelLabel(m) {
+    if (!m) return "";
+    if (m.indexOf("pro") >= 0) return "🤖 분석 모델: Gemini Pro (고성능)";
+    return "🤖 분석 모델: Gemini Flash (기본)";
+  }
+
+  async function runBlueprint(force) {
+    const url = $id("vurl").value.trim();
+    const btn = $id("btn-bp");
+    const load = $id("bp-load");
+    const err = $id("bp-err");
+    const resBox = $id("bp-res");
+    err.className = "an-err";
+    if (!force) resBox.className = "bp-res";
+    if (!url) { err.textContent = "유튜브 영상 주소를 먼저 붙여넣어 주세요."; err.className = "an-err show"; return; }
+
+    btn.disabled = true;
+    load.className = "an-load show";
+    let sec = 0;
+    $id("load-txt").textContent = "AI가 영상을 장면별로 분해하고 있습니다… (0초)";
+    loadTimer = setInterval(() => { sec++; $id("load-txt").textContent = "AI가 영상을 장면별로 분해하고 있습니다… (" + sec + "초)"; }, 1000);
+
+    try {
+      const { data } = await sb.auth.getSession();
+      const token = data && data.session ? data.session.access_token : "";
+      const bodyObj = { feature: "blueprint", action: "blueprint", video_url: url, model_pref: modelPref() };
+      if (force === true) bodyObj.force = true;
+      const r = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify(bodyObj),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        err.textContent = "설계도 생성 실패: " + (j.error || "HTTP " + r.status) + (j.detail ? " — " + j.detail : "");
+        err.className = "an-err show";
+      } else {
+        lastBp = j.blueprint || {};
+        lastVideoId = j.video_id;
+        renderBlueprint(j);
+        resBox.className = "bp-res show";
+      }
+    } catch (e) {
+      err.textContent = "요청이 실패했습니다: " + e.message;
+      err.className = "an-err show";
+    }
+    clearInterval(loadTimer);
+    load.className = "an-load";
+    btn.disabled = false;
+  }
+
+  function renderBlueprint(j) {
+    const bp = j.blueprint || {};
+    const s = bp.summary || {};
+    const vid = j.video_id;
+
+    // 캐시 안내
+    const cn = $id("cachenote");
+    if (j.cached) {
+      $id("cache-txt").innerHTML = "💾 이전에 분석해 둔 설계도를 바로 불러왔습니다 (분석 비용 0원, 한도 차감 없음" + (j.cached_at ? " · " + fmtDate(j.cached_at) + " 분석" : "") + ")";
+      $id("btn-force").style.display = amAdmin ? "inline-block" : "none";
+      cn.className = "cachenote show";
+    } else {
+      cn.className = "cachenote";
+    }
+
+    const thumb = $id("b-thumb");
+    thumb.src = "https://i.ytimg.com/vi/" + vid + "/oardefault.jpg";
+    thumb.onerror = function () { this.onerror = null; this.src = "https://i.ytimg.com/vi/" + vid + "/hqdefault.jpg"; };
+    $id("b-open").href = "https://www.youtube.com/watch?v=" + vid;
+
+    const go = ["GO", "주의", "비추천"].includes(s.go) ? s.go : "주의";
+    const goEl = $id("b-go");
+    goEl.textContent = go === "GO" ? "✅ GO — 만들 수 있음" : go === "주의" ? "⚠️ 주의해서 도전" : "⛔ 초보자 비추천";
+    goEl.className = "go-badge go-" + go;
+
+    const d = ["쉬움", "보통", "어려움"].includes(s.difficulty) ? s.difficulty : "보통";
+    const dEl = $id("b-diff");
+    dEl.textContent = "전체 난이도: " + d;
+    dEl.className = "d-chip d-" + d;
+
+    $id("b-recipe").textContent = "🧩 조립 공식: " + (s.recipe || "-");
+    $id("b-verdict").textContent = s.verdict || "";
+    const bn = $id("b-bneck");
+    if (s.bottleneck) { bn.innerHTML = "⏳ <b>병목(가장 어려운 재료):</b> " + escapeHtml(s.bottleneck); bn.style.display = "block"; }
+    else bn.style.display = "none";
+    $id("b-effects").innerHTML = (s.effects || []).map((e) => `<span class="eff">✨ ${escapeHtml(e)}</span>`).join("");
+
+    const metaBits = [];
+    if (s.cut_count) metaBits.push("컷 수 약 " + s.cut_count + "개");
+    if (Array.isArray(s.source_types) && s.source_types.length) metaBits.push("재료 " + s.source_types.length + "종: " + s.source_types.join(", "));
+    $id("b-meta").innerHTML = escapeHtml(metaBits.join(" · ")) + (j.model ? "<br>" + modelLabel(j.model) : "");
+
+    // 장면 목록
+    const scenes = Array.isArray(bp.scenes) ? bp.scenes : [];
+    $id("b-scenes").innerHTML = scenes.map((sc, i) => {
+      const icon = TYPE_ICON[sc.type] || "🔹";
+      const sd = ["쉬움", "보통", "어려움"].includes(sc.difficulty) ? sc.difficulty : "보통";
+      let links = "";
+      if (sc.kw_en) {
+        links += `<a href="https://www.pexels.com/search/videos/${encodeURIComponent(sc.kw_en)}/" target="_blank" rel="noopener">🎞️ Pexels: ${escapeHtml(sc.kw_en)}</a>`;
+        links += `<a href="https://pixabay.com/videos/search/${encodeURIComponent(sc.kw_en)}/" target="_blank" rel="noopener">🎞️ Pixabay</a>`;
+      }
+      if (sc.kw_ko) {
+        links += `<a href="https://search.naver.com/search.naver?query=${encodeURIComponent(sc.kw_ko)}" target="_blank" rel="noopener">🔍 네이버: ${escapeHtml(sc.kw_ko)}</a>`;
+        links += `<a href="https://www.youtube.com/results?search_query=${encodeURIComponent(sc.kw_ko)}" target="_blank" rel="noopener">▶ 유튜브</a>`;
+      }
+      const ai = sc.ai_prompt
+        ? `<div class="s-ai"><span class="ap">🎨 AI 생성 프롬프트: ${escapeHtml(sc.ai_prompt)}</span><button onclick="copyAi(${i})">복사</button></div>`
+        : "";
+      return `
+      <div class="scene">
+        <div class="s-row1">
+          <span class="s-time">${escapeHtml(sc.t0 || "")}~${escapeHtml(sc.t1 || "")}</span>
+          <span class="s-type">${icon} ${escapeHtml(sc.type || "기타")}</span>
+          <span class="d-chip d-${sd}">${sd}</span>
+        </div>
+        <div class="s-visual">${escapeHtml(sc.visual || "")}</div>
+        <div class="s-how"><b>확보:</b> ${escapeHtml(sc.how || "")}</div>
+        ${sc.alt ? `<div class="s-alt">💡 더 쉬운 방법: ${escapeHtml(sc.alt)}</div>` : ""}
+        ${links ? `<div class="s-links">${links}</div>` : ""}
+        ${ai}
+      </div>`;
+    }).join("") || "<div style='padding:14px 0;color:var(--sub);font-size:14px;'>장면 정보가 없습니다.</div>";
+  }
+
+  async function copyAi(i) {
+    const sc = (lastBp && lastBp.scenes && lastBp.scenes[i]) || {};
+    try { await navigator.clipboard.writeText(sc.ai_prompt || ""); alert("프롬프트가 복사되었습니다. 이미지 생성 AI에 붙여넣으세요."); }
+    catch { alert("복사에 실패했습니다."); }
+  }
+
+  function bpText() {
+    if (!lastBp) return "";
+    const s = lastBp.summary || {};
+    const lines = [];
+    lines.push("■ 인비랩 제작 설계도");
+    lines.push("영상: https://www.youtube.com/watch?v=" + (lastVideoId || ""));
+    lines.push("");
+    lines.push("조립 공식: " + (s.recipe || "-"));
+    lines.push("전체 난이도: " + (s.difficulty || "-") + " / 판정: " + (s.go || "-"));
+    if (s.verdict) lines.push("한 줄 판단: " + s.verdict);
+    if (s.bottleneck) lines.push("병목: " + s.bottleneck);
+    if (Array.isArray(s.effects) && s.effects.length) lines.push("편집 효과: " + s.effects.join(", "));
+    lines.push("");
+    lines.push("── 장면별 재료 ──");
+    (lastBp.scenes || []).forEach((sc, i) => {
+      lines.push("");
+      lines.push((i + 1) + ") " + (sc.t0 || "") + "~" + (sc.t1 || "") + " [" + (sc.type || "기타") + " · " + (sc.difficulty || "보통") + "]");
+      lines.push("   화면: " + (sc.visual || ""));
+      lines.push("   확보: " + (sc.how || ""));
+      if (sc.alt) lines.push("   더 쉬운 방법: " + sc.alt);
+      if (sc.kw_ko) lines.push("   검색어(한): " + sc.kw_ko);
+      if (sc.kw_en) lines.push("   스톡 검색어(영): " + sc.kw_en + "  → https://www.pexels.com/search/videos/" + encodeURIComponent(sc.kw_en) + "/");
+      if (sc.ai_prompt) lines.push("   AI 프롬프트: " + sc.ai_prompt);
+    });
+    lines.push("");
+    lines.push("※ 이 설계도는 같은 '방식'으로 새 소재를 만들기 위한 참고 자료입니다. 원본을 그대로 복제하지 마세요.");
+    return lines.join("\n");
+  }
+
+  function dlBlueprint() {
+    const blob = new Blob(["﻿" + bpText()], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "제작설계도_" + (lastVideoId || "video") + ".txt";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+  async function copyBlueprint() {
+    try { await navigator.clipboard.writeText(bpText()); alert("설계도 전체가 복사되었습니다."); }
+    catch { alert("복사에 실패했습니다. 다운로드 버튼을 이용해 주세요."); }
+  }
+
+  (async function init() {
+    const user = await requireLogin();
+    if (!user) return;
+    // 이중 잠금: 관리자이거나, 기능이 공개 상태여야 접근 가능
+    amAdmin = await isAdmin(user);
+    if (!amAdmin) {
+      const { data } = await sb.from("feature_flags").select("is_public").eq("key", "blueprint").maybeSingle();
+      if (!data || !data.is_public) { location.replace("dashboard.html"); return; }
+      $id("model-sel").style.display = "none"; // 모델 선택은 관리자 전용
+    } else {
+      const { data } = await sb.from("feature_flags").select("is_public").eq("key", "blueprint").maybeSingle();
+      if (!data || !data.is_public) $id("devnote").style.display = "block";
+    }
+    await renderHeader("blueprint");
+    renderFooter();
+  })();
+</script>
+</body>
+</html>
