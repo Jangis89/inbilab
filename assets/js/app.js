@@ -124,6 +124,7 @@
     const adm = await isAdmin(user);
     const aiPages = {
       video_analyze: ["analyze.html", "analyze", "🎬", "영상 분석"],
+      blueprint: ["blueprint.html", "blueprint", "🧩", "제작 설계도"],
     };
     try {
       const { data: ff } = await sb.from("feature_flags").select("key,is_public");
