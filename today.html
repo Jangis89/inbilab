@@ -56,6 +56,7 @@
   .filter-row .flabel{font-size:15.5px;font-weight:700;color:var(--sub);width:74px;flex-shrink:0;}
   .fbtn{padding:7px 15px;border-radius:999px;border:2px solid var(--line);background:#fff;font-size:15.5px;font-weight:700;cursor:pointer;color:var(--sub);font-family:inherit;}
   .fbtn.on{border-color:var(--blue);color:var(--blue);background:#eff6ff;}
+  .fbtn.cat{font-size:14px;padding:6px 12px;}
   .genre-tag{display:inline-block;font-size:13.5px;font-weight:700;padding:2px 9px;border-radius:999px;background:#f0fdf4;color:#166534;margin-left:6px;vertical-align:middle;}
   /* 관리자 전용 채널 제어 (수강생에게는 보이지 않음) */
   .admin-ctrl{width:100%;display:flex;justify-content:flex-end;gap:8px;margin-top:4px;padding-top:8px;border-top:1px dashed var(--line);}
@@ -106,6 +107,25 @@
         <button class="fbtn on" data-f="sort" data-v="daily_views">조회수 증가순</button>
         <button class="fbtn" data-f="sort" data-v="daily_subs">구독자 증가순</button>
         <button class="fbtn" data-f="sort" data-v="subscriber_count">구독자순</button>
+      </div>
+      <div class="filter-row">
+        <span class="flabel">카테고리</span>
+        <button class="fbtn cat on" data-f="category" data-v="">전체</button>
+        <button class="fbtn cat" data-f="category" data-v="영화·드라마 요약">영화·드라마 요약</button>
+        <button class="fbtn cat" data-f="category" data-v="연예 이슈">연예 이슈</button>
+        <button class="fbtn cat" data-f="category" data-v="유머·밈·바이럴">유머·밈·바이럴</button>
+        <button class="fbtn cat" data-f="category" data-v="지식·역사·교양">지식·역사·교양</button>
+        <button class="fbtn cat" data-f="category" data-v="스포츠">스포츠</button>
+        <button class="fbtn cat" data-f="category" data-v="정치·시사">정치·시사</button>
+        <button class="fbtn cat" data-f="category" data-v="국뽕·해외반응">국뽕·해외반응</button>
+        <button class="fbtn cat" data-f="category" data-v="방송·예능">방송·예능</button>
+        <button class="fbtn cat" data-f="category" data-v="동물·펫">동물·펫</button>
+        <button class="fbtn cat" data-f="category" data-v="게임">게임</button>
+        <button class="fbtn cat" data-f="category" data-v="음악">음악</button>
+        <button class="fbtn cat" data-f="category" data-v="썰·사연·애니툰">썰·사연·애니툰</button>
+        <button class="fbtn cat" data-f="category" data-v="푸드">푸드</button>
+        <button class="fbtn cat" data-f="category" data-v="랭킹·순위 정보">랭킹·순위 정보</button>
+        <button class="fbtn cat" data-f="category" data-v="기타">기타</button>
       </div>
     </div>
 
@@ -170,7 +190,7 @@
 
   let allChannels = [];       // 서버에서 받아온 채널
   let videosByChannel = {};   // 채널별 최근 영상
-  const filters = { type: "", subs: "", sort: "daily_views" };
+  const filters = { type: "", subs: "", sort: "daily_views", category: "" };
   let page = 1;               // 현재 페이지
   const PAGE_SIZE = 50;       // 페이지당 채널 수
 
@@ -179,7 +199,7 @@
   // 2,000위 밖 채널은 삭제가 아니라 자동 숨김 — 다시 성장해 순위에 들면 자동 복귀.
   async function fetchChannels() {
     const { data } = await sb.from("channels")
-      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date,ai_genre,admin_status")
+      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date,ai_genre,admin_status,category")
       .eq("admin_status", "승인")
       .lt("subscriber_count", 500000)
       .order("daily_views", { ascending: false, nullsFirst: false })
@@ -233,6 +253,10 @@
     if (filters.subs) {
       const [lo, hi] = filters.subs.split("-").map(Number);
       list = list.filter((c) => c.subscriber_count >= lo && c.subscriber_count < hi);
+    }
+    // 1-1) 카테고리 필터 (분류 전 채널은 '기타'로 취급)
+    if (filters.category) {
+      list = list.filter((c) => (c.category || "기타") === filters.category);
     }
     // 2) 정렬 (급상승 데이터 없으면 구독자순으로 대체)
     const hasDaily = list.some((c) => c.daily_views != null && c.daily_views > 0);
