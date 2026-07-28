@@ -504,6 +504,96 @@ async function main() {
     console.log("GEMINI_API_KEY 없음 — AI 분류 단계 건너뜀");
   }
 
+  // ========== 8. 카테고리 분류 (15개 고정 목록) ==========
+  //   (1) ai_genre 키워드 규칙으로 1차 매핑 (비용 0)
+  //   (2) 규칙으로 못 정한 채널만 Gemini가 15개 중 객관식으로 선택
+  const CATEGORIES = [
+    "영화·드라마 요약", "연예 이슈", "지식·역사·교양", "스포츠", "정치·시사",
+    "국뽕·해외반응", "방송·예능", "게임", "유머·밈·바이럴", "동물·펫",
+    "음악", "썰·사연·애니툰", "푸드", "랭킹·순위 정보", "기타",
+  ];
+  const CAT_RULES = [
+    ["게임", /게임|로블록스|LOL|롤 |e스포츠|이스포츠|매드무비|버츄얼/i],
+    ["국뽕·해외반응", /국뽕|해외\s?반응|해외\s?이슈|해외\s?바이럴/],
+    ["스포츠", /스포츠|축구|격투|무술|야구|중계|하이라이트/],
+    ["영화·드라마 요약", /영화|드라마/],
+    ["방송·예능", /방송|예능|성우|엔터/],
+    ["연예 이슈", /연예|아이돌|트로트/],
+    ["음악", /음악|감성/],
+    ["동물·펫", /동물|반려|펫|힐링/],
+    ["유머·밈·바이럴", /유머|밈|짜집기|짜깁기|바이럴|공감/],
+    ["썰·사연·애니툰", /썰|사연|애니|툰|서브컬처/],
+    ["랭킹·순위 정보", /랭킹|순위|인포그래픽|모음/],
+    ["정치·시사", /정치|시사|사회|뉴스|국방|사건/],
+    ["지식·역사·교양", /역사|지식|교양|인문|상식|미스터리|교육|어학|건강|운세|재테크|부동산|경제|정보|산업|실화|스토리텔링/],
+    ["푸드", /푸드|음식|먹|쇼핑|공예/],
+  ];
+  function catFromGenre(g) {
+    if (!g || g === "기타/혼합" || g === "종합/기타") return null;
+    for (const [name, re] of CAT_RULES) if (re.test(g)) return name;
+    return null;
+  }
+  // (1) 규칙 매핑
+  const needCat = await sbFetch(`channels?select=id,title,ai_genre&category=is.null&limit=1000`);
+  console.log(`카테고리 미지정: ${needCat.length}개`);
+  let ruleDone = 0;
+  const forGemini = [];
+  for (const ch of needCat) {
+    const cat = catFromGenre(ch.ai_genre);
+    if (cat) {
+      await sbFetch(`channels?id=eq.${ch.id}`, { method: "PATCH", body: { category: cat }, prefer: "return=minimal" });
+      ruleDone++;
+    } else {
+      forGemini.push(ch);
+    }
+  }
+  console.log(`카테고리 규칙 매핑: ${ruleDone}개 완료, Gemini 판정 대상 ${forGemini.length}개`);
+  // (2) Gemini 객관식 분류 (15개씩 묶어서)
+  if (GEM_KEY && forGemini.length > 0) {
+    let gemDone = 0;
+    for (let i = 0; i < forGemini.length; i += 15) {
+      const batch = forGemini.slice(i, i + 15);
+      // 각 채널의 최근 영상 제목 3개를 함께 제공해 판단 근거 강화
+      const lines = [];
+      for (const ch of batch) {
+        const vids = await sbFetch(`channel_videos?select=title&channel_id=eq.${ch.id}&order=published_at.desc&limit=3`);
+        const vt = (vids || []).map((v) => v.title).join(" / ");
+        lines.push(`${ch.id} | 채널명: ${ch.title}${vt ? ` | 최근영상: ${vt}` : ""}`);
+      }
+      const prompt =
+        `아래 유튜브 채널들을 반드시 다음 15개 카테고리 중 하나로만 분류해.\n` +
+        `카테고리 목록: ${CATEGORIES.join(", ")}\n` +
+        `애매하면 "기타"를 선택해. 반드시 JSON 배열만 반환: [{"id":"...","category":"..."}]\n\n` +
+        lines.join("\n");
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-latest:generateContent?key=${GEM_KEY}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
+            }),
+          }
+        );
+        const data = await res.json();
+        if (data.error) { console.log(`  카테고리 Gemini 오류: ${data.error.message}`); continue; }
+        const arr = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "[]");
+        for (const item of arr) {
+          if (!item?.id || !CATEGORIES.includes(item.category)) continue;
+          await sbFetch(`channels?id=eq.${encodeURIComponent(item.id)}`, {
+            method: "PATCH", body: { category: item.category }, prefer: "return=minimal",
+          });
+          gemDone++;
+        }
+      } catch (e) {
+        console.log(`  카테고리 배치 실패: ${e.message}`);
+      }
+    }
+    console.log(`카테고리 Gemini 분류: ${gemDone}개 완료`);
+  }
+
   console.log("[인비랩 수집 로봇] 정상 종료 ✅");
 }
 
