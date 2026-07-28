@@ -415,9 +415,8 @@ async function main() {
     console.log(`검색어 성적표 저장 실패: ${e.message}`);
   }
 
-  // ========== 6. 채널별 최근 영상 수집 (쇼츠 랭킹의 재료) ==========
-  // 구독자 많은 순으로 최대 400개 채널의 최근 업로드를 확인
-  // 새로 발굴한 쇼츠 채널을 우선 처리하고, 그 다음 구독자 많은 순
+  // ========== 6. 채널별 최근 영상 수집 (쇼츠 랭킹 + 미리보기 재료) ==========
+  // 새로 발굴한 쇼츠 채널을 우선 처리하고, 그 다음 구독자 많은 순 (전 채널 커버)
   const targetChannels = chRows
     .slice()
     .sort((a, b) => {
@@ -426,7 +425,7 @@ async function main() {
       if (da !== db) return db - da;
       return b.subscriber_count - a.subscriber_count;
     })
-    .slice(0, 600);
+    .slice(0, 1200);
 
   // 이미 판별해 둔 영상은 다시 검사하지 않음
   const known = await sbFetch("channel_videos?select=video_id,is_short&limit=20000");
@@ -442,10 +441,15 @@ async function main() {
         playlistId: uploadsPlaylist,
         maxResults: "10",
       });
-      for (const it of pl.items || []) {
+      const items = pl.items || []; // 업로드 목록은 최신순
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
         const vid = it.contentDetails?.videoId;
+        if (!vid) continue;
         const pub = new Date(it.contentDetails?.videoPublishedAt || 0).getTime();
-        if (vid && pub > cutoff) candidateIds.push(vid);
+        // 채널의 '마지막 업로드 5개'는 날짜와 무관하게 무조건 수집(미리보기 5개 보장)
+        // 그 이후 영상은 최근 30일 것만(급상승 랭킹 재료)
+        if (i < 5 || pub > cutoff) candidateIds.push(vid);
       }
     } catch { /* 업로드 목록이 없는 채널은 건너뜀 */ }
   }
