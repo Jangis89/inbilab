@@ -24,6 +24,7 @@ const YESTERDAY = kstDate(-1);
 
 // 구독자 상한: 이 값 이상(50만 이상) 채널은 수집·저장·표시하지 않음 (입문자 벤치마킹용)
 const MAX_SUBS = 500000;
+const MIN_SUBS = 500; // 구독자 500명 미만 채널은 아예 수집하지 않음 (신뢰도 낮은 신생/유령 채널 차단)
 
 // ---------- Supabase REST 호출 도우미 ----------
 async function sbFetch(path, { method = "GET", body, prefer } = {}) {
@@ -362,6 +363,7 @@ async function main() {
   for (const c of stats) {
     const subs = Number(c.statistics?.subscriberCount || 0);
     if (subs >= MAX_SUBS) continue; // 50만 이상 대형 채널은 저장하지 않음
+    if (subs < MIN_SUBS) continue;  // 구독자 500명 미만은 아예 저장하지 않음
     const views = Number(c.statistics?.viewCount || 0);
     const vids = Number(c.statistics?.videoCount || 0);
     snapRows.push({
