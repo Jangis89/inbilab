@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>영상 분석 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  .an-input{display:flex;gap:10px;margin-bottom:8px;}
+  .an-input input{flex:1;padding:13px 16px;border:2px solid var(--line);border-radius:12px;font-size:15px;font-family:inherit;}
+  .an-input input:focus{outline:none;border-color:var(--blue);}
+  .an-input button{padding:13px 26px;border-radius:12px;border:none;background:var(--blue);color:#fff;font-size:15.5px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;}
+  .an-input button:disabled{opacity:.5;cursor:default;}
+  .an-hint{font-size:13px;color:var(--sub);margin-bottom:18px;}
+  .devnote{background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:9px 14px;font-size:13px;color:#854d0e;margin-bottom:16px;}
+
+  .an-load{display:none;align-items:center;gap:12px;padding:26px 20px;background:#fff;border:1px solid var(--line);border-radius:14px;margin-bottom:16px;font-size:15px;font-weight:700;color:var(--sub);}
+  .an-load.show{display:flex;}
+  .spin{width:22px;height:22px;border:3px solid #dbeafe;border-top-color:var(--blue);border-radius:50%;animation:sp 0.8s linear infinite;flex-shrink:0;}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  .an-err{display:none;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:12px;padding:13px 16px;font-size:14px;margin-bottom:16px;line-height:1.55;}
+  .an-err.show{display:block;}
+
+  .an-res{display:none;}
+  .an-res.show{display:block;}
+  .res-top{display:flex;gap:18px;align-items:flex-start;background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:12px;}
+  .res-top img{width:118px;height:210px;object-fit:cover;border-radius:11px;background:#000;flex-shrink:0;}
+  .res-top .t-cat{display:inline-block;background:#eff6ff;color:var(--blue-dark);font-size:13px;font-weight:800;padding:3px 12px;border-radius:999px;margin-bottom:8px;margin-right:6px;}
+  .res-top .t-face{display:inline-block;font-size:13px;font-weight:800;padding:3px 12px;border-radius:999px;margin-bottom:8px;}
+  .f-가능{background:#dcfce7;color:#166534;}
+  .f-부분가능{background:#fef9c3;color:#854d0e;}
+  .f-어려움{background:#fee2e2;color:#991b1b;}
+  .res-top h2{font-size:18px;font-weight:800;line-height:1.4;margin:0 0 8px;}
+  .res-top .t-sum{font-size:14px;color:var(--sub);line-height:1.65;}
+  .res-top .t-open{display:inline-block;margin-top:10px;font-size:13.5px;font-weight:700;color:var(--blue);text-decoration:none;}
+
+  .res-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
+  @media(max-width:720px){.res-grid{grid-template-columns:1fr;}}
+  .res-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px 17px;}
+  .res-card h3{font-size:13.5px;font-weight:800;color:var(--sub);margin:0 0 8px;}
+  .res-card .v{font-size:14.5px;line-height:1.6;font-weight:600;}
+  .kw{display:inline-block;background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;padding:4px 13px;font-size:13.5px;font-weight:700;margin:0 6px 7px 0;}
+  .stars{color:#f59e0b;font-size:16px;letter-spacing:2px;}
+  .tipbox{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:14px;padding:15px 17px;font-size:14.5px;line-height:1.65;color:#14532d;}
+  .tipbox b{display:block;margin-bottom:4px;font-size:13.5px;}
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+
+<main class="page">
+  <div class="wrap" style="max-width:860px;">
+    <h1 class="page-title">영상 분석 🎬</h1>
+    <div class="devnote" id="devnote" style="display:none;">🔒 이 기능은 아직 <b>비공개(관리자 전용)</b>입니다. 공개하려면 작업실에서 스위치를 켜세요.</div>
+    <p class="an-hint" style="font-size:14.5px;margin-bottom:14px;">궁금한 유튜브 쇼츠 주소를 붙여넣으면, AI가 영상을 직접 보고 <b>카테고리·주제·키워드·훅·따라 만들기 난이도</b>를 분석해 드립니다.</p>
+
+    <div class="an-input">
+      <input id="vurl" type="url" placeholder="https://youtube.com/shorts/…  주소를 붙여넣으세요" onkeydown="if(event.key==='Enter')runAnalyze()">
+      <button id="btn-an" onclick="runAnalyze()">분석하기</button>
+    </div>
+    <div class="an-hint">쇼츠·일반 영상 모두 가능 · 분석에 20~60초 정도 걸립니다</div>
+
+    <div class="an-load" id="an-load"><div class="spin"></div><span id="load-txt">AI가 영상을 보고 있습니다…</span></div>
+    <div class="an-err" id="an-err"></div>
+
+    <div class="an-res" id="an-res">
+      <div class="res-top">
+        <img id="r-thumb" src="" alt="">
+        <div style="flex:1;min-width:0;">
+          <div><span class="t-cat" id="r-cat"></span><span class="t-face" id="r-face"></span></div>
+          <h2 id="r-topic"></h2>
+          <div class="t-sum" id="r-sum"></div>
+          <a class="t-open" id="r-open" href="#" target="_blank" rel="noopener">▶ 유튜브에서 영상 보기</a>
+        </div>
+      </div>
+
+      <div class="res-card" style="margin-bottom:12px;">
+        <h3>🔑 핵심 키워드</h3>
+        <div id="r-kw"></div>
+      </div>
+
+      <div class="res-grid">
+        <div class="res-card"><h3>🎣 첫 2초 훅 (시청자를 붙잡는 방식)</h3><div class="v" id="r-hook"></div></div>
+        <div class="res-card"><h3>🎬 콘텐츠 형식</h3><div class="v" id="r-format"></div></div>
+        <div class="res-card"><h3>🎙️ 음성 종류</h3><div class="v" id="r-voice"></div></div>
+        <div class="res-card"><h3>✂️ 편집 난이도</h3><div class="v"><span class="stars" id="r-diff"></span> <span id="r-diffnum"></span></div></div>
+        <div class="res-card"><h3>🙈 무출연 재현 가능성</h3><div class="v" id="r-freason"></div></div>
+        <div class="res-card"><h3>📦 필요한 소스</h3><div class="v" id="r-src"></div></div>
+      </div>
+
+      <div class="tipbox"><b>💡 따라 만들기 팁</b><span id="r-tip"></span></div>
+    </div>
+  </div>
+</main>
+
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  let loadTimer = null;
+
+  async function runAnalyze() {
+    const url = $id("vurl").value.trim();
+    const btn = $id("btn-an");
+    const load = $id("an-load");
+    const err = $id("an-err");
+    const resBox = $id("an-res");
+    err.className = "an-err";
+    resBox.className = "an-res";
+    if (!url) { err.textContent = "유튜브 영상 주소를 먼저 붙여넣어 주세요."; err.className = "an-err show"; return; }
+
+    btn.disabled = true;
+    load.className = "an-load show";
+    let sec = 0;
+    $id("load-txt").textContent = "AI가 영상을 보고 있습니다… (0초)";
+    loadTimer = setInterval(() => { sec++; $id("load-txt").textContent = "AI가 영상을 보고 있습니다… (" + sec + "초)"; }, 1000);
+
+    try {
+      const { data } = await sb.auth.getSession();
+      const token = data && data.session ? data.session.access_token : "";
+      const r = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ feature: "video_analyze", action: "analyze", video_url: url }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        err.textContent = "분석 실패: " + (j.error || "HTTP " + r.status) + (j.detail ? " — " + j.detail : "");
+        err.className = "an-err show";
+      } else {
+        renderResult(j.video_id, j.analysis || {});
+        resBox.className = "an-res show";
+      }
+    } catch (e) {
+      err.textContent = "요청이 실패했습니다: " + e.message;
+      err.className = "an-err show";
+    }
+    clearInterval(loadTimer);
+    load.className = "an-load";
+    btn.disabled = false;
+  }
+
+  function renderResult(vid, a) {
+    const thumb = $id("r-thumb");
+    thumb.src = "https://i.ytimg.com/vi/" + vid + "/oardefault.jpg";
+    thumb.onerror = function () { this.onerror = null; this.src = "https://i.ytimg.com/vi/" + vid + "/hqdefault.jpg"; };
+    $id("r-open").href = "https://www.youtube.com/watch?v=" + vid;
+    $id("r-cat").textContent = a.category || "분류 없음";
+    const fg = String(a.faceless_grade || "").replace(/\s/g, "");
+    const faceEl = $id("r-face");
+    faceEl.textContent = fg ? "무출연 재현 " + fg : "";
+    faceEl.className = "t-face f-" + (["가능", "부분가능", "어려움"].includes(fg) ? fg : "부분가능");
+    $id("r-topic").textContent = a.topic || "";
+    $id("r-sum").textContent = a.summary || "";
+    $id("r-kw").innerHTML = (a.keywords || []).map((k) => `<span class="kw">${escapeHtml(k)}</span>`).join("") || "-";
+    $id("r-hook").textContent = a.hook || "-";
+    $id("r-format").textContent = a.format || "-";
+    $id("r-voice").textContent = a.voice_type || "-";
+    const d = Math.max(1, Math.min(5, parseInt(a.difficulty, 10) || 3));
+    $id("r-diff").textContent = "★".repeat(d) + "☆".repeat(5 - d);
+    $id("r-diffnum").textContent = d + "/5";
+    $id("r-freason").textContent = a.faceless_reason || "-";
+    $id("r-src").textContent = (a.needed_sources || []).join(", ") || "-";
+    $id("r-tip").textContent = a.tip || "";
+  }
+
+  (async function init() {
+    const user = await requireLogin();
+    if (!user) return;
+    // 이중 잠금: 관리자이거나, 기능이 공개 상태여야 접근 가능
+    const admin = await isAdmin(user);
+    if (!admin) {
+      const { data } = await sb.from("feature_flags").select("is_public").eq("key", "video_analyze").maybeSingle();
+      if (!data || !data.is_public) { location.replace("dashboard.html"); return; }
+    } else {
+      const { data } = await sb.from("feature_flags").select("is_public").eq("key", "video_analyze").maybeSingle();
+      if (!data || !data.is_public) $id("devnote").style.display = "block";
+    }
+    await renderHeader("analyze");
+    renderFooter();
+  })();
+</script>
+</body>
+</html>
