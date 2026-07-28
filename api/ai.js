@@ -89,16 +89,19 @@ async function callGemini(models, key, requestBody) {
 
 // 유튜브 데이터 API 호출 (서버 키가 있을 때만)
 async function ytApi(path, params) {
-  const ytKey = process.env.YOUTUBE_API_KEY;
+  const ytKey = String(process.env.YOUTUBE_API_KEY || "").trim();
   if (!ytKey) return null;
   const p = Object.assign({}, params, { key: ytKey });
   const qs = Object.keys(p).map((k) => k + "=" + encodeURIComponent(p[k])).join("&");
   try {
     const r = await fetch("https://www.googleapis.com/youtube/v3/" + path + "?" + qs);
-    if (!r.ok) return null;
-    return await r.json();
-  } catch {
-    return null;
+    const j = await r.json().catch(() => null);
+    if (!r.ok) {
+      return { __error: (j && j.error && j.error.message) || ("HTTP " + r.status) };
+    }
+    return j;
+  } catch (e) {
+    return { __error: String((e && e.message) || e) };
   }
 }
 
@@ -377,11 +380,13 @@ module.exports = async (req, res) => {
         .filter((q) => q && q.q).slice(0, 3);
 
       // 2) 대상 영상 게시일 (유튜브 API 키가 서버에 있을 때)
-      const ytAvailable = !!process.env.YOUTUBE_API_KEY;
+      const ytAvailable = !!String(process.env.YOUTUBE_API_KEY || "").trim();
+      let ytError = "";
       let target = { video_id: vid };
       if (ytAvailable) {
         const tj = await ytApi("videos", { part: "snippet", id: vid });
-        if (tj && tj.items && tj.items[0]) {
+        if (tj && tj.__error) ytError = tj.__error;
+        else if (tj && tj.items && tj.items[0]) {
           target.title = tj.items[0].snippet.title;
           target.published_at = tj.items[0].snippet.publishedAt;
         }
@@ -395,6 +400,7 @@ module.exports = async (req, res) => {
           const sj = await ytApi("search", {
             part: "snippet", q: queries[i].q, type: "video", maxResults: "4",
           });
+          if (sj && sj.__error) { if (!ytError) ytError = sj.__error; continue; }
           if (!sj || !sj.items) continue;
           for (let k = 0; k < sj.items.length; k++) {
             const it = sj.items[k];
@@ -470,6 +476,7 @@ module.exports = async (req, res) => {
         stock: stock,
         yt_links: ytLinks,
         yt_searched: ytAvailable,
+        yt_error: ytError,
         model: r1.model,
       });
       return;
