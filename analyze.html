@@ -98,6 +98,7 @@
           <h2 id="r-topic"></h2>
           <div class="t-sum" id="r-sum"></div>
           <a class="t-open" id="r-open" href="#" target="_blank" rel="noopener">▶ 유튜브에서 영상 보기</a>
+          <div id="r-model" style="margin-top:8px;font-size:12px;color:#94a3b8;font-weight:600;"></div>
         </div>
       </div>
 
@@ -152,6 +153,11 @@
 <script src="assets/js/app.js"></script>
 <script>
   let loadTimer = null;
+  function modelLabel(m, what) {
+    if (!m) return "";
+    if (m.indexOf("pro") >= 0) return "🤖 " + what + " 모델: Gemini Pro (고성능)";
+    return "🤖 " + what + " 모델: Gemini Flash (Pro 하루 한도 소진 시 자동 대체)";
+  }
   let lastAnalysis = null;
   let lastVideoId = null;
   let lastScript = null;
@@ -189,6 +195,7 @@
         lastAnalysis = j.analysis || {};
         lastVideoId = j.video_id;
         renderResult(j.video_id, lastAnalysis);
+        $id("r-model").textContent = modelLabel(j.model, "분석");
         resBox.className = "an-res show";
         $id("sc-box").style.display = canScript ? "block" : "none";
         $id("sc-res").className = "sc-res";
@@ -258,6 +265,7 @@
       } else {
         lastScript = j.script;
         renderScript(j.script);
+        $id("sc-meta").textContent += " · " + modelLabel(j.model, "작성");
         $id("sc-res").className = "sc-res show";
       }
     } catch (e) {
