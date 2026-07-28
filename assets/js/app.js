@@ -109,7 +109,6 @@
       { items: [["dashboard.html", "dashboard", "🏠", "홈"]] },
       { label: "트렌드 발굴", items: [
         ["today.html", "today", "🔥", "오늘 뜨는 채널"],
-        ["reference.html", "reference", "🎬", "레퍼런스 영상"],
         ["rocket.html", "rocket", "🚀", "로켓 채널"],
         ["favorites.html", "favorites", "⭐", "관심 채널"],
       ]},
@@ -125,6 +124,7 @@
     if (await isAdmin(user)) {
       groups.push({ label: "운영", items: [
         ["admin.html", "admin", "🛠️", "채널 승인"],
+        ["lab.html", "lab", "🧪", "작업실 (개발중)"],
       ]});
     }
     const navHtml = groups.map((g) =>
