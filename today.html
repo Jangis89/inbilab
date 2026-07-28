@@ -204,6 +204,7 @@
       .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date,ai_genre,admin_status,category,category_locked")
       .eq("admin_status", "승인")
       .lt("subscriber_count", 500000)
+      .gte("subscriber_count", 500)
       .order("daily_views", { ascending: false, nullsFirst: false })
       .limit(2000);
     allChannels = data || [];

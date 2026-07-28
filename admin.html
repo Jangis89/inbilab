@@ -144,6 +144,7 @@
     const { data } = await sb.from("channels")
       .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,ai_confidence,ai_genre,admin_status,source,category,category_locked,category_checked_at")
       .lt("subscriber_count", 500000)
+      .gte("subscriber_count", 500)
       .or("source.eq.tubelab,ai_faceless.eq.true")
       .order("subscriber_count", { ascending: false })
       .limit(2000);
@@ -358,7 +359,7 @@
           <img src="${escapeHtml(r.thumbnail)}" alt="" onerror="this.style.visibility='hidden'">
           <div>
             <div class="nm">${escapeHtml(r.title)}${r.source === "tubelab" ? `<span class="bg-sm b-src">튜브랩</span>` : `<span class="bg-sm b-ai">AI</span>`}${r.ai_confidence ? `<span class="bg-sm b-${r.ai_confidence}">확신 ${r.ai_confidence}</span>` : ""}${r.ai_genre ? `<span class="bg-sm b-genre">${escapeHtml(r.ai_genre)}</span>` : ""}</div>
-            <div class="meta">구독자 <b>${fmtNum(r.subscriber_count)}명</b>${r.daily_subs > 0 ? ` (+${fmtNum(r.daily_subs)})` : ""}${r.daily_views > 0 ? ` · 일일 조회수 <b class="mv">+${fmtNum(r.daily_views)}</b>` : ""}${money ? ` · 예상수익 <b class="mw">${money}</b>` : ""} · <a href="channel.html?id=${r.id}" target="_blank">분석 열기</a></div>
+            <div class="meta">구독자 <b>${fmtNum(r.subscriber_count)}명</b>${r.daily_subs > 0 ? ` · 구독자 증가 <b class="mv">+${fmtNum(r.daily_subs)}</b>` : ""}${r.daily_views > 0 ? ` · 조회수 증가 <b class="mv">+${fmtNum(r.daily_views)}</b>` : ""}${money ? ` · 예상수익 <b class="mw">${money}</b>` : ""} · <a href="channel.html?id=${r.id}" target="_blank">분석 열기</a></div>
             <div class="cat-line">
               <select class="cat-sel" onchange="adminSetCategory('${r.id}', this.value)">
                 <option value="" ${!r.category ? "selected" : ""}>카테고리 선택</option>
