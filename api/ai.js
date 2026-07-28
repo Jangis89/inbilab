@@ -182,12 +182,13 @@ module.exports = async (req, res) => {
     const feature = String(body.feature || "");
     const action = String(body.action || "");
 
-    // 모델 선택: auto(기본, Pro 우선→Flash 대체) | pro | flash
+    // 모델 선택: auto(기본, Flash 우선→Pro 대체) | pro | flash
+    // Flash가 기본: 품질 체감 차이가 적고 하루 한도가 넉넉함 (Pro 한도는 새벽 채널 검수 로봇에 양보)
     const pref = String(body.model_pref || "auto");
     const MODELS =
       pref === "pro" ? ["gemini-pro-latest"]
       : pref === "flash" ? ["gemini-flash-latest"]
-      : ["gemini-pro-latest", "gemini-flash-latest"];
+      : ["gemini-flash-latest", "gemini-pro-latest"];
 
     // 3) 비관리자: 공개된 기능만 + 하루 한도 확인
     if (!isAdmin) {
