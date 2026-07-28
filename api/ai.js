@@ -193,7 +193,7 @@ __TOPIC__
   "title": "영상 제목 추천 (호기심 유발형)",
   "target_length_sec": 45,
   "lines": [
-    { "text": "낭독할 문장 (첫 항목이 훅)", "scene": "이 문장에 얹을 화면 설명 (어떤 영상/이미지를 보여줄지)" }
+    { "text": "낭독할 문장 (첫 항목이 훅)", "scene": "이 문장에 얹을 화면 설명 (어떤 영상/이미지를 보여줄지)", "kw_en": "이 화면 재료를 무료 스톡 사이트에서 찾을 영어 검색어 (스톡으로 구할 수 있는 화면일 때만, 아니면 빈 문자열)" }
   ],
   "outro": "마무리 문장",
   "hashtags": ["#해시태그 3~5개"],
@@ -605,6 +605,42 @@ module.exports = async (req, res) => {
       }
       if (!isAdmin) await recordUsage(user.id, feature, token);
       res.status(200).json({ ok: true, script: script, model: r.model });
+      return;
+    }
+
+    // ---------- 액션: 스톡 미리보기 (Pexels 검색, 키 없으면 조용히 비활성) ----------
+    if (action === "stock") {
+      const q = String(body.query || "").trim().slice(0, 80);
+      if (!q) {
+        res.status(400).json({ error: "검색어가 필요합니다" });
+        return;
+      }
+      const pk = String(process.env.PEXELS_API_KEY || "").trim();
+      if (!pk) {
+        res.status(200).json({ ok: true, available: false, items: [] });
+        return;
+      }
+      try {
+        const pr = await fetch(
+          "https://api.pexels.com/videos/search?query=" + encodeURIComponent(q) + "&per_page=9&orientation=portrait",
+          { headers: { Authorization: pk } }
+        );
+        const pj = await pr.json().catch(() => null);
+        if (!pr.ok) {
+          res.status(502).json({ error: "Pexels 검색 실패", detail: (pj && pj.error) || ("HTTP " + pr.status) });
+          return;
+        }
+        const items = ((pj && pj.videos) || []).map((v) => ({
+          id: v.id,
+          url: v.url,
+          image: v.image,
+          duration: v.duration,
+          by: (v.user && v.user.name) || "",
+        }));
+        res.status(200).json({ ok: true, available: true, items: items });
+      } catch (e) {
+        res.status(502).json({ error: "Pexels 요청 오류", detail: String((e && e.message) || e) });
+      }
       return;
     }
 
