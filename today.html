@@ -62,6 +62,8 @@
   .admin-ctrl{width:100%;display:flex;justify-content:flex-end;gap:8px;margin-top:4px;padding-top:8px;border-top:1px dashed var(--line);}
   .admin-ctrl button{padding:5px 11px;border-radius:999px;border:2px solid var(--line);background:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;color:var(--sub);}
   .admin-ctrl button.del{color:#991b1b;border-color:#fecaca;}
+  .admin-ctrl .cat-sel{padding:4px 8px;border-radius:8px;border:2px solid var(--line);font-size:13px;font-weight:700;color:var(--sub);font-family:inherit;background:#fff;cursor:pointer;}
+  .admin-ctrl .lock-mark{font-size:12.5px;color:#92400e;background:#fef3c7;border-radius:999px;padding:2px 8px;font-weight:700;}
   .pager{display:flex;justify-content:center;align-items:center;gap:6px;margin:22px 0 6px;flex-wrap:wrap;}
   .pager button{min-width:38px;height:38px;padding:0 10px;border-radius:10px;border:2px solid var(--line);background:#fff;font-size:15px;font-weight:800;color:var(--sub);cursor:pointer;font-family:inherit;}
   .pager button.on{border-color:var(--blue);background:var(--blue);color:#fff;}
@@ -199,7 +201,7 @@
   // 2,000위 밖 채널은 삭제가 아니라 자동 숨김 — 다시 성장해 순위에 들면 자동 복귀.
   async function fetchChannels() {
     const { data } = await sb.from("channels")
-      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date,ai_genre,admin_status,category")
+      .select("id,title,thumbnail,subscriber_count,daily_views,daily_subs,stats_date,ai_genre,admin_status,category,category_locked")
       .eq("admin_status", "승인")
       .lt("subscriber_count", 500000)
       .order("daily_views", { ascending: false, nullsFirst: false })
@@ -327,6 +329,11 @@
         </div>
         ${window.__admin ? `
         <div class="admin-ctrl">
+          <select class="cat-sel" onchange="adminSetCategory('${c.id}', this.value, this)">
+            <option value="" ${!c.category ? "selected" : ""}>카테고리 선택</option>
+            ${CATEGORIES.map((k) => `<option value="${k}" ${c.category === k ? "selected" : ""}>${k}</option>`).join("")}
+          </select>
+          ${c.category_locked ? `<span class="lock-mark">🔒 관리자 지정</span>` : ""}
           <button onclick="adminRevert('${c.id}')">↩ 채널 승인으로 되돌리기</button>
           <button class="del" onclick="adminDelete('${c.id}')">🗑 삭제</button>
         </div>` : ""}
@@ -353,6 +360,24 @@
     await loadChannels();
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+
+  // ---------- 관리자 전용: 카테고리 직접 지정 (지정하면 AI가 못 바꾸게 잠금, RLS로 서버에서도 관리자만 허용) ----------
+  const CATEGORIES = [
+    "영화·드라마 요약", "연예 이슈", "유머·밈·바이럴", "지식·역사·교양", "스포츠",
+    "정치·시사", "국뽕·해외반응", "방송·예능", "게임", "동물·펫",
+    "음악", "썰·사연·애니툰", "푸드", "랭킹·순위 정보", "기타",
+  ];
+  async function adminSetCategory(id, cat, el) {
+    if (!cat) return;
+    const { error } = await sb.from("channels")
+      .update({ category: cat, category_locked: true })
+      .eq("id", id);
+    if (error) { alert("변경 실패: " + error.message); return; }
+    const ch = allChannels.find((c) => c.id === id);
+    if (ch) { ch.category = cat; ch.category_locked = true; }
+    await loadChannels();
+  }
+  window.adminSetCategory = adminSetCategory;
 
   // ---------- 관리자 전용: 승인 취소 / 삭제 (RLS로 서버에서도 관리자만 허용) ----------
   async function adminRevert(id) {
