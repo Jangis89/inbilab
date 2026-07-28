@@ -45,6 +45,29 @@
   .tipbox{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:14px;padding:15px 17px;font-size:14.5px;line-height:1.65;color:#14532d;}
   .tipbox b{display:block;margin-bottom:4px;font-size:13.5px;}
 
+  /* 모델 선택 (관리자용) */
+  .model-sel{display:flex;align-items:center;gap:14px;margin:-8px 0 16px;font-size:13.5px;color:var(--sub);flex-wrap:wrap;}
+  .model-sel .ml{font-weight:800;}
+  .model-sel label{display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:600;}
+  .model-sel input{accent-color:var(--blue);width:16px;height:16px;cursor:pointer;}
+
+  /* 대본 따기 (실제 대본 추출) */
+  .tr-box{margin-top:16px;background:#fff;border:2px solid #99f6e4;border-radius:14px;padding:18px;}
+  .tr-box h3{font-size:16.5px;font-weight:800;margin:0 0 4px;}
+  .tr-box .sc-desc{font-size:13.5px;color:var(--sub);margin-bottom:12px;line-height:1.55;}
+  .tr-box .trbtn{padding:12px 22px;border-radius:11px;border:none;background:#0d9488;color:#fff;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;}
+  .tr-box .trbtn:disabled{opacity:.5;}
+  .tr-res{display:none;margin-top:14px;}
+  .tr-res.show{display:block;}
+  .tr-meta{font-size:13px;color:#0d9488;font-weight:700;margin-bottom:8px;}
+  .tr-line{display:flex;gap:11px;padding:8px 4px;border-top:1px solid var(--line);}
+  .tr-line .tm{width:44px;flex-shrink:0;font-size:12.5px;color:#0d9488;font-weight:800;padding-top:2px;}
+  .tr-line .tx{flex:1;font-size:14.5px;font-weight:600;line-height:1.55;}
+  .tr-on{margin-top:10px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:10px;padding:10px 14px;font-size:13px;color:#134e4a;line-height:1.6;}
+  .tr-dl{display:flex;gap:9px;margin-top:14px;flex-wrap:wrap;}
+  .tr-dl button{padding:10px 16px;border-radius:10px;border:1.5px solid #99f6e4;background:#fff;color:#0d9488;font-size:13.5px;font-weight:800;cursor:pointer;font-family:inherit;}
+  .tr-dl button.main{background:#0d9488;color:#fff;border-color:#0d9488;}
+
   /* 대본 만들기 */
   .sc-box{margin-top:16px;background:#fff;border:2px solid #ddd6fe;border-radius:14px;padding:18px;}
   .sc-box h3{font-size:16.5px;font-weight:800;margin:0 0 4px;}
@@ -87,6 +110,13 @@
     </div>
     <div class="an-hint">쇼츠·일반 영상 모두 가능 · 분석에 20~60초 정도 걸립니다</div>
 
+    <div class="model-sel" id="model-sel">
+      <span class="ml">🤖 AI 모델 (비교 테스트용):</span>
+      <label><input type="radio" name="msel" value="auto" checked> 자동 (Pro 우선, 한도시 Flash)</label>
+      <label><input type="radio" name="msel" value="pro"> Pro만</label>
+      <label><input type="radio" name="msel" value="flash"> Flash만</label>
+    </div>
+
     <div class="an-load" id="an-load"><div class="spin"></div><span id="load-txt">AI가 영상을 보고 있습니다…</span></div>
     <div class="an-err" id="an-err"></div>
 
@@ -117,6 +147,23 @@
       </div>
 
       <div class="tipbox"><b>💡 따라 만들기 팁</b><span id="r-tip"></span></div>
+
+      <div class="tr-box" id="tr-box" style="display:none;">
+        <h3>🎞️ 이 영상 대본 따기</h3>
+        <div class="sc-desc">이 영상의 <b>실제 나레이션과 자막을 그대로</b> 추출합니다. 추출한 대본을 파일로 받아 본인의 AI에 넣어 자기만의 형식으로 바꿔 쓸 수 있습니다.</div>
+        <button class="trbtn" id="btn-tr" onclick="runTranscript()">대본 따기</button>
+        <div class="an-load" id="tr-load" style="margin-top:12px;"><div class="spin"></div><span id="tr-load-txt">AI가 영상을 듣고 받아 적고 있습니다…</span></div>
+        <div class="an-err" id="tr-err" style="margin-top:12px;"></div>
+        <div class="tr-res" id="tr-res">
+          <div class="tr-meta" id="tr-meta"></div>
+          <div id="tr-lines"></div>
+          <div class="tr-on" id="tr-on" style="display:none;"></div>
+          <div class="tr-dl">
+            <button class="main" onclick="dlTr()">📄 대본 다운로드 (.txt)</button>
+            <button onclick="copyTr()">복사</button>
+          </div>
+        </div>
+      </div>
 
       <div class="sc-box" id="sc-box" style="display:none;">
         <h3>✍️ 이 포맷으로 대본 만들기</h3>
@@ -161,7 +208,14 @@
   let lastAnalysis = null;
   let lastVideoId = null;
   let lastScript = null;
+  let lastTranscript = null;
   let canScript = false;
+  let canTranscript = false;
+
+  function modelPref() {
+    const el = document.querySelector('input[name="msel"]:checked');
+    return el ? el.value : "auto";
+  }
 
   async function runAnalyze() {
     const url = $id("vurl").value.trim();
@@ -185,7 +239,7 @@
       const r = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
-        body: JSON.stringify({ feature: "video_analyze", action: "analyze", video_url: url }),
+        body: JSON.stringify({ feature: "video_analyze", action: "analyze", video_url: url, model_pref: modelPref() }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) {
@@ -201,6 +255,9 @@
         $id("sc-res").className = "sc-res";
         $id("sc-err").className = "an-err";
         $id("sc-topic").value = "";
+        $id("tr-box").style.display = canTranscript ? "block" : "none";
+        $id("tr-res").className = "tr-res";
+        $id("tr-err").className = "an-err";
       }
     } catch (e) {
       err.textContent = "요청이 실패했습니다: " + e.message;
@@ -235,6 +292,90 @@
     $id("r-tip").textContent = a.tip || "";
   }
 
+  // ---------- 이 영상 대본 따기 ----------
+  let trTimer = null;
+
+  async function runTranscript() {
+    if (!lastVideoId) return;
+    const btn = $id("btn-tr");
+    const load = $id("tr-load");
+    const err = $id("tr-err");
+    err.className = "an-err";
+    $id("tr-res").className = "tr-res";
+    btn.disabled = true;
+    load.className = "an-load show";
+    let sec = 0;
+    $id("tr-load-txt").textContent = "AI가 영상을 듣고 받아 적고 있습니다… (0초)";
+    trTimer = setInterval(() => { sec++; $id("tr-load-txt").textContent = "AI가 영상을 듣고 받아 적고 있습니다… (" + sec + "초)"; }, 1000);
+    try {
+      const { data } = await sb.auth.getSession();
+      const token = data && data.session ? data.session.access_token : "";
+      const r = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ feature: "transcript", action: "transcript", video_url: "https://www.youtube.com/watch?v=" + lastVideoId, model_pref: modelPref() }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        err.textContent = "대본 추출 실패: " + (j.error || "HTTP " + r.status) + (j.detail ? " — " + j.detail : "");
+        err.className = "an-err show";
+      } else {
+        lastTranscript = j.transcript;
+        renderTranscript(j.transcript, j.model);
+        $id("tr-res").className = "tr-res show";
+      }
+    } catch (e) {
+      err.textContent = "요청이 실패했습니다: " + e.message;
+      err.className = "an-err show";
+    }
+    clearInterval(trTimer);
+    load.className = "an-load";
+    btn.disabled = false;
+  }
+
+  function renderTranscript(t, model) {
+    const meta = [];
+    if (t.language) meta.push("언어: " + t.language);
+    if (t.voice_type) meta.push("음성: " + t.voice_type);
+    if (t.note) meta.push(t.note);
+    if (model) meta.push(modelLabel(model, "추출"));
+    $id("tr-meta").textContent = meta.join(" · ");
+    $id("tr-lines").innerHTML = (t.lines || []).map((l) => `
+      <div class="tr-line">
+        <div class="tm">${escapeHtml(l.t || "")}</div>
+        <div class="tx">${escapeHtml(l.text || "")}</div>
+      </div>`).join("") || '<div class="tr-line"><div class="tx">추출된 대사가 없습니다.</div></div>';
+    const on = t.onscreen || [];
+    const onEl = $id("tr-on");
+    if (on.length) {
+      onEl.style.display = "block";
+      onEl.innerHTML = "<b>🖼️ 화면 자막·텍스트</b><br>" + on.map(escapeHtml).join("<br>");
+    } else {
+      onEl.style.display = "none";
+    }
+  }
+
+  function trText() {
+    if (!lastTranscript) return "";
+    return (lastTranscript.lines || []).map((l) => l.text || "").join("\n");
+  }
+
+  function dlTr() {
+    const t = lastTranscript || {};
+    let out = "[인비랩 대본 따기]\n\n";
+    if (t.language) out += "언어: " + t.language + "\n";
+    if (t.voice_type) out += "음성: " + t.voice_type + "\n";
+    if (t.note) out += "참고: " + t.note + "\n";
+    out += "\n== 대본 ==\n" + trText() + "\n";
+    const on = t.onscreen || [];
+    if (on.length) out += "\n== 화면 자막·텍스트 ==\n" + on.join("\n") + "\n";
+    dlFile("영상대본_추출.txt", out);
+  }
+  async function copyTr() {
+    try { await navigator.clipboard.writeText(trText()); alert("대본이 복사되었습니다."); }
+    catch { alert("복사에 실패했습니다. 다운로드 버튼을 이용해 주세요."); }
+  }
+
   // ---------- 대본 만들기 ----------
   let scTimer = null;
 
@@ -256,7 +397,7 @@
       const r = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
-        body: JSON.stringify({ feature: "script_gen", action: "script", analysis: lastAnalysis, topic: $id("sc-topic").value.trim() }),
+        body: JSON.stringify({ feature: "script_gen", action: "script", analysis: lastAnalysis, topic: $id("sc-topic").value.trim(), model_pref: modelPref() }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) {
@@ -339,10 +480,14 @@
       if (!data || !data.is_public) { location.replace("dashboard.html"); return; }
       const { data: sf } = await sb.from("feature_flags").select("is_public").eq("key", "script_gen").maybeSingle();
       canScript = !!(sf && sf.is_public);
+      const { data: tf } = await sb.from("feature_flags").select("is_public").eq("key", "transcript").maybeSingle();
+      canTranscript = !!(tf && tf.is_public);
+      $id("model-sel").style.display = "none"; // 모델 선택은 관리자 전용
     } else {
       const { data } = await sb.from("feature_flags").select("is_public").eq("key", "video_analyze").maybeSingle();
       if (!data || !data.is_public) $id("devnote").style.display = "block";
       canScript = true;
+      canTranscript = true;
     }
     await renderHeader("analyze");
     renderFooter();
