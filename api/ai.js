@@ -791,7 +791,12 @@ module.exports = async (req, res) => {
         return;
       }
       try {
-        const thumb = "https://i.ytimg.com/vi/" + vid + "/hqdefault.jpg";
+        let thumb = "https://i.ytimg.com/vi/" + vid + "/hqdefault.jpg";
+        try {
+          const oarUrl = "https://i.ytimg.com/vi/" + vid + "/oar2.jpg";
+          const oc = await fetch(oarUrl, { method: "HEAD" });
+          if (oc.ok) thumb = oarUrl; // 쇼츠 세로 원본(1080x1920) — 흐린 좌우 띠 없음
+        } catch {}
         const vr = await fetch("https://vision.googleapis.com/v1/images:annotate?key=" + vk, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -819,7 +824,7 @@ module.exports = async (req, res) => {
         }));
         const labels = (w.bestGuessLabels || []).map((l) => l.label).filter(Boolean);
         if (!isAdmin) await recordUsage(user.id, feature, token);
-        res.status(200).json({ ok: true, available: true, items: items.slice(0, 10), pages: pages, labels: labels });
+        res.status(200).json({ ok: true, available: true, items: items.slice(0, 10), pages: pages, labels: labels, img_kind: (thumb.indexOf("oar2") !== -1 ? "세로원본" : "가로썸네일") });
       } catch (e) {
         res.status(502).json({ error: "렌즈 요청 오류", detail: String((e && e.message) || e) });
       }
