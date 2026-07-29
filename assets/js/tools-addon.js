@@ -607,8 +607,8 @@
         const div = document.createElement("div");
         div.className = "intl-box"; div.id = "src-intl";
         div.innerHTML = "<div class='ib-t'>🌏 해외 플랫폼에서 직접 검색 <span style='font-weight:600;color:#a16207;'>— 해외 쇼츠는 도우인·샤오홍슈에서 온 경우가 많아요</span></div>" +
-          qs.map(function (q) {
-            return "<div class='intl-row'><span class='iq'>「" + escapeHtml(q.q) + "」</span><br>" +
+          qs.map(function (q, qi) {
+            return "<div class='intl-row'>" + (qi === 0 ? "<span style='background:#4f46e5;color:#fff;font-size:10.5px;font-weight:800;border-radius:999px;padding:2px 8px;margin-right:6px'>대표</span>" : "") + "<span class='iq'>「" + escapeHtml(q.q) + "」</span>" + (q.type && ({watermark:"워터마크",entity:"인물·사건",quote:"대사·자막",visual:"장면 묘사",source:"원본 표현",full_version:"전체본"}[q.type] || "") ? "<span style='background:#fde68a;color:#92400e;font-size:10.5px;font-weight:700;border-radius:999px;padding:2px 7px;margin-left:6px'>" + ({watermark:"워터마크",entity:"인물·사건",quote:"대사·자막",visual:"장면 묘사",source:"원본 표현",full_version:"전체본"}[q.type] || "") + "</span>" : "") + (q.ko && q.lang !== "ko" ? "<span style='color:#8a8a8a;font-size:11.5px;margin-left:6px'>(" + escapeHtml(q.ko) + ")</span>" : "") + "<br>" +
               PLATFORMS.map(function (p) { return "<a href='" + p[1](q.q) + "' target='_blank' rel='noopener'>" + p[0] + "</a>"; }).join("") + "</div>";
           }).join("") +
           "<div class='intl-warn'>⚠️ 해외 영상은 참고·재구성용입니다. 그대로 내려받아 쓰면 저작권 문제가 될 수 있어요.</div>";
