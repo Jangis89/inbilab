@@ -387,7 +387,9 @@ async function main() {
     });
   }
   // 순서 중요: 채널 명단을 먼저 등록한 뒤에 일일 기록을 저장해야 함
-  for (const part of chunk(chRows, 200)) {
+  const chGroups = [chRows.filter((r) => "found_by" in r), chRows.filter((r) => !("found_by" in r))];
+  // PostgREST는 한 요청 안 모든 행의 필드 구성이 같아야 함 (PGRST102 방지) — found_by 유무로 분리 저장
+  for (const part of chGroups.flatMap((g) => chunk(g, 200))) {
     await sbFetch("channels?on_conflict=id", {
       method: "POST", body: part, prefer: "resolution=merge-duplicates",
     });
