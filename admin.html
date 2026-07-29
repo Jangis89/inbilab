@@ -153,12 +153,12 @@
 
   async function fetchVideosFor(ids) {
     const need = ids.filter((id) => !(id in videosByChannel));
-    for (let i = 0; i < need.length; i += 50) {
-      const part = need.slice(i, i + 50);
+    for (let i = 0; i < need.length; i += 20) {
+      const part = need.slice(i, i + 20);
       const { data } = await sb.from("channel_videos")
-        .select("channel_id,video_id,title,thumbnail,view_count,is_short")
+        .select("channel_id,video_id,title,thumbnail,view_count,is_short,published_at")
         .in("channel_id", part)
-        .order("view_count", { ascending: false })
+        .order("published_at", { ascending: false })
         .limit(part.length * 8);
       part.forEach((id) => { videosByChannel[id] = videosByChannel[id] || []; });
       (data || []).forEach((v) => {
