@@ -1067,6 +1067,65 @@ module.exports = async (req, res) => {
       return;
     }
 
+    // ---------- 액션: 바이두 유사 이미지 검색 (공식 千帆 相似图搜索 API) ----------
+    if (action === "baidu_sim") {
+      if (!isAdmin) { res.status(403).json({ error: "관리자 검증 단계의 기능입니다" }); return; }
+      const bkey = String(process.env.BAIDU_API_KEY || "").trim();
+      if (!bkey) { res.status(200).json({ ok: true, available: false, items: [], note: "BAIDU_API_KEY 미설정" }); return; }
+      const bvid = extractVideoId(body.video_url);
+      if (!bvid) { res.status(400).json({ error: "유튜브 영상 주소가 아닙니다" }); return; }
+      let bimg = "https://i.ytimg.com/vi/" + bvid + "/hqdefault.jpg";
+      try {
+        const oc2 = await fetch("https://i.ytimg.com/vi/" + bvid + "/oar2.jpg", { method: "HEAD" });
+        if (oc2.ok) bimg = "https://i.ytimg.com/vi/" + bvid + "/oar2.jpg";
+      } catch {}
+      let bb64 = "";
+      try {
+        const ir = await fetch(bimg);
+        if (!ir.ok) { res.status(502).json({ error: "썸네일을 가져오지 못했습니다 (HTTP " + ir.status + ")" }); return; }
+        bb64 = Buffer.from(await ir.arrayBuffer()).toString("base64");
+      } catch (e) {
+        res.status(502).json({ error: "썸네일 다운로드 실패", detail: String((e && e.message) || e) });
+        return;
+      }
+      try {
+        const br = await fetch("https://qianfan.baidubce.com/v2/tools/image_similar_info", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + bkey, "Content-Type": "application/json" },
+          body: JSON.stringify({ image: bb64, count: Math.min(Number(body.count) || 20, 50) }),
+        });
+        const bj = await br.json().catch(() => null);
+        if (!br.ok || !bj || bj.error_code || (bj.code && bj.code !== 0)) {
+          res.status(200).json({
+            ok: false, http: br.status,
+            err_code: (bj && (bj.error_code || bj.code)) || null,
+            err_msg: String((bj && (bj.error_msg || bj.message)) || "").slice(0, 200),
+            raw_keys: bj ? Object.keys(bj).slice(0, 10) : [],
+          });
+          return;
+        }
+        let barr = bj.result || bj.data || bj.results || [];
+        if (barr && !Array.isArray(barr) && Array.isArray(barr.result)) barr = barr.result;
+        if (!Array.isArray(barr)) barr = [];
+        const bitems = barr.map(function (it) {
+          return {
+            cate: it.item_cate || "", sim: it.sim_level || 0,
+            url: it.fromurl || "", img: it.objurl || it.thumburl || "",
+            title: it.title || "", site: it.fromurlhost || it.site || "",
+          };
+        });
+        res.status(200).json({
+          ok: true, available: true,
+          img_kind: (bimg.indexOf("oar2") !== -1 ? "세로원본" : "가로썸네일"),
+          count: bitems.length, items: bitems,
+          raw_keys: Object.keys(bj).slice(0, 10),
+        });
+      } catch (e) {
+        res.status(502).json({ error: "바이두 API 호출 실패", detail: String((e && e.message) || e) });
+      }
+      return;
+    }
+
     res.status(400).json({ error: "알 수 없는 요청입니다: " + (action || "(없음)") });
   } catch (e) {
     res.status(500).json({ error: "서버 오류", detail: String((e && e.message) || e) });
