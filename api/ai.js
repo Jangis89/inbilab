@@ -533,6 +533,7 @@ module.exports = async (req, res) => {
               title: it.snippet.title,
               channel: it.snippet.channelTitle,
               published_at: it.snippet.publishedAt,
+              found_by: queries[i].q,
             });
           }
         }
