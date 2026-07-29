@@ -440,12 +440,47 @@
       try { enhance(j); } catch {}
     };
 
+    let srcAdmin = false;
+    (async function () {
+      try { const u = await getUser(); srcAdmin = u ? await isAdmin(u) : false; } catch {}
+    })();
+
+    async function forceSources(vid, btn) {
+      if (btn) { btn.disabled = true; btn.textContent = "새로 탐색 중… (20~60초)"; }
+      try {
+        const { data } = await sb.auth.getSession();
+        const token = data && data.session ? data.session.access_token : "";
+        const el = document.querySelector('input[name="msel"]:checked');
+        const r = await fetch("/api/ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+          body: JSON.stringify({ feature: "source_finder", action: "sources", video_url: "https://www.youtube.com/watch?v=" + vid, model_pref: el ? el.value : "auto", force: true }),
+        });
+        const j = await r.json().catch(function () { return {}; });
+        if (r.ok && j.ok) window.renderSources(j);
+        else if (btn) { btn.disabled = false; btn.textContent = "실패 — 다시 시도"; }
+      } catch { if (btn) { btn.disabled = false; btn.textContent = "실패 — 다시 시도"; } }
+    }
+
     function enhance(j) {
       const host = document.getElementById("src-res");
       if (!host) return;
       // 이전에 붙인 확장 블록 제거 (재실행 대비)
       const old1 = document.getElementById("src-intl"); if (old1) old1.remove();
       const old2 = document.getElementById("src-lens"); if (old2) old2.remove();
+      const old0 = document.getElementById("src-cachenote"); if (old0) old0.remove();
+
+      // 캐시에서 온 결과면 안내 (검색 한도 소모 0)
+      if (j.cached) {
+        const n = document.createElement("div");
+        n.id = "src-cachenote";
+        n.style.cssText = "background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:9px 13px;font-size:13px;color:#3730a3;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.5;";
+        n.innerHTML = "<span>💾 이전에 탐색해 둔 결과를 바로 불러왔습니다 (검색 한도 소모 없음" + (j.cached_at ? " · " + fmtDate(j.cached_at) + " 탐색" : "") + ")</span>" +
+          (srcAdmin ? "<button id='src-force' style='padding:5px 13px;border-radius:9px;border:1.5px solid #4f46e5;background:#fff;color:#4f46e5;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;'>🔄 새로 탐색 (관리자)</button>" : "");
+        host.insertAdjacentElement("afterbegin", n);
+        const fb = n.querySelector("#src-force");
+        if (fb) fb.addEventListener("click", function () { forceSources(j.video_id, fb); });
+      }
 
       // 1) 해외 플랫폼 직접 검색 (검색어가 미리 입력된 바로가기)
       const qs = (j.yt_links || []).slice(0, 3);
