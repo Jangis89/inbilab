@@ -488,7 +488,7 @@
         if (blob && typeof ClipboardItem !== "undefined") {
           try {
             await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-            ibToast("✅ 썸네일 이미지가 복사됐어요! 바이두 페이지가 열리면 Ctrl+V만 누르세요 — 원본 검색이 바로 시작됩니다");
+            ibToast("✅ 썸네일 이미지가 복사됐어요! 열린 바이두 페이지에서 📷 카메라 아이콘을 누른 뒤 Ctrl+V 하면 검색이 바로 시작됩니다");
             window.open("https://graph.baidu.com/pcpage/index?tpl_from=pc", "_blank");
             return;
           } catch (_) {}
@@ -500,7 +500,7 @@
       lens.appendChild(b);
       var tip2 = document.createElement("div");
       tip2.style.cssText = "font-size:11.5px;color:#666;margin-top:5px;line-height:1.5";
-      tip2.textContent = "💡 중국에서 온 영상은 바이두 식별이 원본을 특히 잘 찾습니다. 버튼을 누르고 열린 페이지에서 Ctrl+V 한 번이면 끝!";
+      tip2.textContent = "💡 중국에서 온 영상은 바이두 식별이 원본을 특히 잘 찾습니다. 버튼 클릭 → 열린 페이지의 📷 아이콘 클릭 → Ctrl+V, 이 세 번이면 끝!";
       lens.appendChild(tip2);
     }
   }
