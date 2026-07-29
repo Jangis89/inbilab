@@ -544,6 +544,31 @@ module.exports = async (req, res) => {
       }
       candidates = candidates.slice(0, 10);
 
+      // 3.5) 후보 상세정보 1회 조회 (길이·조회수·임베드) — search.list 추가 없음, videos.list 1회(약 1유닛)
+      if (ytAvailable && candidates.length) {
+        const detIds = candidates.map(function (c) { return c.video_id; }).slice(0, 50).join(",");
+        const dj = await ytApi("videos", { part: "contentDetails,statistics,status", id: detIds });
+        if (dj && dj.__error) { if (!ytError) ytError = dj.__error; }
+        else if (dj && Array.isArray(dj.items)) {
+          const dmap = {};
+          dj.items.forEach(function (it) { dmap[it.id] = it; });
+          candidates.forEach(function (c) {
+            const it = dmap[c.video_id];
+            if (!it) return;
+            const iso = (it.contentDetails && it.contentDetails.duration) || "";
+            const mm = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+            let sec = 0;
+            if (mm) sec = parseInt(mm[1] || "0", 10) * 3600 + parseInt(mm[2] || "0", 10) * 60 + parseInt(mm[3] || "0", 10);
+            c.duration_seconds = sec;
+            c.duration_label = Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+            c.view_count = (it.statistics && Number(it.statistics.viewCount)) || 0;
+            c.embeddable = !!(it.status && it.status.embeddable);
+            c.is_short_candidate = sec > 0 && sec <= 180;
+            c.short_confidence = sec === 0 ? "알수없음" : (sec <= 60 ? "높음" : (sec <= 180 ? "중간" : "낮음"));
+          });
+        }
+      }
+
       // 4) 가벼운 검증: 제목·게시일 기준 가능성 등급 (Flash 텍스트 호출)
       let ranked = [];
       if (candidates.length) {
