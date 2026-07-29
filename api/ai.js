@@ -1,8 +1,8 @@
 // ============================================
-// 인비랩 AI 중계 서버 (Step 0 + Step 1)
+// 인비랩 AI 중계 서버
 // - Gemini API 키는 서버 환경변수(GEMINI_API_KEY)에만 보관 (사이트에 노출 안 됨)
 // - 순서: 로그인 확인 → 관리자 여부 → (비관리자) 공개 여부 + 하루 한도 → AI 호출 → 사용 기록
-// - 액션: ping(연결 테스트), analyze(영상 분석), sources(원본 후보), transcript(대본 따기), script(대본 작성), blueprint(제작 설계도)
+// - 액션: ping(연결 테스트), analyze(영상 분석), sources(원본 후보), transcript(대본 따기), script(대본 작성), stock(스톡 미리보기), blueprint(제작 설계도), hook(후킹 분석)
 // ============================================
 const SUPABASE_URL = "https://bdbwawskwdgdsqmoqodt.supabase.co";
 const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJkYndhd3Nrd2RnZHNxbW9xb2R0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUwNzcxNzcsImV4cCI6MjEwMDY1MzE3N30.sOJU4L75T7MDaeZFIXmzEvWN_ZW4eiZKpX9cWOzqwF4";
@@ -236,6 +236,49 @@ JSON만 출력하세요:
   }
 }
 cut_count에는 실제 컷 수(숫자)를 넣으세요.`;
+
+const HOOK_PROMPT = `당신은 유튜브 쇼츠 후킹(시청자 붙잡기) 분석 전문가입니다. 이 영상을 직접 보고, 첫 3~5초를 집중 분석하세요.
+
+[후킹 전략 분류표 — 10유형]
+1 호기심 갭: 답을 숨겨서 궁금하게 만듦
+2 결과 먼저: 가장 놀라운 결과/완성본을 첫 컷에 보여줌
+3 충격 비주얼: 이상하거나 놀라운 장면으로 시선 강탈
+4 질문 던지기: 시청자에게 직접 질문
+5 공감 저격: "이런 적 있으시죠?" 내 얘기처럼 느끼게
+6 손실 회피: "모르면 손해" 경고형
+7 숫자·랭킹: 순위나 구체적 숫자 제시
+8 반전 예고: 뒤에 반전이 있음을 예고
+9 권위·증거: 전문가·실험·데이터를 먼저 제시
+10 패턴 파괴: 예상 밖의 화면·소리·연출로 주의 환기
+
+[매우 중요한 규칙]
+- 첫 3~5초에 실제로 나온 대사·자막·화면을 사실 그대로 먼저 기록하세요. 창작·요약 금지.
+- 전략 판정: 10유형 중 확신이 있는 것만 고르세요. 딱 맞는 유형이 없으면 절대 억지로 고르지 말고, type_id를 0으로 하고 당신이 관찰한 전략에 새 이름을 붙여 설명하세요 (is_new: true).
+- 전략이 여러 개 섞였으면 주 전략 1개 + 보조 전략 최대 2개로 나누세요.
+- confidence는 판정 확신도입니다: 높음 | 중간 | 낮음. 애매하면 솔직하게 낮음으로.
+- 모든 값은 한국어.
+
+JSON만 출력하세요:
+{
+  "facts": {
+    "duration_sec": 4,
+    "lines": ["첫 3~5초의 실제 대사·나레이션 그대로 (없으면 빈 배열)"],
+    "onscreen": ["첫 3~5초 화면 자막·텍스트 그대로 (없으면 빈 배열)"],
+    "visual": "첫 3~5초 화면에 보이는 것 묘사 2~3문장 (사실만)",
+    "sound": "소리·음악의 특징 한 줄"
+  },
+  "main": { "type_id": 2, "name": "결과 먼저", "confidence": "높음", "is_new": false },
+  "sub": [ { "type_id": 3, "name": "충격 비주얼" } ],
+  "psychology": "이 후킹이 시청자 머릿속에서 일으키는 일 2~3문장 (심리학 용어 대신 쉬운 말로)",
+  "intent": "제작자가 노린 것 한 줄",
+  "retention": ["3초 이후에도 시청자를 붙잡아두는 장치들 (자막 리듬, 컷 속도, 전개 방식 등)"],
+  "variations": [
+    { "kind": "같은 전략 × 새 소재", "strategy": "전략 이름", "first_line": "바로 쓸 수 있는 첫 문장", "first_scene": "첫 화면 설명 한 줄" },
+    { "kind": "같은 전략 × 새 소재", "strategy": "전략 이름", "first_line": "...", "first_scene": "..." },
+    { "kind": "다른 전략 × 같은 소재", "strategy": "다른 전략 이름", "first_line": "...", "first_scene": "..." }
+  ]
+}
+duration_sec에는 분석한 훅 구간 길이(숫자, 3~5)를 넣으세요.`;
 
 module.exports = async (req, res) => {
   try {
@@ -494,6 +537,7 @@ module.exports = async (req, res) => {
       }));
       const ytLinks = queries.map((q) => ({
         q: q.q,
+        lang: q.lang || "",
         url: "https://www.youtube.com/results?search_query=" + encodeURIComponent(q.q),
       }));
 
@@ -641,6 +685,67 @@ module.exports = async (req, res) => {
       } catch (e) {
         res.status(502).json({ error: "Pexels 요청 오류", detail: String((e && e.message) || e) });
       }
+      return;
+    }
+
+    // ---------- 액션: 후킹 분석 (첫 3~5초 집중) ----------
+    if (action === "hook") {
+      if (!key) {
+        res.status(500).json({ error: "서버에 GEMINI_API_KEY가 설정되지 않았습니다" });
+        return;
+      }
+      const vid = extractVideoId(body.video_url);
+      if (!vid) {
+        res.status(400).json({ error: "유튜브 영상 주소가 아닙니다" });
+        return;
+      }
+      const videoUrl = "https://www.youtube.com/watch?v=" + vid;
+      const r = await callGemini(MODELS, key, {
+        contents: [
+          { parts: [{ file_data: { file_uri: videoUrl } }, { text: HOOK_PROMPT }] },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          mediaResolution: "MEDIA_RESOLUTION_LOW",
+          temperature: 0.3,
+        },
+      });
+      if (!r.ok) {
+        let detail = r.detail || "";
+        if (/not\s*found|unsupported|invalid/i.test(detail)) {
+          detail = "영상을 불러올 수 없습니다 (비공개·삭제·연령제한 영상일 수 있음)";
+        } else if (r.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(detail)) {
+          detail = "오늘 AI 사용량이 모두 소진되었습니다. 몇 시간 후 다시 시도해 주세요.";
+        }
+        res.status(502).json({ error: "후킹 분석 실패", detail: detail });
+        return;
+      }
+      const hk = parseJsonLoose(geminiText(r.gj));
+      if (!hk || !hk.main || !hk.facts) {
+        res.status(502).json({ error: "후킹 분석 결과 해석에 실패했습니다. 다시 시도해 주세요." });
+        return;
+      }
+      // "기타(새 유형)" 판정은 자동 기록 → 작업실에서 검토 후 분류표 승격 (실패해도 무시)
+      try {
+        if (Number(hk.main.type_id) === 0 || hk.main.is_new === true) {
+          await fetch(SUPABASE_URL + "/rest/v1/hook_extra_log", {
+            method: "POST",
+            headers: {
+              apikey: ANON_KEY,
+              Authorization: "Bearer " + token,
+              "Content-Type": "application/json",
+              Prefer: "return=minimal",
+            },
+            body: JSON.stringify({
+              video_id: vid,
+              name: String(hk.main.name || "").slice(0, 80),
+              description: String(hk.psychology || "").slice(0, 300),
+            }),
+          });
+        }
+      } catch {}
+      if (!isAdmin) await recordUsage(user.id, feature, token);
+      res.status(200).json({ ok: true, video_id: vid, hook: hk, model: r.model });
       return;
     }
 
