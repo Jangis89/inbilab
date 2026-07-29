@@ -332,10 +332,67 @@
         const div2 = document.createElement("div");
         div2.className = "lens-box"; div2.id = "src-lens";
         div2.innerHTML = "<div class='ib-t'>🔍 구글렌즈로 원본 찾기</div>" +
-          "<a class='lens-btn' href='https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(thumb) + "' target='_blank' rel='noopener'>이 영상 썸네일로 렌즈 검색 열기 →</a>" +
+          "<a class='lens-btn' href='https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(thumb) + "' target='_blank' rel='noopener'>이 영상 썸네일로 렌즈 검색 열기 →</a> " +
+          "<button class='lens-btn' id='lens-run' style='border:none;cursor:pointer;font-family:inherit;background:#1e40af;'>🖼️ 화면 안에서 결과 보기</button>" +
+          "<div class='prev-grid' id='lens-grid' style='grid-template-columns:repeat(2,1fr);'></div>" +
           "<div class='lens-tip'>썸네일과 똑같거나 비슷한 이미지가 있는 페이지를 구글이 찾아줍니다.<br>💡 영상 속 <b>특정 장면</b>으로 찾고 싶다면: 그 장면에서 일시정지 → 스크린샷 → <a href='https://lens.google.com/' target='_blank' rel='noopener' style='color:#1d4ed8;'>lens.google.com</a>에 직접 올려보세요.</div>";
         host.appendChild(div2);
+        const runBtn = div2.querySelector("#lens-run");
+        if (runBtn) runBtn.addEventListener("click", function () { runLens(vid); });
       }
+    }
+  }
+
+  // 구글렌즈 2단계: Vision API 결과를 화면 안 그리드로 (키 없으면 안내만)
+  async function runLens(vid) {
+    const box = document.getElementById("lens-grid");
+    if (!box) return;
+    if (box.className.indexOf("show") >= 0) { box.className = "prev-grid"; return; } // 다시 누르면 접기
+    box.innerHTML = "<div class='prev-msg' style='grid-column:1/3;'>구글에서 이 썸네일을 찾는 중…</div>";
+    box.className = "prev-grid show";
+    try {
+      const { data } = await sb.auth.getSession();
+      const token = data && data.session ? data.session.access_token : "";
+      const r = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ feature: "source_finder", action: "lens", video_url: "https://www.youtube.com/watch?v=" + vid }),
+      });
+      const j = await r.json().catch(function () { return {}; });
+      if (!r.ok || !j.ok) {
+        box.innerHTML = "<div class='prev-msg' style='grid-column:1/3;'>렌즈 검색 실패: " + escapeHtml(j.error || "HTTP " + r.status) + (j.detail ? " — " + escapeHtml(j.detail) : "") + "</div>";
+        return;
+      }
+      if (!j.available) {
+        box.innerHTML = "<div class='prev-msg' style='grid-column:1/3;'>🖼️ 화면 안 결과 보기는 준비 중입니다. 위의 '렌즈 검색 열기' 버튼을 이용해 주세요.</div>";
+        return;
+      }
+      let html = "";
+      if (Array.isArray(j.labels) && j.labels.length) {
+        html += "<div style='grid-column:1/3;font-size:12.5px;font-weight:700;color:#1e40af;'>구글의 추측: " + j.labels.map(escapeHtml).join(", ") + "</div>";
+      }
+      const pages = Array.isArray(j.pages) ? j.pages.filter(function (p) { return p.url; }) : [];
+      if (pages.length) {
+        html += "<div style='grid-column:1/3;font-size:12px;font-weight:800;color:#64748b;margin-top:4px;'>📄 이 이미지가 실린 페이지 (원본일 가능성)</div>";
+        html += pages.slice(0, 6).map(function (p) {
+          return "<a href='" + escapeHtml(p.url) + "' target='_blank' rel='noopener' style='display:flex;gap:8px;align-items:center;background:#fff;border:1px solid #bfdbfe;border-radius:9px;padding:7px 9px;text-decoration:none;grid-column:1/3;'>" +
+            (p.img ? "<img src='" + escapeHtml(p.img) + "' alt='' loading='lazy' style='width:64px;height:40px;object-fit:cover;border-radius:6px;background:#000;flex-shrink:0;' onerror=\"this.style.display='none'\">" : "") +
+            "<span style='font-size:12.5px;font-weight:700;color:#1e293b;line-height:1.4;overflow:hidden;'>" + escapeHtml(p.title || p.url) + "<br><span style='color:#64748b;font-weight:600;font-size:11px;'>" + escapeHtml((function () { try { return new URL(p.url).hostname; } catch { return ""; } })()) + "</span></span></a>";
+        }).join("");
+      }
+      const items = Array.isArray(j.items) ? j.items.filter(function (it) { return it.img; }) : [];
+      if (items.length) {
+        html += "<div style='grid-column:1/3;font-size:12px;font-weight:800;color:#64748b;margin-top:4px;'>🖼️ 똑같거나 비슷한 이미지</div>";
+        html += items.slice(0, 8).map(function (it) {
+          return "<a href='" + escapeHtml(it.img) + "' target='_blank' rel='noopener'><img src='" + escapeHtml(it.img) + "' alt='' loading='lazy' onerror=\"this.parentNode.style.display='none'\"><span class='pv-d'>" + escapeHtml(it.kind || "") + "</span></a>";
+        }).join("");
+      }
+      if (!pages.length && !items.length) {
+        html += "<div class='prev-msg' style='grid-column:1/3;'>일치하는 결과를 찾지 못했습니다. '렌즈 검색 열기' 버튼으로 직접 확인해 보세요.</div>";
+      }
+      box.innerHTML = html + "<div class='prev-note' style='grid-column:1/3;'>출처: Google Vision 웹 감지 · 결과를 누르면 해당 페이지가 열립니다</div>";
+    } catch (e) {
+      box.innerHTML = "<div class='prev-msg' style='grid-column:1/3;'>요청이 실패했습니다: " + escapeHtml(e.message) + "</div>";
     }
   }
 
