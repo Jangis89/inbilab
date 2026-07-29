@@ -471,14 +471,37 @@
       var thumb = "https://i.ytimg.com/vi/" + j.video_id + "/hqdefault.jpg";
       var b = document.createElement("button");
       b.className = "lens-btn"; b.type = "button";
-      b.style.cssText = "border:none;cursor:pointer;font-family:inherit;margin-top:6px";
-      b.textContent = "🅑 바이두 이미지 역검색 (주소 복사)";
-      b.addEventListener("click", function () {
+      b.style.cssText = "border:none;cursor:pointer;font-family:inherit;margin-top:6px;background:#2932e1;color:#fff";
+      b.textContent = "🅑 바이두 식별(识图)로 원본 찾기 — 썸네일 자동 복사";
+      var prep = new Promise(function (res) {
+        try {
+          var img = new Image(); img.crossOrigin = "anonymous";
+          img.onload = function () { try { var cv = document.createElement("canvas"); cv.width = img.naturalWidth; cv.height = img.naturalHeight; cv.getContext("2d").drawImage(img, 0, 0); cv.toBlob(function (bb) { res(bb || null); }, "image/png"); } catch (e) { res(null); } };
+          img.onerror = function () { res(null); };
+          img.src = thumb;
+          setTimeout(function () { res(null); }, 8000);
+        } catch (e) { res(null); }
+      });
+      b.addEventListener("click", async function () {
+        var blob = null;
+        try { blob = await prep; } catch (_) {}
+        if (blob && typeof ClipboardItem !== "undefined") {
+          try {
+            await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+            ibToast("✅ 썸네일 이미지가 복사됐어요! 바이두 페이지가 열리면 Ctrl+V만 누르세요 — 원본 검색이 바로 시작됩니다");
+            window.open("https://graph.baidu.com/pcpage/index?tpl_from=pc", "_blank");
+            return;
+          } catch (_) {}
+        }
         try { navigator.clipboard.writeText(thumb); } catch (_) {}
-        ibToast("이미지 주소를 복사했어요. 바이두 이미지검색에서 카메라 아이콘 → 붙여넣기 하세요");
-        window.open("https://image.baidu.com/", "_blank");
+        ibToast("이미지 주소를 복사했어요. 바이두 페이지의 카메라 아이콘 → 주소 붙여넣기 → 识图一下를 누르세요");
+        window.open("https://graph.baidu.com/pcpage/index?tpl_from=pc", "_blank");
       });
       lens.appendChild(b);
+      var tip2 = document.createElement("div");
+      tip2.style.cssText = "font-size:11.5px;color:#666;margin-top:5px;line-height:1.5";
+      tip2.textContent = "💡 중국에서 온 영상은 바이두 식별이 원본을 특히 잘 찾습니다. 버튼을 누르고 열린 페이지에서 Ctrl+V 한 번이면 끝!";
+      lens.appendChild(tip2);
     }
   }
   function ibPlayerModal(vid, isShort) {
