@@ -483,11 +483,14 @@ module.exports = async (req, res) => {
 
       // 2) 대상 영상 게시일 (유튜브 API 키가 서버에 있을 때)
       const ytAvailable = !!String(process.env.YOUTUBE_API_KEY || "").trim();
+      const friendlyYt = (msg) => /quota/i.test(String(msg || ""))
+        ? "오늘의 유튜브 검색 한도를 모두 사용했습니다 (매일 오후 4~5시쯤 초기화). 아래 검색 링크 버튼은 지금도 사용 가능합니다."
+        : String(msg || "");
       let ytError = "";
       let target = { video_id: vid };
       if (ytAvailable) {
         const tj = await ytApi("videos", { part: "snippet", id: vid });
-        if (tj && tj.__error) ytError = tj.__error;
+        if (tj && tj.__error) ytError = friendlyYt(tj.__error);
         else if (tj && tj.items && tj.items[0]) {
           target.title = tj.items[0].snippet.title;
           target.published_at = tj.items[0].snippet.publishedAt;
@@ -502,7 +505,7 @@ module.exports = async (req, res) => {
           const sj = await ytApi("search", {
             part: "snippet", q: queries[i].q, type: "video", maxResults: "4",
           });
-          if (sj && sj.__error) { if (!ytError) ytError = sj.__error; continue; }
+          if (sj && sj.__error) { if (!ytError) ytError = friendlyYt(sj.__error); continue; }
           if (!sj || !sj.items) continue;
           for (let k = 0; k < sj.items.length; k++) {
             const it = sj.items[k];
@@ -834,7 +837,10 @@ module.exports = async (req, res) => {
         part: "snippet", q: q, type: "video", videoLicense: "creativeCommon", maxResults: "6",
       });
       if (sj && sj.__error) {
-        res.status(502).json({ error: "CC 영상 검색 실패", detail: sj.__error });
+        const friendly = /quota/i.test(sj.__error)
+          ? "오늘의 유튜브 검색 한도를 모두 사용했습니다. 한도는 매일 오후 4~5시쯤 초기화되니 그 이후에 다시 시도해 주세요. (유튜브 링크 버튼은 지금도 사용 가능합니다)"
+          : sj.__error;
+        res.status(502).json({ error: "CC 영상 검색 실패", detail: friendly });
         return;
       }
       const items = ((sj && sj.items) || []).map((it) => ({
