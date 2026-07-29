@@ -473,15 +473,37 @@
       b.className = "lens-btn"; b.type = "button";
       b.style.cssText = "border:none;cursor:pointer;font-family:inherit;margin-top:6px;background:#2932e1;color:#fff";
       b.textContent = "🅑 바이두 식별(识图)로 원본 찾기 — 썸네일 자동 복사";
-      var prep = new Promise(function (res) {
+      function ibLoadImg(u) {
+        return new Promise(function (res) {
+          try { var im = new Image(); im.crossOrigin = "anonymous"; im.onload = function () { res(im); }; im.onerror = function () { res(null); }; im.src = u; setTimeout(function () { res(null); }, 6000); } catch (e) { res(null); }
+        });
+      }
+      function ibToPng(cv) { return new Promise(function (res) { try { cv.toBlob(function (bb) { res(bb || null); }, "image/png"); } catch (e) { res(null); } }); }
+      var prep = (async function () {
         try {
-          var img = new Image(); img.crossOrigin = "anonymous";
-          img.onload = function () { try { var cv = document.createElement("canvas"); cv.width = img.naturalWidth; cv.height = img.naturalHeight; cv.getContext("2d").drawImage(img, 0, 0); cv.toBlob(function (bb) { res(bb || null); }, "image/png"); } catch (e) { res(null); } };
-          img.onerror = function () { res(null); };
-          img.src = thumb;
-          setTimeout(function () { res(null); }, 8000);
-        } catch (e) { res(null); }
-      });
+          var vid2 = (thumb.match(/\/vi\/([^/]+)\//) || [])[1] || "";
+          // 1순위: 쇼츠 전용 세로 원본 썸네일 (흐린 좌우 띠 없음, 1080x1920)
+          if (vid2) {
+            var oar = await ibLoadImg("https://i.ytimg.com/vi/" + vid2 + "/oar2.jpg");
+            if (oar && oar.naturalHeight > oar.naturalWidth) {
+              var cvA = document.createElement("canvas"); cvA.width = oar.naturalWidth; cvA.height = oar.naturalHeight;
+              cvA.getContext("2d").drawImage(oar, 0, 0);
+              var bA = await ibToPng(cvA); if (bA) return bA;
+            }
+          }
+          // 2순위: 가로 썸네일에서 가운데 9:16 세로 영역만 잘라내기
+          var base = null;
+          if (vid2) { base = await ibLoadImg("https://i.ytimg.com/vi/" + vid2 + "/maxresdefault.jpg"); if (base && base.naturalWidth < 200) base = null; }
+          if (!base) base = await ibLoadImg(thumb);
+          if (!base) return null;
+          var w = base.naturalWidth, h = base.naturalHeight;
+          var tw = Math.round(h * 9 / 16);
+          var cvB = document.createElement("canvas");
+          if (tw < w) { cvB.width = tw; cvB.height = h; cvB.getContext("2d").drawImage(base, Math.round((w - tw) / 2), 0, tw, h, 0, 0, tw, h); }
+          else { cvB.width = w; cvB.height = h; cvB.getContext("2d").drawImage(base, 0, 0); }
+          return await ibToPng(cvB);
+        } catch (e) { return null; }
+      })();
       b.addEventListener("click", async function () {
         var blob = null;
         try { blob = await prep; } catch (_) {}
