@@ -40,7 +40,12 @@
     .hk-lowwarn{margin-top:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:8px 12px;font-size:12.5px;color:#92400e;line-height:1.55;}
     .hk-txt{font-size:14px;line-height:1.7;color:#334155;}
     .hk-var{background:var(--bg-soft);border:1px solid var(--line);border-radius:11px;padding:11px 14px;margin-bottom:8px;}
-    .hk-var .hv-k{font-size:11.5px;font-weight:800;color:#e11d48;margin-bottom:3px;}
+    .hk-var .hv-k{font-size:11.5px;font-weight:800;color:#e11d48;margin-bottom:6px;}
+    .hk-var .hv-cap{background:#111;border-radius:9px;padding:11px 10px;text-align:center;line-height:1.35;}
+    .hk-var .hv-cap span{display:block;font-size:16.5px;font-weight:900;color:#fff;letter-spacing:-0.3px;text-shadow:1.5px 1.5px 0 #000;}
+    .hk-var .hv-cap span.y{color:#ffd400;}
+    .hk-var .hv-cnt{font-size:11px;color:#94a3b8;font-weight:600;margin:4px 0 6px;text-align:center;}
+    .hk-var .hv-nar{font-size:13.5px;font-weight:600;line-height:1.55;color:#334155;margin-top:2px;}
     .hk-var .hv-l{font-size:14px;font-weight:700;line-height:1.5;}
     .hk-var .hv-s{font-size:12.5px;color:var(--sub);margin-top:3px;}
     .hk-var .hv-s:before{content:"🎬 ";}
@@ -218,9 +223,20 @@
         ? h.retention.map(function (x) { return "✔ " + escapeHtml(x); }).join("<br>") : "-";
 
       document.getElementById("hk-vars").innerHTML = (Array.isArray(h.variations) ? h.variations : []).map(function (v) {
-        return "<div class='hk-var'><div class='hv-k'>" + escapeHtml(v.kind || "") + (v.strategy ? " — " + escapeHtml(v.strategy) : "") + "</div>" +
-          "<div class='hv-l'>“" + escapeHtml(v.first_line || "") + "”</div>" +
-          (v.first_scene ? "<div class='hv-s'>" + escapeHtml(v.first_scene) + "</div>" : "") + "</div>";
+        let inner = "<div class='hv-k'>" + escapeHtml(v.kind || "") + (v.strategy ? " — " + escapeHtml(v.strategy) : "") + "</div>";
+        const cap = Array.isArray(v.caption) ? v.caption.filter(Boolean) : [];
+        if (cap.length) {
+          inner += "<div class='hv-cap'>" + cap.map(function (line, i) {
+            return "<span class='" + (i === 1 ? "y" : "") + "'>" + escapeHtml(line) + "</span>";
+          }).join("") + "</div>";
+          inner += "<div class='hv-cnt'>자막 글자수 (띄어쓰기 포함): " + cap.map(function (line, i) {
+            return (i === 0 ? "윗줄 " : "아랫줄 ") + line.length + "자";
+          }).join(" · ") + "</div>";
+        }
+        const nar = v.narration || v.first_line || "";
+        if (nar) inner += "<div class='hv-nar'>🎙️ 나레이션: “" + escapeHtml(nar) + "”</div>";
+        if (v.first_scene) inner += "<div class='hv-s'>시작 장면: " + escapeHtml(v.first_scene) + "</div>";
+        return "<div class='hk-var'>" + inner + "</div>";
       }).join("") || "-";
 
       document.getElementById("hk-model").textContent = model
@@ -249,11 +265,17 @@
       L.push("[5. 이탈 방지 장치]");
       (h.retention || []).forEach(function (x) { L.push("  - " + x); });
       L.push("");
-      L.push("[6. 응용 3버전]");
+      L.push("[6. 이 영상을 다르게 열어보기 - 3버전]");
       (h.variations || []).forEach(function (v, i) {
         L.push("  " + (i + 1) + ") " + (v.kind || "") + (v.strategy ? " — " + v.strategy : ""));
-        L.push("     첫 문장: " + (v.first_line || ""));
-        if (v.first_scene) L.push("     첫 화면: " + v.first_scene);
+        const cap = Array.isArray(v.caption) ? v.caption.filter(Boolean) : [];
+        if (cap.length) {
+          L.push("     자막(상단 두 줄):");
+          cap.forEach(function (line) { L.push("       " + line + "  (" + line.length + "자)"); });
+        }
+        const nar = v.narration || v.first_line || "";
+        if (nar) L.push("     나레이션: " + nar);
+        if (v.first_scene) L.push("     시작 장면: " + v.first_scene);
       });
       L.push("");
       L.push("※ 전략 판정과 의도는 AI의 해석이며 참고용입니다.");
