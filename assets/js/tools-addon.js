@@ -437,12 +437,32 @@
       lens.appendChild(b);
     }
   }
+  function ibPlayerModal(vid, isShort) {
+    var old = document.getElementById("ib-player-modal"); if (old) old.remove();
+    var m = document.createElement("div"); m.id = "ib-player-modal";
+    m.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:99998;display:flex;align-items:center;justify-content:center;padding:16px";
+    var w = isShort ? "min(380px, 90vw)" : "min(860px, 94vw)";
+    var pt = isShort ? "177.78%" : "56.25%";
+    m.innerHTML = '<div style="background:#000;border-radius:12px;overflow:hidden;width:' + w + '">' +
+      '<div style="position:relative;padding-top:' + pt + '">' +
+      '<iframe src="https://www.youtube.com/embed/' + vid + '?autoplay=1" style="position:absolute;inset:0;width:100%;height:100%;border:0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>' +
+      '<div style="display:flex;gap:8px;justify-content:space-between;align-items:center;padding:8px 12px;background:#111">' +
+      '<a href="https://www.youtube.com/watch?v=' + vid + '" target="_blank" style="color:#fff;font-size:13px;text-decoration:none">▶ YouTube에서 열기 →</a>' +
+      '<button type="button" id="ib-pm-close" style="background:#333;color:#fff;border:none;border-radius:6px;padding:5px 14px;cursor:pointer;font-size:13px;font-family:inherit">닫기 ✕</button></div></div>';
+    m.addEventListener("click", function (e) { if (e.target === m) m.remove(); });
+    document.body.appendChild(m);
+    m.querySelector("#ib-pm-close").addEventListener("click", function () { m.remove(); });
+  }
   function ibEnrichPreview(j){
     var cards = (j && j.candidates) || [];
     var host = document.getElementById("src-cards");
     if (!host) return;
     var oldSum = document.getElementById("ib-prev-sum");
     if (oldSum) oldSum.remove();
+    var oldWrap = document.getElementById("ib-long-wrap");
+    if (oldWrap) oldWrap.remove();
+    var oldPm = document.getElementById("ib-player-modal");
+    if (oldPm) oldPm.remove();
     if (!document.getElementById("ib-prev-style")) {
       var st = document.createElement("style");
       st.id = "ib-prev-style";
@@ -450,7 +470,7 @@
       document.head.appendChild(st);
     }
     var nodes = host.querySelectorAll(".src-card");
-    var nShort = 0, nLong = 0, nUnknown = 0;
+    var nShort = 0, nLong = 0, nUnknown = 0, longNodes = [];
     for (var i = 0; i < nodes.length && i < cards.length; i++) {
       var c = cards[i], node = nodes[i];
       if (!node || node.querySelector(".ib-badges")) continue;
@@ -459,10 +479,11 @@
       if (hasDur) badges.push('<span class="ib-b">⏱ ' + (c.duration_label || "") + '</span>');
       if (typeof c.view_count === "number" && c.view_count > 0) badges.push('<span class="ib-b">👁 ' + fmtV(c.view_count) + '</span>');
       if (c.is_short_candidate) { badges.push('<span class="ib-b ib-short">쇼츠 후보' + (c.short_confidence ? (' · 확신 ' + c.short_confidence) : '') + '</span>'); nShort++; }
-      else if (hasDur) { badges.push('<span class="ib-b ib-long">긴 원본 후보</span>'); nLong++; }
+      else if (hasDur) { badges.push('<span class="ib-b ib-long">긴 원본 후보</span>'); nLong++; longNodes.push(node); }
       else { nUnknown++; }
       if (c.found_by) { var fbq = String(c.found_by).replace(/[<>&"\']/g, "").slice(0, 24); badges.push('<span class="ib-b">🔎 「' + fbq + '」로 발견</span>'); }
       if (c.embeddable) badges.push('<span class="ib-b ib-embed">인비랩 재생 가능</span>');
+      if (c.embeddable && c.video_id) { (function (nd, cid, isS) { nd.querySelectorAll("a").forEach(function (a) { if ((a.getAttribute("href") || "").indexOf(cid) !== -1) { a.addEventListener("click", function (ev) { ev.preventDefault(); ibPlayerModal(cid, isS); }); } }); })(node, c.video_id, !!c.is_short_candidate); }
       if (badges.length) {
         var d = document.createElement("div");
         d.className = "ib-badges";
@@ -470,6 +491,17 @@
         var info = node.querySelector(".sc-info") || node;
         info.appendChild(d);
       }
+    }
+    if (longNodes.length) {
+      var lwrap = document.createElement("div"); lwrap.id = "ib-long-wrap";
+      var ltg = document.createElement("button"); ltg.type = "button";
+      ltg.style.cssText = "margin:8px 0 2px;background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;border-radius:8px;padding:7px 14px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit";
+      ltg.textContent = "📼 긴 원본 후보 " + longNodes.length + "개 보기 ▾";
+      var lcards = document.createElement("div"); lcards.style.display = "none";
+      lwrap.appendChild(ltg); lwrap.appendChild(lcards);
+      if (host.parentNode) host.parentNode.insertBefore(lwrap, host.nextSibling);
+      for (var k2 = 0; k2 < longNodes.length; k2++) lcards.appendChild(longNodes[k2]);
+      ltg.addEventListener("click", function () { var open = lcards.style.display !== "none"; lcards.style.display = open ? "none" : "block"; ltg.textContent = "📼 긴 원본 후보 " + longNodes.length + "개 " + (open ? "보기 ▾" : "접기 ▴"); });
     }
     if ((nShort + nLong) > 0 && !document.getElementById("ib-prev-sum")) {
       var sum = document.createElement("div");
