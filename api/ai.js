@@ -819,6 +819,34 @@ module.exports = async (req, res) => {
       return;
     }
 
+    // ---------- 액션: 재사용 가능(CC) 영상 검색 — 클릭할 때만 호출 ----------
+    if (action === "cc_search") {
+      const q = String(body.query || "").trim().slice(0, 100);
+      if (!q) {
+        res.status(400).json({ error: "검색어가 필요합니다" });
+        return;
+      }
+      if (!String(process.env.YOUTUBE_API_KEY || "").trim()) {
+        res.status(200).json({ ok: true, available: false, items: [] });
+        return;
+      }
+      const sj = await ytApi("search", {
+        part: "snippet", q: q, type: "video", videoLicense: "creativeCommon", maxResults: "6",
+      });
+      if (sj && sj.__error) {
+        res.status(502).json({ error: "CC 영상 검색 실패", detail: sj.__error });
+        return;
+      }
+      const items = ((sj && sj.items) || []).map((it) => ({
+        video_id: it.id && it.id.videoId,
+        title: it.snippet.title,
+        channel: it.snippet.channelTitle,
+        published_at: it.snippet.publishedAt,
+      })).filter((x) => x.video_id);
+      res.status(200).json({ ok: true, available: true, items: items });
+      return;
+    }
+
     // ---------- 액션: 후킹 추가 버전 (영상 재분석 없는 텍스트 호출 — 저비용) ----------
     if (action === "hook_more") {
       if (!key) {
