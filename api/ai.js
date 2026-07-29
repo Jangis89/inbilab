@@ -1095,30 +1095,32 @@ module.exports = async (req, res) => {
           body: JSON.stringify({ image: bb64, count: Math.min(Number(body.count) || 20, 50) }),
         });
         const bj = await br.json().catch(() => null);
-        if (!br.ok || !bj || bj.error_code || (bj.code && bj.code !== 0)) {
+        const bcode = bj ? String(bj.code != null ? bj.code : (bj.error_code != null ? bj.error_code : "")) : "";
+        const bres = bj && bj.result ? bj.result : null;
+        const bResErr = bres && typeof bres.err_code !== "undefined" ? Number(bres.err_code) : 0;
+        if (!br.ok || !bj || (bcode !== "0" && bcode !== "") || bResErr !== 0) {
           res.status(200).json({
             ok: false, http: br.status,
-            err_code: (bj && (bj.error_code || bj.code)) || null,
-            err_msg: String((bj && (bj.error_msg || bj.message)) || "").slice(0, 200),
+            err_code: bcode || null,
+            err_msg: String((bj && (bj.message || bj.error_msg)) || "").slice(0, 200),
             raw_keys: bj ? Object.keys(bj).slice(0, 10) : [],
           });
           return;
         }
-        let barr = bj.result || bj.data || bj.results || [];
-        if (barr && !Array.isArray(barr) && Array.isArray(barr.result)) barr = barr.result;
-        if (!Array.isArray(barr)) barr = [];
+        let barr = (bres && bres.res_data && Array.isArray(bres.res_data.res_items)) ? bres.res_data.res_items : [];
         const bitems = barr.map(function (it) {
           return {
             cate: it.item_cate || "", sim: it.sim_level || 0,
-            url: it.fromurl || "", img: it.objurl || it.thumburl || "",
-            title: it.title || "", site: it.fromurlhost || it.site || "",
+            url: it.fromurl || it.detail_page || "", img: it.objurl || "",
+            title: it.title || "", site: it.site_name || "",
+            w: it.width || 0, h: it.height || 0,
           };
         });
+        const sameN = bitems.filter(function (x) { return x.cate === "CATE_SAME"; }).length;
         res.status(200).json({
           ok: true, available: true,
           img_kind: (bimg.indexOf("oar2") !== -1 ? "세로원본" : "가로썸네일"),
-          count: bitems.length, items: bitems,
-          raw_keys: Object.keys(bj).slice(0, 10),
+          count: bitems.length, same_count: sameN, items: bitems,
         });
       } catch (e) {
         res.status(502).json({ error: "바이두 API 호출 실패", detail: String((e && e.message) || e) });
