@@ -688,6 +688,54 @@ module.exports = async (req, res) => {
       return;
     }
 
+    // ---------- 액션: 구글렌즈 2단계 (Vision API 웹 감지 — 키 없으면 조용히 비활성) ----------
+    if (action === "lens") {
+      const vid = extractVideoId(body.video_url);
+      if (!vid) {
+        res.status(400).json({ error: "유튜브 영상 주소가 아닙니다" });
+        return;
+      }
+      const vk = String(process.env.GOOGLE_VISION_API_KEY || "").trim();
+      if (!vk) {
+        res.status(200).json({ ok: true, available: false, items: [], pages: [] });
+        return;
+      }
+      try {
+        const thumb = "https://i.ytimg.com/vi/" + vid + "/hqdefault.jpg";
+        const vr = await fetch("https://vision.googleapis.com/v1/images:annotate?key=" + vk, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requests: [{
+              image: { source: { imageUri: thumb } },
+              features: [{ type: "WEB_DETECTION", maxResults: 15 }],
+            }],
+          }),
+        });
+        const vj = await vr.json().catch(() => null);
+        if (!vr.ok) {
+          res.status(502).json({ error: "렌즈 검색 실패", detail: (vj && vj.error && vj.error.message) || ("HTTP " + vr.status) });
+          return;
+        }
+        const w = (vj && vj.responses && vj.responses[0] && vj.responses[0].webDetection) || {};
+        const items = [];
+        (w.fullMatchingImages || []).forEach((x) => { if (x.url) items.push({ img: x.url, kind: "완전 일치" }); });
+        (w.partialMatchingImages || []).forEach((x) => { if (x.url) items.push({ img: x.url, kind: "부분 일치" }); });
+        (w.visuallySimilarImages || []).forEach((x) => { if (x.url) items.push({ img: x.url, kind: "비슷함" }); });
+        const pages = (w.pagesWithMatchingImages || []).slice(0, 10).map((p) => ({
+          url: p.url,
+          title: String(p.pageTitle || "").replace(/<[^>]+>/g, ""),
+          img: (((p.fullMatchingImages || [])[0] || {}).url) || (((p.partialMatchingImages || [])[0] || {}).url) || "",
+        }));
+        const labels = (w.bestGuessLabels || []).map((l) => l.label).filter(Boolean);
+        if (!isAdmin) await recordUsage(user.id, feature, token);
+        res.status(200).json({ ok: true, available: true, items: items.slice(0, 10), pages: pages, labels: labels });
+      } catch (e) {
+        res.status(502).json({ error: "렌즈 요청 오류", detail: String((e && e.message) || e) });
+      }
+      return;
+    }
+
     // ---------- 액션: 후킹 분석 (첫 3~5초 집중) ----------
     if (action === "hook") {
       if (!key) {
