@@ -863,3 +863,162 @@
     initHook(); initSources(); initLab();
   }
 })();
+
+
+
+/* ===== 바이두 相似图搜索 API 결과 카드 (관리자 전용) — 인비랩 add-on ===== */
+;(function(){
+  if (window.__ibBaiduCardsInit) return; window.__ibBaiduCardsInit = true;
+
+  var ADMIN_EMAIL = "jangis89@naver.com";
+
+  function sessionEmail(){
+    try{
+      var ks = Object.keys(localStorage).filter(function(k){ return /auth-token|sb-.*-auth/.test(k); });
+      for (var i=0;i<ks.length;i++){
+        try{ var o = JSON.parse(localStorage.getItem(ks[i])); if (o && o.user && o.user.email) return o.user.email; }catch(e){}
+      }
+    }catch(e){}
+    return null;
+  }
+  function sessionToken(){
+    try{
+      var ks = Object.keys(localStorage).filter(function(k){ return /auth-token|sb-.*-auth/.test(k); });
+      for (var i=0;i<ks.length;i++){
+        try{ var o = JSON.parse(localStorage.getItem(ks[i])); if (o && o.access_token) return o.access_token; }catch(e){}
+      }
+    }catch(e){}
+    return null;
+  }
+  function isAdminNow(){
+    try{ if (typeof window.isAdmin === "function" && window.isAdmin() === true) return true; }catch(e){}
+    try{ if (window.isAdmin === true) return true; }catch(e){}
+    return sessionEmail() === ADMIN_EMAIL;
+  }
+
+  function currentVideoUrl(){
+    // 1) an input holding a youtube url (the video being analyzed)
+    var inps = [].slice.call(document.querySelectorAll("input"));
+    for (var i=0;i<inps.length;i++){
+      var v = (inps[i].value || "").trim();
+      if (/youtu\.?be|youtube\.com/.test(v)) return v;
+    }
+    // 2) fall back to a youtube thumbnail already on the page
+    var imgs = [].slice.call(document.querySelectorAll("img"));
+    for (var j=0;j<imgs.length;j++){
+      var m = (imgs[j].src || "").match(/\/vi\/([A-Za-z0-9_\-]{11})\//);
+      if (m) return "https://www.youtube.com/watch?v=" + m[1];
+    }
+    return "";
+  }
+
+  function esc(x){ return String(x==null?"":x).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+  function cardHtml(it){
+    var same = it.cate === "CATE_SAME";
+    var badge = same
+      ? '<span style="background:#e74c3c;color:#fff;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600">동일 원본</span>'
+      : '<span style="background:#f39c12;color:#fff;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600">유사</span>';
+    var link = it.url || "#";
+    var img  = it.img || "";
+    var title= esc(it.title || "제목 없음");
+    var site = esc(it.site || "");
+    return '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer" '
+      + 'style="display:flex;gap:10px;text-decoration:none;color:inherit;border:1px solid #ececec;border-radius:10px;padding:8px;margin-bottom:8px;align-items:center;background:#fff">'
+      + (img ? '<img src="' + esc(img) + '" referrerpolicy="no-referrer" loading="lazy" '
+              + 'style="width:52px;height:92px;object-fit:cover;border-radius:7px;flex:none;background:#f2f2f2">' : '')
+      + '<div style="min-width:0;flex:1">'
+      + '<div style="font-size:13px;font-weight:600;margin-bottom:3px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">' + title + '</div>'
+      + '<div style="font-size:12px;color:#999;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + site + '</div>'
+      + badge
+      + '</div></a>';
+  }
+
+  window.ibBaiduCards = async function(hostEl, btnEl){
+    var url = currentVideoUrl();
+    var wrap = hostEl.querySelector(".ib-baidu-wrap");
+    if (!wrap){ wrap = document.createElement("div"); wrap.className = "ib-baidu-wrap"; wrap.style.marginTop = "10px"; hostEl.appendChild(wrap); }
+    if (!url){ wrap.innerHTML = '<div style="padding:9px;color:#c0392b;font-size:13px">먼저 분석할 유튜브 영상 주소를 입력해 주세요.</div>'; return; }
+    var tok = sessionToken();
+    if (btnEl){ btnEl.disabled = true; btnEl.dataset.oldText = btnEl.textContent; btnEl.textContent = "바이두에서 원본 검색 중…"; }
+    wrap.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 바이두에서 원본을 찾고 있습니다… (몇 초 걸립니다)</div>';
+    try{
+      var r = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + tok },
+        body: JSON.stringify({ action: "baidu_sim", video_url: url })
+      });
+      var j = null; try{ j = await r.json(); }catch(e){}
+      if (!j || j.ok !== true){
+        var em = (j && j.error) ? j.error : ("HTTP " + r.status);
+        wrap.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">바이두 검색 실패: ' + esc(em) + '</div>';
+        return;
+      }
+      var items = j.items || [];
+      var same = items.filter(function(it){ return it.cate === "CATE_SAME"; });
+      var simi = items.filter(function(it){ return it.cate !== "CATE_SAME"; });
+      if (!items.length){
+        wrap.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">바이두에서 일치하는 이미지를 찾지 못했습니다.</div>';
+        return;
+      }
+      var head = '<div style="font-weight:700;font-size:14px;margin:4px 0 9px">🅑 바이두 원본 검색 결과 — '
+        + '<span style="color:#e74c3c">동일 원본 ' + same.length + '건</span> · '
+        + '<span style="color:#f39c12">유사 ' + simi.length + '건</span></div>';
+      var ordered = same.concat(simi);
+      wrap.innerHTML = head
+        + '<div style="max-height:520px;overflow:auto">' + ordered.map(cardHtml).join("") + '</div>'
+        + '<div style="font-size:11px;color:#b5b5b5;margin-top:6px">百度识图 提供技术支持 · 결과는 참고용이며 실제 원본 여부는 직접 확인하세요.</div>';
+    }catch(e){
+      wrap.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">오류가 발생했습니다: ' + esc(String(e).slice(0,120)) + '</div>';
+    }finally{
+      if (btnEl){ btnEl.disabled = false; if (btnEl.dataset.oldText) btnEl.textContent = btnEl.dataset.oldText; }
+    }
+  };
+
+  function makeButton(){
+    var b = document.createElement("button");
+    b.className = "ib-baidu-api-btn";
+    b.type = "button";
+    b.textContent = "🅑 바이두 API로 원본 카드 보기 (관리자)";
+    b.style.cssText = "display:block;width:100%;margin-top:8px;padding:10px;border:1px solid #2c6fbb;"
+      + "background:#eaf2fb;color:#1c4e8a;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer";
+    b.addEventListener("click", function(){
+      var host = b.parentElement || document.body;
+      window.ibBaiduCards(host, b);
+    });
+    return b;
+  }
+
+  function injectNear(shituBtn){
+    // avoid duplicates within the same container
+    var host = shituBtn.parentElement || shituBtn;
+    if (host.querySelector(".ib-baidu-api-btn")) return;
+    if (!isAdminNow()) return;
+    var btn = makeButton();
+    shituBtn.insertAdjacentElement("afterend", btn);
+  }
+
+  function scan(){
+    if (!isAdminNow()) return;
+    // find the innermost clickable elements whose label contains 识图 (the existing reverse-image button)
+    var clickables = [].slice.call(document.querySelectorAll("button, a"));
+    clickables.forEach(function(el){
+      if (el.__ibShituSeen) return;
+      if (!/识图/.test(el.textContent || "")) return;
+      // ensure it's the innermost (no descendant button/a also matching)
+      var inner = el.querySelector("button, a");
+      if (inner && /识图/.test(inner.textContent || "")) return;
+      el.__ibShituSeen = true;
+      injectNear(el);
+    });
+  }
+
+  var pending = false;
+  var mo = new MutationObserver(function(){
+    if (pending) return; pending = true;
+    setTimeout(function(){ pending = false; try{ scan(); }catch(e){} }, 150);
+  });
+  try{ mo.observe(document.documentElement, { childList: true, subtree: true }); }catch(e){}
+  try{ scan(); }catch(e){}
+})();
+
