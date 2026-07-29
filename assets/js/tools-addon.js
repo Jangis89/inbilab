@@ -473,7 +473,9 @@
     document.head.insertAdjacentHTML("beforeend", "<style>" + css2 + "</style>");
 
     const PLATFORMS = [
-      ["도우인", function (q) { return "https://www.douyin.com/search/" + encodeURIComponent(q); }],
+    ["바이두검색", function (q) { return "https://www.baidu.com/s?wd=" + encodeURIComponent(q); }],
+    ["바이두이미지", function (q) { return "https://image.baidu.com/search/index?tn=baiduimage&word=" + encodeURIComponent(q); }],
+      ["도우인", function (q) { return "https://so.douyin.com/s?keyword=" + encodeURIComponent(q); }],
       ["샤오홍슈", function (q) { return "https://www.xiaohongshu.com/search_result?keyword=" + encodeURIComponent(q); }],
       ["틱톡", function (q) { return "https://www.tiktok.com/search?q=" + encodeURIComponent(q); }],
       ["빌리빌리", function (q) { return "https://search.bilibili.com/all?keyword=" + encodeURIComponent(q); }],
@@ -568,9 +570,9 @@
         const thumb = "https://i.ytimg.com/vi/" + vid + "/hqdefault.jpg";
         const div2 = document.createElement("div");
         div2.className = "lens-box"; div2.id = "src-lens";
-        div2.innerHTML = "<div class='ib-t'>🔍 구글렌즈로 원본 찾기</div>" +
-          "<a class='lens-btn' href='https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(thumb) + "' target='_blank' rel='noopener'>이 영상 썸네일로 렌즈 검색 열기 →</a> " +
-          "<button class='lens-btn' id='lens-run' style='border:none;cursor:pointer;font-family:inherit;background:#1e40af;'>🖼️ 화면 안에서 결과 보기</button>" +
+        div2.innerHTML = "<div class='ib-t'>🔍 웹 이미지로 원본 찾기 (역검색)</div>" +
+          "<a class='lens-btn' href='https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(thumb) + "' target='_blank' rel='noopener'>Google Lens에서 직접 확인 →</a> " +
+          "<button class='lens-btn' id='lens-run' style='border:none;cursor:pointer;font-family:inherit;background:#1e40af;'>🖼️ 웹 이미지 일치 후보 — Google Vision</button>" +
           "<div class='prev-grid' id='lens-grid' style='grid-template-columns:repeat(2,1fr);'></div>" +
           "<div class='lens-tip'>썸네일과 똑같거나 비슷한 이미지가 있는 페이지를 구글이 찾아줍니다.<br>💡 영상 속 <b>특정 장면</b>으로 찾고 싶다면: 그 장면에서 일시정지 → 스크린샷 → <a href='https://lens.google.com/' target='_blank' rel='noopener' style='color:#1d4ed8;'>lens.google.com</a>에 직접 올려보세요.</div>";
         host.appendChild(div2);
