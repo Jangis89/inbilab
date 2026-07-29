@@ -403,6 +403,40 @@
     if (n >= 1000) return (n/1000).toFixed(1).replace(/\.0$/,"") + "천";
     return String(n);
   }
+  function ibToast(msg){
+    var t = document.getElementById("ib-toast");
+    if (!t) { t = document.createElement("div"); t.id = "ib-toast"; t.style.cssText = "position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:#111827;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;z-index:99999;opacity:0;transition:opacity .2s;max-width:90%;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.3)"; document.body.appendChild(t); }
+    t.textContent = msg; t.style.opacity = "1";
+    clearTimeout(t.__ibTimer); t.__ibTimer = setTimeout(function () { t.style.opacity = "0"; }, 2800);
+  }
+  function ibSmartLinks(j){
+    var box = document.getElementById("src-intl");
+    if (box && !box.__ibWired) {
+      box.__ibWired = true;
+      box.addEventListener("click", function (e) {
+        var a = e.target.closest ? e.target.closest("a[target='_blank']") : null;
+        if (!a || !box.contains(a)) return;
+        var row = a.closest(".intl-row"); var q = "";
+        if (row) { var iq = row.querySelector(".iq"); if (iq) q = iq.textContent.replace(/^「|」$/g, "").trim(); }
+        if (q) { try { navigator.clipboard.writeText(q); ibToast("검색어를 복사했어요 — 검색창이 비어 있으면 붙여넣기(Ctrl+V) 하세요"); } catch (_) {} }
+      });
+    }
+    var lens = document.getElementById("src-lens");
+    if (lens && !lens.__ibBaidu && j && j.video_id) {
+      lens.__ibBaidu = true;
+      var thumb = "https://i.ytimg.com/vi/" + j.video_id + "/hqdefault.jpg";
+      var b = document.createElement("button");
+      b.className = "lens-btn"; b.type = "button";
+      b.style.cssText = "border:none;cursor:pointer;font-family:inherit;margin-top:6px";
+      b.textContent = "🅑 바이두 이미지 역검색 (주소 복사)";
+      b.addEventListener("click", function () {
+        try { navigator.clipboard.writeText(thumb); } catch (_) {}
+        ibToast("이미지 주소를 복사했어요. 바이두 이미지검색에서 카메라 아이콘 → 붙여넣기 하세요");
+        window.open("https://image.baidu.com/", "_blank");
+      });
+      lens.appendChild(b);
+    }
+  }
   function ibEnrichPreview(j){
     var cards = (j && j.candidates) || [];
     var host = document.getElementById("src-cards");
@@ -486,7 +520,8 @@
     window.renderSources = function (j) {
       orig(j);
       try { enhance(j);
-        try { ibEnrichPreview(j); } catch (e) {} } catch {}
+        try { ibEnrichPreview(j); } catch (e) {}
+        try { ibSmartLinks(j); } catch (e) {} } catch {}
     };
 
     let srcAdmin = false;
