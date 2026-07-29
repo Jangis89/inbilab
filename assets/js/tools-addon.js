@@ -396,6 +396,52 @@
   }
 
   // ---------------- 원본 후보 탐색 확장: 해외 플랫폼 + 구글렌즈 (analyze.html) ----------------
+  function fmtV(n){
+    n = Number(n) || 0;
+    if (n >= 100000000) return (n/100000000).toFixed(1).replace(/\.0$/,"") + "억";
+    if (n >= 10000) return (n/10000).toFixed(1).replace(/\.0$/,"") + "만";
+    if (n >= 1000) return (n/1000).toFixed(1).replace(/\.0$/,"") + "천";
+    return String(n);
+  }
+  function ibEnrichPreview(j){
+    var cards = (j && j.candidates) || [];
+    var host = document.getElementById("src-cards");
+    if (!host) return;
+    if (!document.getElementById("ib-prev-style")) {
+      var st = document.createElement("style");
+      st.id = "ib-prev-style";
+      st.textContent = ".ib-badges{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px}.ib-b{font-size:11px;padding:2px 7px;border-radius:999px;background:var(--line,#eee);color:var(--sub,#555);white-space:nowrap}.ib-short{background:#ffe8d6;color:#b5480a}.ib-long{background:#e6ecff;color:#274bd1}.ib-embed{background:#e4f7e8;color:#1c8a3b}.ib-sum{font-size:12px;color:var(--sub,#666);margin:2px 0 8px}";
+      document.head.appendChild(st);
+    }
+    var nodes = host.querySelectorAll(".src-card");
+    var nShort = 0, nLong = 0, nUnknown = 0;
+    for (var i = 0; i < nodes.length && i < cards.length; i++) {
+      var c = cards[i], node = nodes[i];
+      if (!node || node.querySelector(".ib-badges")) continue;
+      var badges = [];
+      var hasDur = typeof c.duration_seconds === "number" && c.duration_seconds > 0;
+      if (hasDur) badges.push('<span class="ib-b">⏱ ' + (c.duration_label || "") + '</span>');
+      if (typeof c.view_count === "number" && c.view_count > 0) badges.push('<span class="ib-b">👁 ' + fmtV(c.view_count) + '</span>');
+      if (c.is_short_candidate) { badges.push('<span class="ib-b ib-short">쇼츠 후보' + (c.short_confidence ? (' · 확신 ' + c.short_confidence) : '') + '</span>'); nShort++; }
+      else if (hasDur) { badges.push('<span class="ib-b ib-long">긴 원본 후보</span>'); nLong++; }
+      else { nUnknown++; }
+      if (c.embeddable) badges.push('<span class="ib-b ib-embed">인비랩 재생 가능</span>');
+      if (badges.length) {
+        var d = document.createElement("div");
+        d.className = "ib-badges";
+        d.innerHTML = badges.join(" ");
+        var info = node.querySelector(".sc-info") || node;
+        info.appendChild(d);
+      }
+    }
+    if ((nShort + nLong) > 0 && !document.getElementById("ib-prev-sum")) {
+      var sum = document.createElement("div");
+      sum.id = "ib-prev-sum";
+      sum.className = "ib-sum";
+      sum.textContent = "🎬 쇼츠 후보 " + nShort + "개 · 긴 원본 후보 " + nLong + "개" + (nUnknown ? (" · 길이 미확인 " + nUnknown + "개") : "");
+      if (host.parentNode) host.parentNode.insertBefore(sum, host);
+    }
+  }
   function initSources() {
     if (!document.getElementById("src-res") || typeof window.renderSources !== "function") return;
 
@@ -437,7 +483,8 @@
     const orig = window.renderSources;
     window.renderSources = function (j) {
       orig(j);
-      try { enhance(j); } catch {}
+      try { enhance(j);
+        try { ibEnrichPreview(j); } catch (e) {} } catch {}
     };
 
     let srcAdmin = false;
