@@ -403,6 +403,50 @@
     if (n >= 1000) return (n/1000).toFixed(1).replace(/\.0$/,"") + "천";
     return String(n);
   }
+  function ibReorder(){
+    var host = document.getElementById("src-res");
+    if (!host) return;
+    ["src-origin","ib-prev-sum","src-cards","ib-long-wrap","src-ytlinks","src-intl","src-lens","src-cc","src-stock"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el && el.parentNode === host) host.appendChild(el);
+    });
+  }
+  function ibLangChips(j){
+    var box = document.getElementById("src-intl");
+    if (!box || box.__ibLang) return;
+    box.__ibLang = true;
+    var byLang = {};
+    ((j && j.yt_links) || []).forEach(function (l) { var L = (l.lang || "").slice(0, 2); if (L && !byLang[L]) byLang[L] = l.q; });
+    var bar = document.createElement("div");
+    bar.style.cssText = "margin:4px 0 8px;font-size:12px;color:#92400e;display:flex;align-items:center;gap:6px;flex-wrap:wrap";
+    var lab = document.createElement("span"); lab.style.fontWeight = "700"; lab.textContent = "틱톡·인스타 검색 언어:";
+    bar.appendChild(lab);
+    [["auto","자동 추천"],["ko","한국어"],["en","영어"],["zh","중국어"]].forEach(function (m) {
+      if (m[0] !== "auto" && !byLang[m[0]]) return;
+      var b = document.createElement("button"); b.type = "button"; b.textContent = m[1];
+      b.style.cssText = "border:1px solid #fde68a;background:" + (m[0] === "auto" ? "#f59e0b" : "#fff") + ";color:" + (m[0] === "auto" ? "#fff" : "#92400e") + ";border-radius:999px;padding:2px 10px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit";
+      b.addEventListener("click", function () {
+        bar.querySelectorAll("button").forEach(function (x) { x.style.background = "#fff"; x.style.color = "#92400e"; });
+        b.style.background = "#f59e0b"; b.style.color = "#fff";
+        var q2 = m[0] === "auto" ? null : byLang[m[0]];
+        box.querySelectorAll(".intl-row").forEach(function (row) {
+          var iq = row.querySelector(".iq"); if (!iq) return;
+          var rowQ = iq.textContent.replace(/^「|」$/g, "").trim();
+          row.querySelectorAll("a").forEach(function (a) {
+            var label = a.textContent.trim();
+            if (label !== "틱톡" && label !== "인스타 릴스") return;
+            if (!a.getAttribute("data-oh")) a.setAttribute("data-oh", a.getAttribute("href"));
+            if (q2 === null) { a.setAttribute("href", a.getAttribute("data-oh")); a.removeAttribute("data-q"); }
+            else { a.setAttribute("href", a.getAttribute("data-oh").replace(encodeURIComponent(rowQ), encodeURIComponent(q2))); a.setAttribute("data-q", q2); }
+          });
+        });
+        ibToast(m[0] === "auto" ? "틱톡·인스타가 각 검색어의 원래 언어로 검색됩니다" : "틱톡·인스타가 " + m[1] + " 검색어로 검색됩니다");
+      });
+      bar.appendChild(b);
+    });
+    var t = box.querySelector(".ib-t");
+    if (t && t.nextSibling) box.insertBefore(bar, t.nextSibling); else box.appendChild(bar);
+  }
   function ibToast(msg){
     var t = document.getElementById("ib-toast");
     if (!t) { t = document.createElement("div"); t.id = "ib-toast"; t.style.cssText = "position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:#111827;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;z-index:99999;opacity:0;transition:opacity .2s;max-width:90%;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.3)"; document.body.appendChild(t); }
@@ -416,7 +460,7 @@
       box.addEventListener("click", function (e) {
         var a = e.target.closest ? e.target.closest("a[target='_blank']") : null;
         if (!a || !box.contains(a)) return;
-        var row = a.closest(".intl-row"); var q = "";
+        var row = a.closest(".intl-row"); var q = (a.getAttribute("data-q") || "").trim();
         if (row) { var iq = row.querySelector(".iq"); if (iq) q = iq.textContent.replace(/^「|」$/g, "").trim(); }
         if (q) { try { navigator.clipboard.writeText(q); ibToast("검색어를 복사했어요 — 검색창이 비어 있으면 붙여넣기(Ctrl+V) 하세요"); } catch (_) {} }
       });
@@ -481,6 +525,7 @@
       if (c.is_short_candidate) { badges.push('<span class="ib-b ib-short">쇼츠 후보' + (c.short_confidence ? (' · 확신 ' + c.short_confidence) : '') + '</span>'); nShort++; }
       else if (hasDur) { badges.push('<span class="ib-b ib-long">긴 원본 후보</span>'); nLong++; longNodes.push(node); }
       else { nUnknown++; }
+      if (c.match_type) { var mt = ({same_source:"🎯 동일 원본 후보",same_event:"🔁 같은 사건·인물",visual_similar:"👀 시각적 유사",long_full_version:"📼 전체본 후보"})[c.match_type]; if (mt) badges.push('<span class="ib-b" style="background:#ede9fe;color:#5b21b6">' + mt + ' <span style="opacity:.65">(추정)</span></span>'); }
       if (c.found_by) { var fbq = String(c.found_by).replace(/[<>&"\']/g, "").slice(0, 24); badges.push('<span class="ib-b">🔎 「' + fbq + '」로 발견</span>'); }
       if (c.embeddable) badges.push('<span class="ib-b ib-embed">인비랩 재생 가능</span>');
       if (c.embeddable && c.video_id) { (function (nd, cid, isS) { nd.querySelectorAll("a").forEach(function (a) { if ((a.getAttribute("href") || "").indexOf(cid) !== -1) { a.addEventListener("click", function (ev) { ev.preventDefault(); ibPlayerModal(cid, isS); }); } }); })(node, c.video_id, !!c.is_short_candidate); }
@@ -556,7 +601,9 @@
       orig(j);
       try { enhance(j);
         try { ibEnrichPreview(j); } catch (e) {}
-        try { ibSmartLinks(j); } catch (e) {} } catch {}
+        try { ibSmartLinks(j); } catch (e) {}
+        try { ibLangChips(j); } catch (e) {}
+        try { ibReorder(); } catch (e) {} } catch {}
     };
 
     let srcAdmin = false;
