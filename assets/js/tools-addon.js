@@ -407,6 +407,19 @@
     .intl-row a{display:inline-block;background:#fff;border:1px solid #fde68a;border-radius:999px;padding:3px 11px;font-size:12px;font-weight:700;color:#92400e;text-decoration:none;margin:2px 5px 2px 0;}
     .intl-row a:hover{border-color:#d97706;color:#d97706;}
     .intl-warn{font-size:11.5px;color:#a16207;line-height:1.5;margin-top:6px;}
+    .cc-box{margin-top:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:11px;padding:12px 15px;}
+    .cc-box .ib-t{font-size:13px;font-weight:800;color:#166534;margin-bottom:7px;}
+    .cc-row{margin-bottom:7px;font-size:13px;}
+    .cc-row .iq{font-weight:700;color:#334155;}
+    .cc-row a,.cc-row button{display:inline-block;background:#fff;border:1px solid #bbf7d0;border-radius:999px;padding:3px 11px;font-size:12px;font-weight:700;color:#166534;text-decoration:none;margin:2px 5px 2px 0;cursor:pointer;font-family:inherit;}
+    .cc-row a:hover,.cc-row button:hover{border-color:#16a34a;}
+    .cc-row button:disabled{opacity:.5;}
+    .cc-results{margin-top:4px;}
+    .cc-card{display:flex;gap:10px;align-items:center;padding:7px 0;border-top:1px solid #dcfce7;text-decoration:none;}
+    .cc-card img{width:86px;height:48px;object-fit:cover;border-radius:7px;background:#000;flex-shrink:0;}
+    .cc-card .cc-t{font-size:13px;font-weight:700;color:#1e293b;line-height:1.4;}
+    .cc-card .cc-m{font-size:11.5px;color:#64748b;}
+    .cc-note{font-size:11.5px;color:#15803d;line-height:1.55;margin-top:6px;}
     .lens-box{margin-top:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:11px;padding:12px 15px;}
     .lens-box .ib-t{font-size:13px;font-weight:800;color:#1e40af;margin-bottom:7px;}
     .lens-btn{display:inline-block;background:#2563eb;color:#fff;border-radius:999px;padding:7px 16px;font-size:13px;font-weight:800;text-decoration:none;}
@@ -448,6 +461,25 @@
         host.appendChild(div);
       }
 
+      // 1.5) 재사용 가능(CC) 영상 찾기 — 합법적으로 편집·재사용할 수 있는 재료
+      if (qs.length) {
+        const old3 = document.getElementById("src-cc"); if (old3) old3.remove();
+        const cc = document.createElement("div");
+        cc.className = "cc-box"; cc.id = "src-cc";
+        cc.innerHTML = "<div class='ib-t'>♻️ 재사용 가능(CC) 영상 찾기 <span style='font-weight:600;color:#4d7c0f;'>— 제작자가 재사용을 허락한 영상만 골라 검색합니다</span></div>" +
+          qs.map(function (q, i) {
+            return "<div class='cc-row'><span class='iq'>「" + escapeHtml(q.q) + "」</span> " +
+              "<a href='https://www.youtube.com/results?search_query=" + encodeURIComponent(q.q) + "&sp=EgIwAQ%253D%253D' target='_blank' rel='noopener'>유튜브에서 CC 검색 열기</a>" +
+              "<button data-q='" + escapeHtml(q.q) + "' data-i='" + i + "'>🖼️ 화면 안에서 보기</button>" +
+              "<div class='cc-results' id='cc-res-" + i + "'></div></div>";
+          }).join("") +
+          "<div class='cc-note'>✅ CC(크리에이티브 커먼즈) 영상은 <b>출처 표기</b>(영상 설명란에 원작자 채널명·원본 링크)를 하면 합법적으로 편집·재사용할 수 있습니다.<br>⚠️ 사용 전 해당 영상 페이지의 라이선스 표시가 정말 '크리에이티브 커먼즈'인지 한 번 더 확인하세요. 일반 영상의 무단 재사용은 저작권 침해입니다.</div>";
+        host.appendChild(cc);
+        cc.querySelectorAll("button[data-q]").forEach(function (b) {
+          b.addEventListener("click", function () { runCcSearch(b.dataset.q, "cc-res-" + b.dataset.i, b); });
+        });
+      }
+
       // 2) 구글렌즈로 원본 찾기 (썸네일이 이미 업로드된 상태로 열림)
       const vid = j.video_id;
       if (vid) {
@@ -464,6 +496,41 @@
         if (runBtn) runBtn.addEventListener("click", function () { runLens(vid); });
       }
     }
+  }
+
+  // CC(재사용 가능) 영상 검색 — 클릭한 검색어만 조회
+  async function runCcSearch(q, containerId, btn) {
+    const box = document.getElementById(containerId);
+    if (!box) return;
+    if (box.innerHTML) { box.innerHTML = ""; return; } // 다시 누르면 접기
+    if (btn) btn.disabled = true;
+    box.innerHTML = "<div style='font-size:12.5px;color:#15803d;padding:5px 0;'>재사용 가능 영상을 찾는 중…</div>";
+    try {
+      const { data } = await sb.auth.getSession();
+      const token = data && data.session ? data.session.access_token : "";
+      const r = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ feature: "source_finder", action: "cc_search", query: q }),
+      });
+      const j = await r.json().catch(function () { return {}; });
+      if (!r.ok || !j.ok) {
+        box.innerHTML = "<div style='font-size:12.5px;color:#991b1b;padding:5px 0;'>검색 실패: " + escapeHtml(j.error || "HTTP " + r.status) + (j.detail ? " — " + escapeHtml(j.detail) : "") + "</div>";
+      } else if (!j.available) {
+        box.innerHTML = "<div style='font-size:12.5px;color:#15803d;padding:5px 0;'>화면 안 검색은 준비 중입니다. 'CC 검색 열기' 링크를 이용해 주세요.</div>";
+      } else if (!j.items.length) {
+        box.innerHTML = "<div style='font-size:12.5px;color:#15803d;padding:5px 0;'>이 검색어로는 재사용 가능 영상이 없습니다. 다른 검색어로 시도하거나 링크로 직접 찾아보세요.</div>";
+      } else {
+        box.innerHTML = j.items.map(function (it) {
+          return "<a class='cc-card' href='https://www.youtube.com/watch?v=" + escapeHtml(it.video_id) + "' target='_blank' rel='noopener'>" +
+            "<img src='https://i.ytimg.com/vi/" + escapeHtml(it.video_id) + "/mqdefault.jpg' alt='' loading='lazy'>" +
+            "<span><span class='cc-t'>" + escapeHtml(it.title) + "</span><br><span class='cc-m'>" + escapeHtml(it.channel || "") + (it.published_at ? " · " + fmtDate(it.published_at) : "") + " · ♻️ 재사용 허용</span></span></a>";
+        }).join("");
+      }
+    } catch (e) {
+      box.innerHTML = "<div style='font-size:12.5px;color:#991b1b;padding:5px 0;'>요청이 실패했습니다: " + escapeHtml(e.message) + "</div>";
+    }
+    if (btn) btn.disabled = false;
   }
 
   // 구글렌즈 2단계: Vision API 결과를 화면 안 그리드로 (키 없으면 안내만)
