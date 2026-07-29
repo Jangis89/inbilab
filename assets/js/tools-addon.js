@@ -56,7 +56,7 @@
     box.style.display = "none";
     box.innerHTML = `
       <h3>🪝 후킹 분석 <span style="font-size:12px;color:#94a3b8;font-weight:600;">첫 3~5초 해부</span></h3>
-      <div class="hk-desc">이 영상이 첫 3초 동안 <b>무엇으로, 어떤 심리 전략으로</b> 시청자를 붙잡았는지 분석하고, 응용 버전 3개를 제안합니다.</div>
+      <div class="hk-desc">이 영상이 첫 3초 동안 <b>무엇으로, 어떤 심리 전략으로</b> 시청자를 붙잡았는지 분석하고, <b>같은 영상을 다르게 여는</b> 응용 3버전을 제안합니다.</div>
       <button class="hkbtn" id="btn-hk">후킹 분석하기</button>
       <div class="an-load" id="hk-load"><div class="spin"></div><span id="hk-load-txt">AI가 첫 3초를 해부하고 있습니다…</span></div>
       <div class="an-err" id="hk-err"></div>
@@ -82,7 +82,7 @@
           <div class="hk-txt" id="hk-ret"></div>
         </div>
         <div class="hk-sec">
-          <div class="hs-t">6️⃣ 응용해 보기 — 3가지 버전</div>
+          <div class="hs-t">6️⃣ 이 영상을 다르게 열어보기 — 3가지 버전</div>
           <div id="hk-vars"></div>
         </div>
         <div class="hk-note">※ 전략 판정과 의도는 AI의 해석이며 참고용입니다. 1️⃣의 실제 내용을 직접 보고 스스로도 판단해 보세요.</div>
