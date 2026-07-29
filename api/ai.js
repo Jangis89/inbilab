@@ -452,6 +452,22 @@ module.exports = async (req, res) => {
       }
       const videoUrl = "https://www.youtube.com/watch?v=" + vid;
 
+      // 0) 캐시 확인: 같은 영상은 다시 탐색하지 않음 (검색 한도 소모 0, 즉시 표시)
+      const srcForce = isAdmin && body.force === true;
+      if (!srcForce) {
+        const cachedSrc = await supaGet(
+          "/rest/v1/video_sources?video_id=eq." + vid + "&select=result,created_at",
+          token
+        );
+        if (Array.isArray(cachedSrc) && cachedSrc.length && cachedSrc[0].result) {
+          const out = cachedSrc[0].result;
+          out.cached = true;
+          out.cached_at = cachedSrc[0].created_at;
+          res.status(200).json(out);
+          return;
+        }
+      }
+
       // 1) 영상 판독: 원본 단서 + 다국어 검색어 추출
       const r1 = await callGemini(MODELS, key, {
         contents: [
@@ -566,8 +582,7 @@ module.exports = async (req, res) => {
         url: "https://www.youtube.com/results?search_query=" + encodeURIComponent(q.q),
       }));
 
-      if (!isAdmin) await recordUsage(user.id, feature, token);
-      res.status(200).json({
+      const srcPayload = {
         ok: true,
         video_id: vid,
         origin: {
@@ -584,7 +599,24 @@ module.exports = async (req, res) => {
         yt_searched: ytAvailable,
         yt_error: ytError,
         model: r1.model,
-      });
+      };
+      // 캐시 저장: 정상 탐색(한도 오류 없음)일 때만 (실패 결과를 얼려두지 않음)
+      if (ytAvailable && !ytError) {
+        try {
+          await fetch(SUPABASE_URL + "/rest/v1/video_sources?on_conflict=video_id", {
+            method: "POST",
+            headers: {
+              apikey: ANON_KEY,
+              Authorization: "Bearer " + token,
+              "Content-Type": "application/json",
+              Prefer: "resolution=merge-duplicates,return=minimal",
+            },
+            body: JSON.stringify({ video_id: vid, result: srcPayload }),
+          });
+        } catch {}
+      }
+      if (!isAdmin) await recordUsage(user.id, feature, token);
+      res.status(200).json(srcPayload);
       return;
     }
 
@@ -833,6 +865,16 @@ module.exports = async (req, res) => {
         res.status(200).json({ ok: true, available: false, items: [] });
         return;
       }
+      // 캐시: 같은 검색어는 24시간 안에 다시 검색하지 않음 (한도 절약)
+      const ccCached = await supaGet(
+        "/rest/v1/cc_cache?query=eq." + encodeURIComponent(q) + "&select=items,created_at",
+        token
+      );
+      if (Array.isArray(ccCached) && ccCached.length &&
+          Date.now() - new Date(ccCached[0].created_at).getTime() < 24 * 3600 * 1000) {
+        res.status(200).json({ ok: true, available: true, items: ccCached[0].items || [], cached: true });
+        return;
+      }
       const sj = await ytApi("search", {
         part: "snippet", q: q, type: "video", videoLicense: "creativeCommon", maxResults: "6",
       });
@@ -849,6 +891,18 @@ module.exports = async (req, res) => {
         channel: it.snippet.channelTitle,
         published_at: it.snippet.publishedAt,
       })).filter((x) => x.video_id);
+      try {
+        await fetch(SUPABASE_URL + "/rest/v1/cc_cache?on_conflict=query", {
+          method: "POST",
+          headers: {
+            apikey: ANON_KEY,
+            Authorization: "Bearer " + token,
+            "Content-Type": "application/json",
+            Prefer: "resolution=merge-duplicates,return=minimal",
+          },
+          body: JSON.stringify({ query: q, items: items, created_at: new Date().toISOString() }),
+        });
+      } catch {}
       res.status(200).json({ ok: true, available: true, items: items });
       return;
     }
