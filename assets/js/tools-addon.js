@@ -1,0 +1,305 @@
+// ============================================
+// 인비랩 도구 애드온
+// - analyze.html: 🪝 후킹 분석 박스 (첫 3~5초 해부)
+// - lab.html: 새 후킹 유형 후보 목록 (관리자)
+// 페이지 원본을 건드리지 않고 <script src>로 부착되는 방식
+// ============================================
+(function () {
+  "use strict";
+
+  const TYPE_NAMES = {
+    1: "호기심 갭", 2: "결과 먼저", 3: "충격 비주얼", 4: "질문 던지기", 5: "공감 저격",
+    6: "손실 회피", 7: "숫자·랭킹", 8: "반전 예고", 9: "권위·증거", 10: "패턴 파괴",
+  };
+
+  // ---------------- 후킹 분석 (analyze.html) ----------------
+  function initHook() {
+    const anRes = document.getElementById("an-res");
+    if (!anRes) return; // 분석 페이지가 아니면 통과
+
+    const css = `
+    .hk-box{margin-top:16px;background:#fff;border:2px solid #fecdd3;border-radius:14px;padding:18px;}
+    .hk-box h3{font-size:16.5px;font-weight:800;margin:0 0 4px;}
+    .hk-box .hk-desc{font-size:13.5px;color:var(--sub);margin-bottom:12px;line-height:1.55;}
+    .hk-box .hkbtn{padding:12px 22px;border-radius:11px;border:none;background:#e11d48;color:#fff;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;}
+    .hk-box .hkbtn:disabled{opacity:.5;}
+    .hk-res{display:none;margin-top:14px;}
+    .hk-res.show{display:block;}
+    .hk-sec{border-top:1px solid var(--line);padding:12px 0;}
+    .hk-sec .hs-t{font-size:13px;font-weight:800;color:#9f1239;margin-bottom:6px;}
+    .hk-facts{background:#fff1f2;border:1px solid #fecdd3;border-radius:11px;padding:12px 15px;font-size:14px;line-height:1.7;}
+    .hk-facts .fl{display:flex;gap:8px;}
+    .hk-facts .fl .fk{flex-shrink:0;font-weight:800;color:#9f1239;font-size:12.5px;padding-top:2px;width:58px;}
+    .hk-strat-main{display:inline-block;background:#e11d48;color:#fff;font-size:14px;font-weight:800;padding:5px 15px;border-radius:999px;margin-right:6px;}
+    .hk-strat-new{background:#7c3aed;}
+    .hk-strat-sub{display:inline-block;background:#fff1f2;color:#9f1239;border:1px solid #fecdd3;font-size:12.5px;font-weight:700;padding:4px 12px;border-radius:999px;margin-right:6px;}
+    .hk-conf{display:inline-block;font-size:11.5px;font-weight:800;padding:2px 10px;border-radius:999px;vertical-align:middle;}
+    .hc-높음{background:#dcfce7;color:#166534;}
+    .hc-중간{background:#fef9c3;color:#854d0e;}
+    .hc-낮음{background:#fee2e2;color:#991b1b;}
+    .hk-lowwarn{margin-top:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:8px 12px;font-size:12.5px;color:#92400e;line-height:1.55;}
+    .hk-txt{font-size:14px;line-height:1.7;color:#334155;}
+    .hk-var{background:var(--bg-soft);border:1px solid var(--line);border-radius:11px;padding:11px 14px;margin-bottom:8px;}
+    .hk-var .hv-k{font-size:11.5px;font-weight:800;color:#e11d48;margin-bottom:3px;}
+    .hk-var .hv-l{font-size:14px;font-weight:700;line-height:1.5;}
+    .hk-var .hv-s{font-size:12.5px;color:var(--sub);margin-top:3px;}
+    .hk-var .hv-s:before{content:"🎬 ";}
+    .hk-note{font-size:12px;color:#94a3b8;margin-top:8px;line-height:1.5;}
+    .hk-dl{display:flex;gap:9px;margin-top:12px;flex-wrap:wrap;}
+    .hk-dl button{padding:10px 16px;border-radius:10px;border:1.5px solid #fecdd3;background:#fff;color:#e11d48;font-size:13.5px;font-weight:800;cursor:pointer;font-family:inherit;}
+    .hk-dl button.main{background:#e11d48;color:#fff;border-color:#e11d48;}`;
+    document.head.insertAdjacentHTML("beforeend", "<style>" + css + "</style>");
+
+    const box = document.createElement("div");
+    box.className = "hk-box";
+    box.id = "hk-box";
+    box.style.display = "none";
+    box.innerHTML = `
+      <h3>🪝 후킹 분석 <span style="font-size:12px;color:#94a3b8;font-weight:600;">첫 3~5초 해부</span></h3>
+      <div class="hk-desc">이 영상이 첫 3초 동안 <b>무엇으로, 어떤 심리 전략으로</b> 시청자를 붙잡았는지 분석하고, 응용 버전 3개를 제안합니다.</div>
+      <button class="hkbtn" id="btn-hk">후킹 분석하기</button>
+      <div class="an-load" id="hk-load"><div class="spin"></div><span id="hk-load-txt">AI가 첫 3초를 해부하고 있습니다…</span></div>
+      <div class="an-err" id="hk-err"></div>
+      <div class="hk-res" id="hk-res">
+        <div class="hk-sec" style="border-top:none;">
+          <div class="hs-t">1️⃣ 첫 3~5초에 실제로 나온 것 (사실)</div>
+          <div class="hk-facts" id="hk-facts"></div>
+        </div>
+        <div class="hk-sec">
+          <div class="hs-t">2️⃣ 전략 판정</div>
+          <div id="hk-strat"></div>
+        </div>
+        <div class="hk-sec">
+          <div class="hs-t">3️⃣ 심리 해설 — 시청자 머릿속에서 일어나는 일</div>
+          <div class="hk-txt" id="hk-psy"></div>
+        </div>
+        <div class="hk-sec">
+          <div class="hs-t">4️⃣ 제작자의 의도 (AI의 추정)</div>
+          <div class="hk-txt" id="hk-intent"></div>
+        </div>
+        <div class="hk-sec">
+          <div class="hs-t">5️⃣ 3초 이후에도 붙잡아두는 장치</div>
+          <div class="hk-txt" id="hk-ret"></div>
+        </div>
+        <div class="hk-sec">
+          <div class="hs-t">6️⃣ 응용해 보기 — 3가지 버전</div>
+          <div id="hk-vars"></div>
+        </div>
+        <div class="hk-note">※ 전략 판정과 의도는 AI의 해석이며 참고용입니다. 1️⃣의 실제 내용을 직접 보고 스스로도 판단해 보세요.</div>
+        <div class="hk-dl">
+          <button class="main" onclick="dlHook()">📄 후킹 분석.txt 다운로드</button>
+          <button onclick="copyHook()">📋 전체 복사</button>
+        </div>
+        <div id="hk-model" style="margin-top:8px;font-size:12px;color:#94a3b8;font-weight:600;"></div>
+      </div>`;
+    // 원본 후보 탐색 박스(src-box)가 있으면 그 앞에, 없으면 an-res 뒤에
+    const srcBox = document.getElementById("src-box");
+    if (srcBox) srcBox.insertAdjacentElement("beforebegin", box);
+    else anRes.insertAdjacentElement("afterend", box);
+    document.getElementById("btn-hk").addEventListener("click", runHook);
+
+    let canHook = false;
+    (async function gate() {
+      try {
+        const u = await getUser();
+        if (!u) return;
+        const adm = await isAdmin(u);
+        if (adm) { canHook = true; }
+        else {
+          const { data } = await sb.from("feature_flags").select("is_public").eq("key", "hook_analyze").maybeSingle();
+          canHook = !!(data && data.is_public);
+        }
+        // 이미 분석 결과가 열려 있으면 즉시 반영
+        if (anRes.className.indexOf("show") >= 0 && canHook) box.style.display = "block";
+      } catch {}
+    })();
+
+    // 분석 결과가 열리고 닫힐 때 후킹 박스도 함께
+    new MutationObserver(function () {
+      const show = anRes.className.indexOf("show") >= 0;
+      box.style.display = show && canHook ? "block" : "none";
+      if (show) {
+        document.getElementById("hk-res").className = "hk-res";
+        document.getElementById("hk-err").className = "an-err";
+      }
+    }).observe(anRes, { attributes: true, attributeFilter: ["class"] });
+
+    function curVid() {
+      const t = document.getElementById("r-thumb");
+      const m = t && t.src ? t.src.match(/\/vi\/([A-Za-z0-9_-]{11})\//) : null;
+      return m ? m[1] : null;
+    }
+    function pref() {
+      const el = document.querySelector('input[name="msel"]:checked');
+      return el ? el.value : "auto";
+    }
+
+    let lastHook = null;
+    let hkTimer = null;
+
+    async function runHook() {
+      const vid = curVid();
+      if (!vid) return;
+      const btn = document.getElementById("btn-hk");
+      const load = document.getElementById("hk-load");
+      const err = document.getElementById("hk-err");
+      err.className = "an-err";
+      document.getElementById("hk-res").className = "hk-res";
+      btn.disabled = true;
+      load.className = "an-load show";
+      let sec = 0;
+      document.getElementById("hk-load-txt").textContent = "AI가 첫 3초를 해부하고 있습니다… (0초)";
+      hkTimer = setInterval(function () {
+        sec++;
+        document.getElementById("hk-load-txt").textContent = "AI가 첫 3초를 해부하고 있습니다… (" + sec + "초)";
+      }, 1000);
+      try {
+        const { data } = await sb.auth.getSession();
+        const token = data && data.session ? data.session.access_token : "";
+        const r = await fetch("/api/ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+          body: JSON.stringify({ feature: "hook_analyze", action: "hook", video_url: "https://www.youtube.com/watch?v=" + vid, model_pref: pref() }),
+        });
+        const j = await r.json().catch(function () { return {}; });
+        if (!r.ok || !j.ok) {
+          err.textContent = "후킹 분석 실패: " + (j.error || "HTTP " + r.status) + (j.detail ? " — " + j.detail : "");
+          err.className = "an-err show";
+        } else {
+          lastHook = j.hook;
+          renderHook(j.hook, j.model);
+          document.getElementById("hk-res").className = "hk-res show";
+        }
+      } catch (e) {
+        err.textContent = "요청이 실패했습니다: " + e.message;
+        err.className = "an-err show";
+      }
+      clearInterval(hkTimer);
+      load.className = "an-load";
+      btn.disabled = false;
+    }
+
+    function stratName(s) {
+      if (!s) return "";
+      const id = Number(s.type_id);
+      if (id >= 1 && id <= 10) return "유형 " + id + " · " + (TYPE_NAMES[id] || s.name || "");
+      return s.name || "새 유형";
+    }
+
+    function renderHook(h, model) {
+      const f = h.facts || {};
+      let fh = "";
+      if (Array.isArray(f.lines) && f.lines.length)
+        fh += "<div class='fl'><span class='fk'>🎙️ 대사</span><span>" + f.lines.map(escapeHtml).join("<br>") + "</span></div>";
+      if (Array.isArray(f.onscreen) && f.onscreen.length)
+        fh += "<div class='fl'><span class='fk'>🔤 자막</span><span>" + f.onscreen.map(escapeHtml).join("<br>") + "</span></div>";
+      if (f.visual) fh += "<div class='fl'><span class='fk'>🖼️ 화면</span><span>" + escapeHtml(f.visual) + "</span></div>";
+      if (f.sound) fh += "<div class='fl'><span class='fk'>🔊 소리</span><span>" + escapeHtml(f.sound) + "</span></div>";
+      document.getElementById("hk-facts").innerHTML = fh || "정보 없음";
+
+      const m = h.main || {};
+      const isNew = Number(m.type_id) === 0 || m.is_new === true;
+      const conf = ["높음", "중간", "낮음"].indexOf(m.confidence) >= 0 ? m.confidence : "중간";
+      let sh = "<span class='hk-strat-main" + (isNew ? " hk-strat-new" : "") + "'>" +
+        (isNew ? "🆕 새 유형: " : "") + escapeHtml(stratName(m)) + "</span>";
+      sh += "<span class='hk-conf hc-" + conf + "'>확신도 " + conf + "</span>";
+      const subs = Array.isArray(h.sub) ? h.sub.filter(function (s) { return s && (s.name || s.type_id); }) : [];
+      if (subs.length) sh += "<div style='margin-top:8px;'>보조: " + subs.map(function (s) { return "<span class='hk-strat-sub'>" + escapeHtml(stratName(s)) + "</span>"; }).join("") + "</div>";
+      if (conf === "낮음" || isNew) {
+        sh += "<div class='hk-lowwarn'>⚠️ " + (isNew
+          ? "교과서 10유형에 없는 새로운 방식입니다. AI가 관찰한 내용을 그대로 보여드리니 1️⃣의 실제 장면과 함께 판단해 보세요. (이 사례는 자동으로 수집되어 분류표 개선에 사용됩니다)"
+          : "판정 확신도가 낮습니다 — 교과서 유형에 딱 맞지 않는 변형일 수 있어요. 1️⃣의 실제 내용을 직접 보고 판단해 보세요.") + "</div>";
+      }
+      document.getElementById("hk-strat").innerHTML = sh;
+
+      document.getElementById("hk-psy").textContent = h.psychology || "-";
+      document.getElementById("hk-intent").textContent = h.intent || "-";
+      document.getElementById("hk-ret").innerHTML = (Array.isArray(h.retention) && h.retention.length)
+        ? h.retention.map(function (x) { return "✔ " + escapeHtml(x); }).join("<br>") : "-";
+
+      document.getElementById("hk-vars").innerHTML = (Array.isArray(h.variations) ? h.variations : []).map(function (v) {
+        return "<div class='hk-var'><div class='hv-k'>" + escapeHtml(v.kind || "") + (v.strategy ? " — " + escapeHtml(v.strategy) : "") + "</div>" +
+          "<div class='hv-l'>“" + escapeHtml(v.first_line || "") + "”</div>" +
+          (v.first_scene ? "<div class='hv-s'>" + escapeHtml(v.first_scene) + "</div>" : "") + "</div>";
+      }).join("") || "-";
+
+      document.getElementById("hk-model").textContent = model
+        ? (model.indexOf("pro") >= 0 ? "🤖 분석 모델: Gemini Pro (고성능)" : "🤖 분석 모델: Gemini Flash (기본)")
+        : "";
+    }
+
+    function hookText() {
+      if (!lastHook) return "";
+      const h = lastHook, f = h.facts || {}, m = h.main || {};
+      const L = [];
+      L.push("■ 인비랩 후킹 분석 (첫 3~5초)");
+      L.push("영상: https://www.youtube.com/watch?v=" + (curVid() || ""));
+      L.push("");
+      L.push("[1. 실제로 나온 것]");
+      (f.lines || []).forEach(function (x) { L.push("  대사: " + x); });
+      (f.onscreen || []).forEach(function (x) { L.push("  자막: " + x); });
+      if (f.visual) L.push("  화면: " + f.visual);
+      if (f.sound) L.push("  소리: " + f.sound);
+      L.push("");
+      L.push("[2. 전략 판정] " + stratName(m) + " (확신도 " + (m.confidence || "중간") + ")");
+      (h.sub || []).forEach(function (s) { L.push("  보조: " + stratName(s)); });
+      L.push("");
+      L.push("[3. 심리 해설] " + (h.psychology || ""));
+      L.push("[4. 제작자 의도(추정)] " + (h.intent || ""));
+      L.push("[5. 이탈 방지 장치]");
+      (h.retention || []).forEach(function (x) { L.push("  - " + x); });
+      L.push("");
+      L.push("[6. 응용 3버전]");
+      (h.variations || []).forEach(function (v, i) {
+        L.push("  " + (i + 1) + ") " + (v.kind || "") + (v.strategy ? " — " + v.strategy : ""));
+        L.push("     첫 문장: " + (v.first_line || ""));
+        if (v.first_scene) L.push("     첫 화면: " + v.first_scene);
+      });
+      L.push("");
+      L.push("※ 전략 판정과 의도는 AI의 해석이며 참고용입니다.");
+      return L.join("\n");
+    }
+
+    window.dlHook = function () {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob(["﻿" + hookText()], { type: "text/plain;charset=utf-8" }));
+      a.download = "후킹분석_" + (curVid() || "video") + ".txt";
+      a.click();
+    };
+    window.copyHook = async function () {
+      try { await navigator.clipboard.writeText(hookText()); alert("후킹 분석이 복사되었습니다."); }
+      catch { alert("복사에 실패했습니다. 다운로드 버튼을 이용해 주세요."); }
+    };
+  }
+
+  // ---------------- 새 후킹 유형 후보 (lab.html, 관리자) ----------------
+  function initLab() {
+    if (location.pathname.indexOf("lab.html") < 0) return;
+    (async function () {
+      try {
+        const u = await getUser();
+        if (!u) return;
+        if (!(await isAdmin(u))) return;
+        const { data } = await sb.from("hook_extra_log").select("*").order("created_at", { ascending: false }).limit(50);
+        const wrap = document.querySelector(".wrap") || document.querySelector("main") || document.body;
+        const card = document.createElement("div");
+        card.style.cssText = "background:#fff;border:1px solid var(--line,#e2e8f0);border-radius:14px;padding:16px 18px;margin-top:16px;";
+        const rows = (data || []).map(function (r) {
+          return "<div style='padding:9px 0;border-top:1px solid #e2e8f0;font-size:13.5px;line-height:1.6;'>" +
+            "<b>" + escapeHtml(r.name || "(이름 없음)") + "</b> · <a href='https://www.youtube.com/watch?v=" + escapeHtml(r.video_id) + "' target='_blank' rel='noopener' style='color:#2563eb;'>영상 보기</a>" +
+            " <span style='color:#94a3b8;font-size:12px;'>" + fmtDate(r.created_at) + "</span>" +
+            (r.description ? "<br><span style='color:#475569;'>" + escapeHtml(r.description) + "</span>" : "") + "</div>";
+        }).join("");
+        card.innerHTML = "<div style='font-size:15.5px;font-weight:800;margin-bottom:4px;'>🆕 새 후킹 유형 후보 <span style='font-size:12px;color:#94a3b8;font-weight:600;'>AI가 10유형에 없다고 판정한 사례 — 반복되는 패턴은 11번째 유형으로 승격하세요</span></div>" +
+          (rows || "<div style='padding:10px 0;color:#64748b;font-size:13.5px;'>아직 수집된 사례가 없습니다. 후킹 분석에서 '새 유형' 판정이 나오면 여기에 자동으로 쌓입니다.</div>");
+        wrap.appendChild(card);
+      } catch {}
+    })();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () { initHook(); initLab(); });
+  } else {
+    initHook(); initLab();
+  }
+})();
