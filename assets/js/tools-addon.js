@@ -49,6 +49,12 @@
     .hk-var .hv-l{font-size:14px;font-weight:700;line-height:1.5;}
     .hk-var .hv-s{font-size:12.5px;color:var(--sub);margin-top:3px;}
     .hk-var .hv-s:before{content:"🎬 ";}
+    .hk-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;}
+    .hk-chip{padding:6px 13px;border-radius:999px;border:1.5px solid #fecdd3;background:#fff;color:#9f1239;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;}
+    .hk-chip:hover{background:#fff1f2;}
+    .hk-chip:disabled{opacity:.5;cursor:default;}
+    .hk-chip.done{background:#fff1f2;border-color:#e11d48;cursor:default;opacity:.65;}
+    .hk-chip.all{background:#e11d48;color:#fff;border-color:#e11d48;}
     .hk-note{font-size:12px;color:#94a3b8;margin-top:8px;line-height:1.5;}
     .hk-dl{display:flex;gap:9px;margin-top:12px;flex-wrap:wrap;}
     .hk-dl button{padding:10px 16px;border-radius:10px;border:1.5px solid #fecdd3;background:#fff;color:#e11d48;font-size:13.5px;font-weight:800;cursor:pointer;font-family:inherit;}
@@ -89,6 +95,11 @@
         <div class="hk-sec">
           <div class="hs-t">6️⃣ 이 영상을 다르게 열어보기 — 3가지 버전</div>
           <div id="hk-vars"></div>
+        </div>
+        <div class="hk-sec">
+          <div class="hs-t">🎯 다른 전략으로도 열어보기 <span style="font-weight:600;color:#94a3b8;font-size:11px;">궁금한 전략을 누르면 그 버전을 즉석에서 만들어 드립니다 (영상 재분석 없음 · 빠름)</span></div>
+          <div class="hk-chips" id="hk-chips"></div>
+          <div class="an-err" id="hkm-err"></div>
         </div>
         <div class="hk-note">※ 전략 판정과 의도는 AI의 해석이며 참고용입니다. 1️⃣의 실제 내용을 직접 보고 스스로도 판단해 보세요.</div>
         <div class="hk-dl">
@@ -222,26 +233,116 @@
       document.getElementById("hk-ret").innerHTML = (Array.isArray(h.retention) && h.retention.length)
         ? h.retention.map(function (x) { return "✔ " + escapeHtml(x); }).join("<br>") : "-";
 
-      document.getElementById("hk-vars").innerHTML = (Array.isArray(h.variations) ? h.variations : []).map(function (v) {
-        let inner = "<div class='hv-k'>" + escapeHtml(v.kind || "") + (v.strategy ? " — " + escapeHtml(v.strategy) : "") + "</div>";
-        const cap = Array.isArray(v.caption) ? v.caption.filter(Boolean) : [];
-        if (cap.length) {
-          inner += "<div class='hv-cap'>" + cap.map(function (line, i) {
-            return "<span class='" + (i === 1 ? "y" : "") + "'>" + escapeHtml(line) + "</span>";
-          }).join("") + "</div>";
-          inner += "<div class='hv-cnt'>자막 글자수 (띄어쓰기 포함): " + cap.map(function (line, i) {
-            return (i === 0 ? "윗줄 " : "아랫줄 ") + line.length + "자";
-          }).join(" · ") + "</div>";
-        }
-        const nar = v.narration || v.first_line || "";
-        if (nar) inner += "<div class='hv-nar'>🎙️ 나레이션: “" + escapeHtml(nar) + "”</div>";
-        if (v.first_scene) inner += "<div class='hv-s'>시작 장면: " + escapeHtml(v.first_scene) + "</div>";
-        return "<div class='hk-var'>" + inner + "</div>";
-      }).join("") || "-";
+      document.getElementById("hk-vars").innerHTML = (Array.isArray(h.variations) ? h.variations : []).map(varCardHtml).join("") || "-";
+      renderChips();
 
       document.getElementById("hk-model").textContent = model
         ? (model.indexOf("pro") >= 0 ? "🤖 분석 모델: Gemini Pro (고성능)" : "🤖 분석 모델: Gemini Flash (기본)")
         : "";
+    }
+
+    function varCardHtml(v) {
+      let inner = "<div class='hv-k'>" + escapeHtml(v.kind || "") + (v.strategy ? " — " + escapeHtml(v.strategy) : "") + "</div>";
+      const cap = Array.isArray(v.caption) ? v.caption.filter(Boolean) : [];
+      if (cap.length) {
+        inner += "<div class='hv-cap'>" + cap.map(function (line, i) {
+          return "<span class='" + (i === 1 ? "y" : "") + "'>" + escapeHtml(line) + "</span>";
+        }).join("") + "</div>";
+        inner += "<div class='hv-cnt'>자막 글자수 (띄어쓰기 포함): " + cap.map(function (line, i) {
+          return (i === 0 ? "윗줄 " : "아랫줄 ") + line.length + "자";
+        }).join(" · ") + "</div>";
+      }
+      const nar = v.narration || v.first_line || "";
+      if (nar) inner += "<div class='hv-nar'>🎙️ 나레이션: “" + escapeHtml(nar) + "”</div>";
+      if (v.first_scene) inner += "<div class='hv-s'>시작 장면: " + escapeHtml(v.first_scene) + "</div>";
+      return "<div class='hk-var'>" + inner + "</div>";
+    }
+
+    // ---- 전략 칩: 원하는 전략으로 추가 버전 생성 (텍스트 호출 — 저비용·빠름) ----
+    function nameToId(name) {
+      for (const k in TYPE_NAMES) if (TYPE_NAMES[k] === name) return Number(k);
+      return 0;
+    }
+    function computeDone() {
+      const s = new Set();
+      const h = lastHook || {};
+      if (h.main && Number(h.main.type_id) >= 1) s.add(Number(h.main.type_id));
+      (h.variations || []).forEach(function (v) {
+        const id = v.type_id ? Number(v.type_id) : nameToId(v.strategy || "");
+        if (id >= 1) s.add(id);
+      });
+      return s;
+    }
+    function renderChips() {
+      const el = document.getElementById("hk-chips");
+      if (!el) return;
+      const done = computeDone();
+      let html = "";
+      for (let i = 1; i <= 10; i++) {
+        html += done.has(i)
+          ? "<button class='hk-chip done' disabled>✓ " + TYPE_NAMES[i] + "</button>"
+          : "<button class='hk-chip' data-id='" + i + "'>" + TYPE_NAMES[i] + "</button>";
+      }
+      if (done.size < 10) html += "<button class='hk-chip all' id='hk-all'>⚡ 나머지 전략 전부 보기</button>";
+      el.innerHTML = html;
+      el.querySelectorAll(".hk-chip[data-id]").forEach(function (b) {
+        b.addEventListener("click", function () { runHookMore([Number(b.dataset.id)]); });
+      });
+      const all = document.getElementById("hk-all");
+      if (all) all.addEventListener("click", function () {
+        const d = computeDone();
+        const rest = [];
+        for (let i = 1; i <= 10; i++) if (!d.has(i)) rest.push(i);
+        if (rest.length) runHookMore(rest);
+      });
+    }
+    let hkMoreBusy = false;
+    async function runHookMore(ids) {
+      if (hkMoreBusy || !lastHook) return;
+      hkMoreBusy = true;
+      const err = document.getElementById("hkm-err");
+      err.className = "an-err";
+      const chipsEl = document.getElementById("hk-chips");
+      chipsEl.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
+      const note = document.createElement("div");
+      note.style.cssText = "font-size:12.5px;color:#9f1239;font-weight:700;padding:6px 0;";
+      note.textContent = "✍️ 새 버전을 쓰는 중… (3~10초)";
+      chipsEl.insertAdjacentElement("afterend", note);
+      try {
+        const { data } = await sb.auth.getSession();
+        const token = data && data.session ? data.session.access_token : "";
+        const r = await fetch("/api/ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+          body: JSON.stringify({
+            feature: "hook_analyze", action: "hook_more",
+            hook: { facts: lastHook.facts, main: lastHook.main, sub: lastHook.sub, psychology: lastHook.psychology },
+            strategies: ids,
+          }),
+        });
+        const j = await r.json().catch(function () { return {}; });
+        if (!r.ok || !j.ok) {
+          err.textContent = "추가 버전 실패: " + (j.error || "HTTP " + r.status) + (j.detail ? " — " + j.detail : "");
+          err.className = "an-err show";
+        } else {
+          (j.variations || []).forEach(function (v) {
+            const vv = {
+              kind: "선택한 전략으로 열기",
+              strategy: v.strategy || TYPE_NAMES[Number(v.type_id)] || "",
+              type_id: v.type_id, caption: v.caption, narration: v.narration, first_scene: v.first_scene,
+            };
+            lastHook.variations = lastHook.variations || [];
+            lastHook.variations.push(vv);
+            document.getElementById("hk-vars").insertAdjacentHTML("beforeend", varCardHtml(vv));
+          });
+        }
+      } catch (e) {
+        err.textContent = "요청이 실패했습니다: " + e.message;
+        err.className = "an-err show";
+      }
+      note.remove();
+      hkMoreBusy = false;
+      renderChips();
     }
 
     function hookText() {
