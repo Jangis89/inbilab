@@ -140,12 +140,15 @@ const SOURCE_PROMPT = `당신은 영상 원본 추적 전문가입니다. 이 �
   "confidence": "높음 | 중간 | 낮음",
   "watermark": "영상 속 워터마크·계정명·로고 텍스트 (없으면 빈 문자열)",
   "language": "영상 언어",
-  "queries": [ { "q": "검색어", "lang": "ko" } ],
+  "queries": [ { "q": "실제 검색에 쓸 문장", "lang": "ko|en|zh|ja 등", "type": "watermark|entity|quote|visual|source|full_version", "ko": "한국어 역번역(한국어 검색어면 빈 문자열)", "why": "이 검색어를 고른 근거 한 줄" } ],
   "stock_keywords": ["비슷한 소스를 무료 스톡 사이트에서 찾을 영어 키워드 2~3개"]
 }
 
-- queries는 원본을 찾기 위한 검색어 3~5개: 한국어 1개 + 영어 1개 필수, 원산지로 추정되는 언어(중국어·일본어 등)가 있으면 그 언어로도.
-- 워터마크·계정명이 보이면 그 텍스트 자체를 검색어에 반드시 포함하세요 (가장 강력한 단서).`;
+- queries는 3~5개를 "원본을 가장 잘 찾을 순서"로 정렬하세요. 첫 번째가 대표 검색어입니다.
+- 대표 검색어 기준: ① 워터마크·계정명이 보이면 그 텍스트 자체가 최우선 (가장 강력한 단서) ② 고유한 인물·사건·장소·날짜 포함 ③ 제목의 과장·낚시 표현 제거 ④ 너무 일반적인 단어만의 조합 금지 (결과가 넓어짐).
+- 언어: 한국어 1개 + 영어 1개 필수. 원산지가 중국 추정이면 간체 중국어 검색어 필수, 고유명사는 중국 통용 표기 사용 (예: 宇树科技). 일본 등 다른 원산지도 같은 원칙.
+- type: watermark=워터마크·계정명, entity=인물·사건·장소·날짜, quote=대사·자막 정확 일치, visual=장면 묘사, source=원본·현장영상 표현, full_version=전체본·풀버전 표현.
+- 한국어가 아닌 검색어는 ko(한국어 역번역)를 반드시 채우세요.`;
 
 const RANK_PROMPT = `원본 후보 판정 작업입니다.
 대상 쇼츠: __TARGET__
@@ -605,6 +608,9 @@ module.exports = async (req, res) => {
       const ytLinks = queries.map((q) => ({
         q: q.q,
         lang: q.lang || "",
+        type: q.type || "",
+        ko: q.ko || "",
+        why: q.why || "",
         url: "https://www.youtube.com/results?search_query=" + encodeURIComponent(q.q),
       }));
 
