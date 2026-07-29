@@ -9,7 +9,7 @@ name: 인비랩 데이터 수집
 on:
   schedule:
     - cron: "0 18 * * *"   # 매일 UTC 18:00 = 한국시간 새벽 3시
-    - cron: "0 6 * * *"    # 매일 UTC 06:00 = 한국시간 오후 3시 (카테고리 정밀 재검수 포함)
+    - cron: "0 8 * * *"    # 매일 UTC 06:00 = 한국시간 오후 3시 (카테고리 정밀 재검수 포함)
   workflow_dispatch: {}      # "Run workflow" 버튼으로 수동 실행 가능
 
 jobs:
@@ -29,3 +29,11 @@ jobs:
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: node collector/collect.mjs
+      - name: kakao notify
+        if: always()
+        env:
+          KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          JOB_STATUS: ${{ job.status }}
+        run: node collector/notify.mjs
