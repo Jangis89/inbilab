@@ -284,6 +284,24 @@ JSON만 출력하세요:
 }
 duration_sec에는 분석한 훅 구간 길이(숫자, 3~5)를 넣으세요.`;
 
+const HOOK_MORE_PROMPT = `당신은 유튜브 쇼츠 후킹 카피라이터입니다. 아래는 어떤 쇼츠의 첫 3~5초 분석 결과입니다:
+__CONTEXT__
+
+이 영상과 똑같은 소재·주제를 유지하면서, 아래 요청된 전략들 각각으로 첫 3초를 여는 버전을 만드세요. 소재를 바꾸지 말고 여는 방식만 바꿉니다.
+요청 전략: __STRATS__
+
+[후킹 전략 분류표]
+1 호기심 갭 / 2 결과 먼저 / 3 충격 비주얼 / 4 질문 던지기 / 5 공감 저격 / 6 손실 회피 / 7 숫자·랭킹 / 8 반전 예고 / 9 권위·증거 / 10 패턴 파괴
+
+각 버전 규칙:
+- caption: 화면 맨 위에 박는 두 줄 자막. 시인성이 생명. 각 줄 띄어쓰기 포함 7~12자, 두 줄 합쳐 15~22자 내외(절대 24자 초과 금지). 짧고 강한 구어체.
+- narration: 첫 3초에 실제로 말하는 자연스러운 완성 문장 (길이 제한 없음).
+- first_scene: 첫 화면 설명 한 줄.
+- 모든 값은 한국어.
+
+JSON만 출력하세요:
+{ "variations": [ { "type_id": 7, "strategy": "숫자·랭킹", "caption": ["윗줄", "아랫줄"], "narration": "...", "first_scene": "..." } ] }`;
+
 module.exports = async (req, res) => {
   try {
     if (req.method !== "POST") {
@@ -798,6 +816,51 @@ module.exports = async (req, res) => {
       } catch {}
       if (!isAdmin) await recordUsage(user.id, feature, token);
       res.status(200).json({ ok: true, video_id: vid, hook: hk, model: r.model });
+      return;
+    }
+
+    // ---------- 액션: 후킹 추가 버전 (영상 재분석 없는 텍스트 호출 — 저비용) ----------
+    if (action === "hook_more") {
+      if (!key) {
+        res.status(500).json({ error: "서버에 GEMINI_API_KEY가 설정되지 않았습니다" });
+        return;
+      }
+      const ctx = body.hook;
+      if (!ctx || typeof ctx !== "object" || !ctx.facts) {
+        res.status(400).json({ error: "먼저 후킹 분석을 실행해 주세요." });
+        return;
+      }
+      const NAMES = { 1: "호기심 갭", 2: "결과 먼저", 3: "충격 비주얼", 4: "질문 던지기", 5: "공감 저격", 6: "손실 회피", 7: "숫자·랭킹", 8: "반전 예고", 9: "권위·증거", 10: "패턴 파괴" };
+      const ids = (Array.isArray(body.strategies) ? body.strategies : [])
+        .map(Number).filter((n) => n >= 1 && n <= 10).slice(0, 10);
+      if (!ids.length) {
+        res.status(400).json({ error: "전략을 선택해 주세요." });
+        return;
+      }
+      const context = JSON.stringify({
+        facts: ctx.facts, main: ctx.main, sub: ctx.sub, psychology: ctx.psychology,
+      }).slice(0, 3500);
+      const prompt = HOOK_MORE_PROMPT
+        .replace("__CONTEXT__", context)
+        .replace("__STRATS__", ids.map((n) => n + " " + NAMES[n]).join(", "));
+      const r = await callGemini(["gemini-flash-latest", "gemini-pro-latest"], key, {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json", temperature: 0.7 },
+      });
+      if (!r.ok) {
+        let detail = r.detail || "";
+        if (r.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(detail)) {
+          detail = "오늘 AI 사용량이 모두 소진되었습니다. 몇 시간 후 다시 시도해 주세요.";
+        }
+        res.status(502).json({ error: "추가 버전 생성 실패", detail: detail });
+        return;
+      }
+      const mv = parseJsonLoose(geminiText(r.gj));
+      if (!mv || !Array.isArray(mv.variations) || !mv.variations.length) {
+        res.status(502).json({ error: "결과 해석에 실패했습니다. 다시 시도해 주세요." });
+        return;
+      }
+      res.status(200).json({ ok: true, variations: mv.variations, model: r.model });
       return;
     }
 
