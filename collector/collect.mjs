@@ -228,7 +228,7 @@ async function classifyChannel(ch, vids, gemKey, gold = "", approvedGold = "", a
   }
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-latest:generateContent?key=${gemKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${gemKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -244,7 +244,7 @@ async function classifyChannel(ch, vids, gemKey, gold = "", approvedGold = "", a
       return null;
     }
     const txt = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    const o = JSON.parse(txt);
+    const o = parseAiJson(txt);
     // 무출연 최종 판정 = 제작자 본인 얼굴이 none/brief 이고, 본인 목소리가 none (타인 얼굴/목소리는 무관)
     const faceless = (o.creator_face === "none" || o.creator_face === "brief") && o.creator_voice === "none";
     return {
@@ -664,7 +664,7 @@ async function main() {
         lines.join("\n");
       try {
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-latest:generateContent?key=${GEM_KEY}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEM_KEY}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -676,7 +676,7 @@ async function main() {
         );
         const data = await res.json();
         if (data.error) { console.log(`  카테고리 Gemini 오류: ${data.error.message}`); continue; }
-        const arr = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "[]");
+        const arr = parseAiJson(data.candidates?.[0]?.content?.parts?.[0]?.text || "[]");
         for (const item of arr) {
           if (!item?.id || !CATEGORIES.includes(item.category)) continue;
           await sbFetch(`channels?id=eq.${encodeURIComponent(item.id)}`, {
@@ -774,7 +774,7 @@ async function main() {
       }
       try {
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-latest:generateContent?key=${GEM_KEY}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEM_KEY}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -786,7 +786,7 @@ async function main() {
         );
         const data = await res.json();
         if (data.error) { console.log(`  재검수 오류(${ch.title}): ${data.error.message}`); continue; }
-        const o = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+        const o = parseAiJson(data.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
         const body = { category_checked_at: new Date().toISOString() };
         const conf = typeof o.confidence === "number" ? o.confidence : 0;
         if (CATEGORIES.includes(o.category) && conf >= 0.5 && o.category !== ch.category) {
@@ -821,3 +821,28 @@ main().catch((e) => {
   console.error("수집 실패:", e.message);
   process.exit(1);
 });
+
+
+// AI 응답 JSON 관대 파서: 코드펜스 제거 + 잘린 배열 복구
+function parseAiJson(txt){
+  if (txt == null) throw new Error("empty AI response");
+  let t = String(txt).trim();
+  t = t.replace(/^```[a-z]*\s*/i, "").replace(/```\s*$/, "").trim();
+  try { return JSON.parse(t); } catch (e) {}
+  const a = t.indexOf("["), o = t.indexOf("{");
+  let start = -1, close = "";
+  if (a >= 0 && (o < 0 || a < o)) { start = a; close = "]"; }
+  else if (o >= 0) { start = o; close = ""; }
+  if (start < 0) throw new Error("no JSON in AI response");
+  let body = t.slice(start);
+  try { return JSON.parse(body); } catch (e) {}
+  let cut = body;
+  while (true) {
+    const lb = cut.lastIndexOf("}");
+    if (lb < 0) break;
+    cut = cut.slice(0, lb + 1);
+    try { return JSON.parse(cut + close); } catch (e) {}
+    cut = cut.slice(0, lb);
+  }
+  throw new Error("AI JSON salvage failed");
+}
