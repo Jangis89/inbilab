@@ -272,6 +272,73 @@
     };
   }
 
+  // ---------------- 원본 후보 탐색 확장: 해외 플랫폼 + 구글렌즈 (analyze.html) ----------------
+  function initSources() {
+    if (!document.getElementById("src-res") || typeof window.renderSources !== "function") return;
+
+    const css2 = `
+    .intl-box{margin-top:14px;background:#fffbeb;border:1px solid #fde68a;border-radius:11px;padding:12px 15px;}
+    .intl-box .ib-t{font-size:13px;font-weight:800;color:#92400e;margin-bottom:7px;}
+    .intl-row{margin-bottom:7px;font-size:13px;}
+    .intl-row .iq{font-weight:700;color:#334155;margin-right:6px;}
+    .intl-row a{display:inline-block;background:#fff;border:1px solid #fde68a;border-radius:999px;padding:3px 11px;font-size:12px;font-weight:700;color:#92400e;text-decoration:none;margin:2px 5px 2px 0;}
+    .intl-row a:hover{border-color:#d97706;color:#d97706;}
+    .intl-warn{font-size:11.5px;color:#a16207;line-height:1.5;margin-top:6px;}
+    .lens-box{margin-top:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:11px;padding:12px 15px;}
+    .lens-box .ib-t{font-size:13px;font-weight:800;color:#1e40af;margin-bottom:7px;}
+    .lens-btn{display:inline-block;background:#2563eb;color:#fff;border-radius:999px;padding:7px 16px;font-size:13px;font-weight:800;text-decoration:none;}
+    .lens-tip{font-size:11.5px;color:#3b5bab;line-height:1.55;margin-top:7px;}`;
+    document.head.insertAdjacentHTML("beforeend", "<style>" + css2 + "</style>");
+
+    const PLATFORMS = [
+      ["도우인", function (q) { return "https://www.douyin.com/search/" + encodeURIComponent(q); }],
+      ["샤오홍슈", function (q) { return "https://www.xiaohongshu.com/search_result?keyword=" + encodeURIComponent(q); }],
+      ["틱톡", function (q) { return "https://www.tiktok.com/search?q=" + encodeURIComponent(q); }],
+      ["빌리빌리", function (q) { return "https://search.bilibili.com/all?keyword=" + encodeURIComponent(q); }],
+      ["인스타 릴스", function (q) { return "https://www.instagram.com/explore/search/keyword/?q=" + encodeURIComponent(q); }],
+    ];
+
+    const orig = window.renderSources;
+    window.renderSources = function (j) {
+      orig(j);
+      try { enhance(j); } catch {}
+    };
+
+    function enhance(j) {
+      const host = document.getElementById("src-res");
+      if (!host) return;
+      // 이전에 붙인 확장 블록 제거 (재실행 대비)
+      const old1 = document.getElementById("src-intl"); if (old1) old1.remove();
+      const old2 = document.getElementById("src-lens"); if (old2) old2.remove();
+
+      // 1) 해외 플랫폼 직접 검색 (검색어가 미리 입력된 바로가기)
+      const qs = (j.yt_links || []).slice(0, 3);
+      if (qs.length) {
+        const div = document.createElement("div");
+        div.className = "intl-box"; div.id = "src-intl";
+        div.innerHTML = "<div class='ib-t'>🌏 해외 플랫폼에서 직접 검색 <span style='font-weight:600;color:#a16207;'>— 해외 쇼츠는 도우인·샤오홍슈에서 온 경우가 많아요</span></div>" +
+          qs.map(function (q) {
+            return "<div class='intl-row'><span class='iq'>「" + escapeHtml(q.q) + "」</span><br>" +
+              PLATFORMS.map(function (p) { return "<a href='" + p[1](q.q) + "' target='_blank' rel='noopener'>" + p[0] + "</a>"; }).join("") + "</div>";
+          }).join("") +
+          "<div class='intl-warn'>⚠️ 해외 영상은 참고·재구성용입니다. 그대로 내려받아 쓰면 저작권 문제가 될 수 있어요.</div>";
+        host.appendChild(div);
+      }
+
+      // 2) 구글렌즈로 원본 찾기 (썸네일이 이미 업로드된 상태로 열림)
+      const vid = j.video_id;
+      if (vid) {
+        const thumb = "https://i.ytimg.com/vi/" + vid + "/hqdefault.jpg";
+        const div2 = document.createElement("div");
+        div2.className = "lens-box"; div2.id = "src-lens";
+        div2.innerHTML = "<div class='ib-t'>🔍 구글렌즈로 원본 찾기</div>" +
+          "<a class='lens-btn' href='https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(thumb) + "' target='_blank' rel='noopener'>이 영상 썸네일로 렌즈 검색 열기 →</a>" +
+          "<div class='lens-tip'>썸네일과 똑같거나 비슷한 이미지가 있는 페이지를 구글이 찾아줍니다.<br>💡 영상 속 <b>특정 장면</b>으로 찾고 싶다면: 그 장면에서 일시정지 → 스크린샷 → <a href='https://lens.google.com/' target='_blank' rel='noopener' style='color:#1d4ed8;'>lens.google.com</a>에 직접 올려보세요.</div>";
+        host.appendChild(div2);
+      }
+    }
+  }
+
   // ---------------- 새 후킹 유형 후보 (lab.html, 관리자) ----------------
   function initLab() {
     if (location.pathname.indexOf("lab.html") < 0) return;
@@ -298,8 +365,8 @@
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", function () { initHook(); initLab(); });
+    document.addEventListener("DOMContentLoaded", function () { initHook(); initSources(); initLab(); });
   } else {
-    initHook(); initLab();
+    initHook(); initSources(); initLab();
   }
 })();
