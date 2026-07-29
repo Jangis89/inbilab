@@ -157,9 +157,10 @@ const RANK_PROMPT = `원본 후보 판정 작업입니다.
 
 각 후보가 대상 쇼츠의 원본(또는 원본에 가까운 소스)일 가능성을 판정하세요.
 규칙: 대상보다 늦게 게시된 후보(days_earlier가 음수)는 원본일 수 없으니 '참고'로. 제목·채널이 추정 원본과 잘 맞고 먼저 게시됐으면 '높음'.
+match_type 판정: same_source=동일 원본(같은 영상·공식 업로드), same_event=같은 사건·인물·장소를 다룬 다른 영상, visual_similar=내용은 다르지만 시각적으로 유사, long_full_version=대상을 포함하는 더 긴 전체본(duration_seconds가 대상보다 훨씬 길고 같은 내용이면 이것).
 
 JSON만 출력 (가능성 높은 순, 최대 5개):
-{ "ranked": [ { "video_id": "...", "grade": "높음|중간|참고", "reason": "한 줄 근거" } ] }`;
+{ "ranked": [ { "video_id": "...", "grade": "높음|중간|참고", "match_type": "same_source|same_event|visual_similar|long_full_version", "reason": "한 줄 근거" } ] }`;
 
 const TRANSCRIPT_PROMPT = `당신은 영상 대본 추출 전문가입니다. 이 영상을 직접 보고 들으며 실제 내용을 그대로 추출하세요. 절대 창작하거나 요약하지 말고, 들리는/보이는 그대로 옮기세요.
 
@@ -592,7 +593,7 @@ module.exports = async (req, res) => {
       const byId = {};
       candidates.forEach((c) => { byId[c.video_id] = c; });
       let finalCands = ranked
-        .map((r) => (byId[r.video_id] ? Object.assign({}, byId[r.video_id], { grade: r.grade, reason: r.reason }) : null))
+        .map((r) => (byId[r.video_id] ? Object.assign({}, byId[r.video_id], { grade: r.grade, reason: r.reason, match_type: r.match_type || "" }) : null))
         .filter(Boolean);
       if (!finalCands.length && candidates.length) {
         finalCands = candidates.slice(0, 5).map((c) => Object.assign({}, c, { grade: "참고", reason: "" }));
