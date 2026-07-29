@@ -504,12 +504,17 @@ async function main() {
     });
     vSnapRows.push({ video_id: v.id, date: TODAY, view_count: views });
   }
-  for (const part of chunk(videoRows, 200)) {
+  const savedChannelIds = new Set([...preexisting, ...chRows.map((r) => r.id)]);
+  const safeVideoRows = videoRows.filter((v) => v.channel_id && savedChannelIds.has(v.channel_id));
+  if (safeVideoRows.length < videoRows.length) console.log(`채널 명단에 없는 채널의 영상 ${videoRows.length - safeVideoRows.length}개 제외 (FK 보호)`);
+  for (const part of chunk(safeVideoRows, 200)) {
     await sbFetch("channel_videos?on_conflict=video_id", {
       method: "POST", body: part, prefer: "resolution=merge-duplicates",
     });
   }
-  for (const part of chunk(vSnapRows, 200)) {
+  const safeVideoIds = new Set(safeVideoRows.map((v) => v.video_id));
+  const safeSnapRows = vSnapRows.filter((s) => safeVideoIds.has(s.video_id));
+  for (const part of chunk(safeSnapRows, 200)) {
     await sbFetch("video_snapshots?on_conflict=video_id,date", {
       method: "POST", body: part, prefer: "resolution=merge-duplicates",
     });
