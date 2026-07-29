@@ -441,6 +441,8 @@
     var cards = (j && j.candidates) || [];
     var host = document.getElementById("src-cards");
     if (!host) return;
+    var oldSum = document.getElementById("ib-prev-sum");
+    if (oldSum) oldSum.remove();
     if (!document.getElementById("ib-prev-style")) {
       var st = document.createElement("style");
       st.id = "ib-prev-style";
@@ -459,6 +461,7 @@
       if (c.is_short_candidate) { badges.push('<span class="ib-b ib-short">쇼츠 후보' + (c.short_confidence ? (' · 확신 ' + c.short_confidence) : '') + '</span>'); nShort++; }
       else if (hasDur) { badges.push('<span class="ib-b ib-long">긴 원본 후보</span>'); nLong++; }
       else { nUnknown++; }
+      if (c.found_by) { var fbq = String(c.found_by).replace(/[<>&"\']/g, "").slice(0, 24); badges.push('<span class="ib-b">🔎 「' + fbq + '」로 발견</span>'); }
       if (c.embeddable) badges.push('<span class="ib-b ib-embed">인비랩 재생 가능</span>');
       if (badges.length) {
         var d = document.createElement("div");
