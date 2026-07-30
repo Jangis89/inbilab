@@ -797,7 +797,9 @@ module.exports = async (req, res) => {
           const oc = await fetch(oarUrl, { method: "HEAD" });
           if (oc.ok) thumb = oarUrl; // 쇼츠 세로 원본(1080x1920) — 흐린 좌우 띠 없음
         } catch {}
-        const vr = await fetch("https://vision.googleapis.com/v1/images:annotate?key=" + vk, {
+        const lReqImg = String((body && body.image_url) || "").trim();
+    if (/^https:\/\/i\.ytimg\.com\/vi\/[A-Za-z0-9_-]{6,20}\/[A-Za-z0-9_]{1,20}\.jpg$/.test(lReqImg)) thumb = lReqImg;
+    const vr = await fetch("https://vision.googleapis.com/v1/images:annotate?key=" + vk, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1069,7 +1071,6 @@ module.exports = async (req, res) => {
 
     // ---------- 액션: 바이두 유사 이미지 검색 (공식 千帆 相似图搜索 API) ----------
     if (action === "baidu_sim") {
-      if (!isAdmin) { res.status(403).json({ error: "관리자 검증 단계의 기능입니다" }); return; }
       const bkey = String(process.env.BAIDU_API_KEY || "").trim();
       if (!bkey) { res.status(200).json({ ok: true, available: false, items: [], note: "BAIDU_API_KEY 미설정" }); return; }
       const bvid = extractVideoId(body.video_url);
@@ -1079,7 +1080,9 @@ module.exports = async (req, res) => {
         const oc2 = await fetch("https://i.ytimg.com/vi/" + bvid + "/oar2.jpg", { method: "HEAD" });
         if (oc2.ok) bimg = "https://i.ytimg.com/vi/" + bvid + "/oar2.jpg";
       } catch {}
-      let bb64 = "";
+      const bReqImg = String((body && body.image_url) || "").trim();
+    if (/^https:\/\/i\.ytimg\.com\/vi\/[A-Za-z0-9_-]{6,20}\/[A-Za-z0-9_]{1,20}\.jpg$/.test(bReqImg)) bimg = bReqImg;
+    let bb64 = "";
       try {
         const ir = await fetch(bimg);
         if (!ir.ok) { res.status(502).json({ error: "썸네일을 가져오지 못했습니다 (HTTP " + ir.status + ")" }); return; }
