@@ -1125,9 +1125,16 @@
     var gseen = {}, google = [];
     (googlePages || []).forEach(function(pg){
       var key = String(pg.url || "").trim();
-      if (!key || !pg.img || !isVideoSite(pg.url) || gseen[key] || seen[key]) return;
+      var pimg = pg.img;
+      if (!pimg){
+        var ym = key.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+        if (ym) pimg = "https://i.ytimg.com/vi/" + ym[1] + "/hqdefault.jpg";
+      }
+      if (!key || !pimg || !isVideoSite(key) || gseen[key] || seen[key]) return;
+      var cvNow = currentVid();
+      if (cvNow && key.indexOf(cvNow) >= 0) return; // 지금 분석 중인 영상 자신은 제외
       gseen[key] = true;
-      google.push({ url: pg.url, img: pg.img, site: "", __scene: pg.__scene });
+      google.push({ url: pg.url, img: pimg, site: "", __scene: pg.__scene });
     });
     var nScenes = baiduGroups.length;
     if (!same.length && !google.length && !simi.length){
