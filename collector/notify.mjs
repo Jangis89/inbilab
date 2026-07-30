@@ -36,16 +36,66 @@ async function saveSecret(key, value) {
   } catch (e) { console.log(key + " 토큰 저장 실패: " + String(e).slice(0, 80)); }
 }
 
-function buildMessage() {
-  const ok = STATUS === "success";
-  const kst = new Date(Date.now() + 9 * 3600 * 1000);
-  const stamp = kst.toISOString().slice(0, 16).replace("T", " ");
-  let text = (ok ? "[OK] 인비랩 데이터 수집 성공" : "[!!] 인비랩 데이터 수집 실패") + " (" + stamp + " KST)";
-  if (!ok) text += "\n깃허브 액션 로그를 확인해 주세요.";
-  return text;
+// ── 오늘 작업 통계 (Supabase 행 개수 조회) ──
+async function countOf(pathQuery) {
+  try {
+    const r = await fetch(SB_URL + "/rest/v1/" + pathQuery, {
+      headers: {
+        apikey: SB_KEY,
+        Authorization: "Bearer " + SB_KEY,
+        Prefer: "count=exact",
+        Range: "0-0"
+      }
+    });
+    const cr = r.headers.get("content-range") || "";
+    const n = cr.split("/")[1];
+    return n && n !== "*" ? Number(n) : null;
+  } catch (e) { return null; }
 }
 
-async function sendFor(key) {
+function kstNow() { return new Date(Date.now() + 9 * 3600 * 1000); }
+
+function fmt(n) { return n == null ? null : Number(n).toLocaleString("ko-KR"); }
+
+async function buildMessage() {
+  const ok = STATUS === "success";
+  const k = kstNow();
+  const stamp = (k.getUTCMonth() + 1) + "/" + k.getUTCDate() + " "
+    + String(k.getUTCHours()).padStart(2, "0") + ":" + String(k.getUTCMinutes()).padStart(2, "0");
+  const lines = [];
+  lines.push(ok ? "[OK] 인비랩 데이터 수집 성공" : "[!!] 인비랩 데이터 수집 실패");
+  lines.push(stamp + " (한국시간)");
+  lines.push("");
+  if (!ok) {
+    lines.push("자동 수집이 실패했습니다.");
+    lines.push("깃허브 액션 로그를 확인해 주세요.");
+    return lines.join("\n");
+  }
+  const today = k.toISOString().slice(0, 10);
+  const dayAgo = encodeURIComponent(new Date(Date.now() - 24 * 3600 * 1000).toISOString());
+  const [chTotal, chToday, vidTotal, vidToday, vidNew] = await Promise.all([
+    countOf("channels?select=*"),
+    countOf("channel_snapshots?select=*&date=eq." + today),
+    countOf("videos?select=*"),
+    countOf("videos?select=*&stats_date=eq." + today),
+    countOf("videos?select=*&published_at=gte." + dayAgo)
+  ]);
+  if (chToday != null || chTotal != null) {
+    lines.push("[채널] 등록 " + (fmt(chTotal) || "?") + "개 중 오늘 " + (fmt(chToday) || "?") + "개 통계 갱신");
+  }
+  if (vidToday != null || vidTotal != null) {
+    lines.push("[영상] 전체 " + (fmt(vidTotal) || "?") + "개 · 오늘 조회수 갱신 " + (fmt(vidToday) || "?") + "건");
+  }
+  if (vidNew != null) {
+    lines.push("[신규] 최근 24시간 새 영상 " + fmt(vidNew) + "개 발견");
+  }
+  lines.push("[AI] 카테고리 자동 점검·교정 완료");
+  lines.push("");
+  lines.push("자세히 보기: inbilab.ai.kr");
+  return lines.join("\n");
+}
+
+async function sendFor(key, text) {
   const rt = await getSecret(key);
   if (!rt) { console.log(key + ": 등록 안 됨 — 건너뜀"); return; }
   const tr = await fetch("https://kauth.kakao.com/oauth/token", {
@@ -62,7 +112,7 @@ async function sendFor(key) {
   if (tj.refresh_token) await saveSecret(key, tj.refresh_token);
   const template = {
     object_type: "text",
-    text: buildMessage(),
+    text: text,
     link: { web_url: "https://inbilab.ai.kr", mobile_web_url: "https://inbilab.ai.kr" }
   };
   const mr = await fetch("https://kapi.kakao.com/v2/api/talk/memo/default/send", {
@@ -76,6 +126,8 @@ async function sendFor(key) {
   console.log(key + " 카카오 전송 결과: " + mr.status);
 }
 
+const MSG = await buildMessage();
+console.log("메시지 미리보기 줄수: " + MSG.split("\n").length);
 for (const k of TOKEN_KEYS) {
-  try { await sendFor(k); } catch (e) { console.log(k + " 오류: " + String(e).slice(0, 100)); }
+  try { await sendFor(k, MSG); } catch (e) { console.log(k + " 오류: " + String(e).slice(0, 100)); }
 }
