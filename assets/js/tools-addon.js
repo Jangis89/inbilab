@@ -866,21 +866,11 @@
 
 
 
-/* ===== 바이두 相似图搜索 API 결과 카드 (관리자 전용) — 인비랩 add-on ===== */
+
+/* ===== 인비랩 원본후보찾기 확장 — 장면 사진 5장 다중 검색 (전체 회원용) ===== */
 ;(function(){
-  if (window.__ibBaiduCardsInit) return; window.__ibBaiduCardsInit = true;
+  if (window.__ibFrames5Init) return; window.__ibFrames5Init = true;
 
-  var ADMIN_EMAIL = "jangis89@naver.com";
-
-  function sessionEmail(){
-    try{
-      var ks = Object.keys(localStorage).filter(function(k){ return /auth-token|sb-.*-auth/.test(k); });
-      for (var i=0;i<ks.length;i++){
-        try{ var o = JSON.parse(localStorage.getItem(ks[i])); if (o && o.user && o.user.email) return o.user.email; }catch(e){}
-      }
-    }catch(e){}
-    return null;
-  }
   function sessionToken(){
     try{
       var ks = Object.keys(localStorage).filter(function(k){ return /auth-token|sb-.*-auth/.test(k); });
@@ -890,20 +880,24 @@
     }catch(e){}
     return null;
   }
-  function isAdminNow(){
-    try{ if (typeof window.isAdmin === "function" && window.isAdmin() === true) return true; }catch(e){}
-    try{ if (window.isAdmin === true) return true; }catch(e){}
-    return sessionEmail() === ADMIN_EMAIL;
+
+  function esc(x){ return String(x==null?"":x).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+  function toast(msg){
+    try{ if (typeof window.ibToast === "function") return window.ibToast(msg); }catch(e){}
+    var d = document.createElement("div");
+    d.textContent = msg;
+    d.style.cssText = "position:fixed;left:50%;bottom:40px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;z-index:99999;max-width:86%;text-align:center";
+    document.body.appendChild(d);
+    setTimeout(function(){ try{ d.remove(); }catch(e){} }, 3500);
   }
 
   function currentVideoUrl(){
-    // 1) an input holding a youtube url (the video being analyzed)
     var inps = [].slice.call(document.querySelectorAll("input"));
     for (var i=0;i<inps.length;i++){
       var v = (inps[i].value || "").trim();
       if (/youtu\.?be|youtube\.com/.test(v)) return v;
     }
-    // 2) fall back to a youtube thumbnail already on the page
     var imgs = [].slice.call(document.querySelectorAll("img"));
     for (var j=0;j<imgs.length;j++){
       var m = (imgs[j].src || "").match(/\/vi\/([A-Za-z0-9_\-]{11})\//);
@@ -911,8 +905,149 @@
     }
     return "";
   }
+  function currentVid(){
+    var u = currentVideoUrl();
+    var m = u.match(/[?&]v=([A-Za-z0-9_\-]{11})/) || u.match(/youtu\.be\/([A-Za-z0-9_\-]{11})/) || u.match(/shorts\/([A-Za-z0-9_\-]{11})/);
+    return m ? m[1] : null;
+  }
 
-  function esc(x){ return String(x==null?"":x).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+  // ── 장면 사진 5장 (유튜브 제공 프레임, 세로 원본 우선 + 가로 대체) ──
+  var FRAME_DEFS = [
+    { key:"oardefault", fb:"hqdefault", label:"대표" },
+    { key:"frame0",     fb:null,        label:"첫장면" },
+    { key:"oar1",       fb:"hq1",       label:"앞부분" },
+    { key:"oar2",       fb:"hq2",       label:"중간" },
+    { key:"oar3",       fb:"hq3",       label:"뒷부분" }
+  ];
+  function probeImg(u){
+    return new Promise(function(res){
+      try{
+        var im = new Image();
+        var done = false;
+        im.onload = function(){ if(!done){ done=true; res({ok:true, w:im.naturalWidth}); } };
+        im.onerror = function(){ if(!done){ done=true; res({ok:false}); } };
+        im.src = u;
+        setTimeout(function(){ if(!done){ done=true; res({ok:false}); } }, 7000);
+      }catch(e){ res({ok:false}); }
+    });
+  }
+  var frameCache = {};
+  function getFrames(vid){
+    if (frameCache[vid]) return frameCache[vid];
+    frameCache[vid] = Promise.all(FRAME_DEFS.map(function(d){
+      var base = "https://i.ytimg.com/vi/" + vid + "/";
+      return probeImg(base + d.key + ".jpg").then(function(r){
+        if (r.ok && r.w >= 100) return { url: base + d.key + ".jpg", label: d.label };
+        if (!d.fb) return null;
+        return probeImg(base + d.fb + ".jpg").then(function(r2){
+          if (r2.ok && r2.w >= 100) return { url: base + d.fb + ".jpg", label: d.label };
+          return null;
+        });
+      });
+    })).then(function(list){ return list.filter(Boolean); });
+    return frameCache[vid];
+  }
+
+  // ── 접었다 펼치는 사진 스트립 부품 ──
+  function makeStrip(opts){
+    var root = document.createElement("div");
+    root.className = "ib-frame-strip";
+    root.style.cssText = "margin-top:8px";
+    var tg = document.createElement("button");
+    tg.type = "button";
+    tg.textContent = "📸 장면 사진 5장 펼치기 ▾";
+    tg.style.cssText = "display:block;width:100%;padding:8px;border:1px dashed #94a3b8;background:#f8fafc;color:#334155;border-radius:8px;font-size:12.5px;cursor:pointer;font-family:inherit";
+    var panel = document.createElement("div");
+    panel.style.cssText = "display:none;margin-top:8px";
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:8px;overflow-x:auto;padding:4px 0";
+    var hint = document.createElement("div");
+    hint.style.cssText = "font-size:11.5px;color:#64748b;margin-top:4px";
+    hint.textContent = opts.hint || "";
+    var out = document.createElement("div");
+    out.className = "ib-strip-out";
+    out.style.cssText = "margin-top:8px";
+    panel.appendChild(row); if (opts.hint) panel.appendChild(hint); panel.appendChild(out);
+    root.appendChild(tg); root.appendChild(panel);
+    var loaded = false, open = false;
+    tg.addEventListener("click", function(){
+      open = !open;
+      panel.style.display = open ? "block" : "none";
+      tg.textContent = open ? "📸 장면 사진 접기 ▴" : "📸 장면 사진 5장 펼치기 ▾";
+      if (open && !loaded){
+        loaded = true;
+        var vid = currentVid();
+        if (!vid){ row.innerHTML = "<div style=\"font-size:12.5px;color:#c0392b\">영상 주소를 먼저 입력해 주세요.</div>"; loaded=false; return; }
+        row.innerHTML = "<div style=\"font-size:12.5px;color:#888\">장면 사진을 불러오는 중…</div>";
+        getFrames(vid).then(function(frames){
+          row.innerHTML = "";
+          if (!frames.length){ row.innerHTML = "<div style=\"font-size:12.5px;color:#c0392b\">이 영상은 장면 사진을 제공하지 않습니다.</div>"; return; }
+          frames.forEach(function(f){
+            var cell = document.createElement("div");
+            cell.style.cssText = "flex:none;text-align:center;cursor:pointer";
+            var im = document.createElement("img");
+            im.src = f.url; im.loading = "lazy";
+            im.style.cssText = "width:62px;height:110px;object-fit:cover;border-radius:8px;background:#f1f5f9;border:3px solid transparent";
+            var lb = document.createElement("div");
+            lb.textContent = f.label;
+            lb.style.cssText = "font-size:11px;color:#475569;margin-top:2px";
+            cell.appendChild(im); cell.appendChild(lb);
+            cell.addEventListener("click", function(){
+              [].slice.call(row.querySelectorAll("img")).forEach(function(x){ x.style.borderColor = "transparent"; });
+              im.style.borderColor = "#2563eb";
+              opts.onFrame(f, out, row);
+            });
+            row.appendChild(cell);
+          });
+          if (opts.onFramesReady) opts.onFramesReady(frames, out, panel);
+        });
+      }
+    });
+    return root;
+  }
+
+  // ── 장면 이미지 복사 + 바이두 열기 (识图용) ──
+  function copyFrameOpenBaidu(url){
+    var im = new Image();
+    im.crossOrigin = "anonymous";
+    im.onload = function(){
+      try{
+        var cv = document.createElement("canvas");
+        cv.width = im.naturalWidth; cv.height = im.naturalHeight;
+        cv.getContext("2d").drawImage(im, 0, 0);
+        cv.toBlob(function(bb){
+          if (bb && typeof ClipboardItem !== "undefined"){
+            navigator.clipboard.write([new ClipboardItem({ "image/png": bb })]).then(function(){
+              toast("📸 장면 이미지가 복사됐어요! 열린 바이두 페이지에서 카메라 아이콘 → Ctrl+V 하세요.");
+            }).catch(function(){ try{ navigator.clipboard.writeText(url); }catch(e){} toast("이미지 주소를 복사했어요. 바이두 카메라 아이콘에 붙여넣으세요."); });
+          } else { try{ navigator.clipboard.writeText(url); }catch(e){} toast("이미지 주소를 복사했어요. 바이두 카메라 아이콘에 붙여넣으세요."); }
+        }, "image/png");
+      }catch(e){ try{ navigator.clipboard.writeText(url); }catch(_e){} toast("이미지 주소를 복사했어요."); }
+    };
+    im.onerror = function(){ try{ navigator.clipboard.writeText(url); }catch(e){} toast("이미지 주소를 복사했어요."); };
+    im.src = url;
+    window.open("https://graph.baidu.com/pcpage/index?tpl_from=pc", "_blank");
+  }
+
+  // ── 바이두 API 검색 (캐시 포함) ──
+  var NO_RESULT_MSG = "해당 영상의 원본 소스는 이곳에 없을 확률이 매우 높습니다.";
+  var baiduCache = {};
+  async function baiduSearch(imageUrl){
+    var key = imageUrl;
+    if (baiduCache[key]) return baiduCache[key];
+    var tok = sessionToken();
+    var body = { feature: "source_finder", action: "baidu_sim", video_url: currentVideoUrl() };
+    if (imageUrl) body.image_url = imageUrl;
+    var r = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + tok },
+      body: JSON.stringify(body)
+    });
+    var j = null; try{ j = await r.json(); }catch(e){}
+    if (j && j.ok === true) baiduCache[key] = j;
+    if (!j) j = { ok:false, error: "HTTP " + r.status };
+    return j;
+  }
 
   function cardHtml(it){
     var same = it.cate === "CATE_SAME";
@@ -934,91 +1069,161 @@
       + '</div></a>';
   }
 
-  window.ibBaiduCards = async function(hostEl, btnEl){
-    var url = currentVideoUrl();
-    var wrap = hostEl.querySelector(".ib-baidu-wrap");
-    if (!wrap){ wrap = document.createElement("div"); wrap.className = "ib-baidu-wrap"; wrap.style.marginTop = "10px"; hostEl.appendChild(wrap); }
-    if (!url){ wrap.innerHTML = '<div style="padding:9px;color:#c0392b;font-size:13px">먼저 분석할 유튜브 영상 주소를 입력해 주세요.</div>'; return; }
-    var tok = sessionToken();
-    if (btnEl){ btnEl.disabled = true; btnEl.dataset.oldText = btnEl.textContent; btnEl.textContent = "바이두에서 원본 검색 중…"; }
-    wrap.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 바이두에서 원본을 찾고 있습니다… (몇 초 걸립니다)</div>';
-    try{
-      var r = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + tok },
-        body: JSON.stringify({ action: "baidu_sim", video_url: url })
-      });
-      var j = null; try{ j = await r.json(); }catch(e){}
-      if (!j || j.ok !== true){
-        var em = (j && j.error) ? j.error : ("HTTP " + r.status);
-        wrap.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">바이두 검색 실패: ' + esc(em) + '</div>';
-        return;
-      }
-      var items = j.items || [];
-      var same = items.filter(function(it){ return it.cate === "CATE_SAME"; });
-      var simi = items.filter(function(it){ return it.cate !== "CATE_SAME"; });
-      if (!items.length){
-        wrap.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">바이두에서 일치하는 이미지를 찾지 못했습니다.</div>';
-        return;
-      }
-      var head = '<div style="font-weight:700;font-size:14px;margin:4px 0 9px">🅑 바이두 원본 검색 결과 — '
-        + '<span style="color:#e74c3c">동일 원본 ' + same.length + '건</span> · '
-        + '<span style="color:#f39c12">유사 ' + simi.length + '건</span></div>';
-      var ordered = same.concat(simi);
-      wrap.innerHTML = head
-        + '<div style="max-height:520px;overflow:auto">' + ordered.map(cardHtml).join("") + '</div>'
-        + '<div style="font-size:11px;color:#b5b5b5;margin-top:6px">百度识图 提供技术支持 · 결과는 참고용이며 실제 원본 여부는 직접 확인하세요.</div>';
-    }catch(e){
-      wrap.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">오류가 발생했습니다: ' + esc(String(e).slice(0,120)) + '</div>';
-    }finally{
-      if (btnEl){ btnEl.disabled = false; if (btnEl.dataset.oldText) btnEl.textContent = btnEl.dataset.oldText; }
+  function renderBaiduResult(j, out, frameLabel){
+    if (!j || j.ok !== true){
+      out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">바이두 검색 실패: ' + esc((j && j.error) || "오류") + '</div>';
+      return 0;
     }
-  };
+    var items = j.items || [];
+    if (!items.length){
+      out.innerHTML = '<div style="padding:10px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px">' + esc(NO_RESULT_MSG) + '<br><span style="font-size:12px;color:#94a3b8">다른 장면 사진으로도 시도해 보세요.</span></div>';
+      return 0;
+    }
+    var same = items.filter(function(it){ return it.cate === "CATE_SAME"; });
+    var simi = items.filter(function(it){ return it.cate !== "CATE_SAME"; });
+    var head = '<div style="font-weight:700;font-size:14px;margin:4px 0 9px">🅑 바이두 원본 검색 결과' + (frameLabel ? ' — ' + esc(frameLabel) + ' 장면' : '') + ' — '
+      + '<span style="color:#e74c3c">동일 원본 ' + same.length + '건</span> · '
+      + '<span style="color:#f39c12">유사 ' + simi.length + '건</span></div>';
+    var ordered = same.concat(simi);
+    out.innerHTML = head
+      + '<div style="max-height:520px;overflow:auto">' + ordered.map(cardHtml).join("") + '</div>'
+      + '<div style="font-size:11px;color:#b5b5b5;margin-top:6px">百度识图 提供技术支持 · 결과는 참고용이며 실제 원본 여부는 직접 확인하세요.</div>';
+    return items.length;
+  }
 
-  function makeButton(){
-    var b = document.createElement("button");
-    b.className = "ib-baidu-api-btn";
-    b.type = "button";
-    b.textContent = "🅑 바이두 API로 원본 카드 보기 (관리자)";
-    b.style.cssText = "display:block;width:100%;margin-top:8px;padding:10px;border:1px solid #2c6fbb;"
-      + "background:#eaf2fb;color:#1c4e8a;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer";
-    b.addEventListener("click", function(){
-      var host = b.parentElement || document.body;
-      window.ibBaiduCards(host, b);
+  async function baiduBatchSearch(frames, out){
+    out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 장면 5장을 차례로 검색하는 중… (수십 초 걸릴 수 있어요)</div>';
+    var blocks = [], total = 0;
+    for (var i=0;i<frames.length;i++){
+      var f = frames[i];
+      out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 ' + (i+1) + '/' + frames.length + ' — ' + esc(f.label) + ' 장면 검색 중…</div>' + blocks.join("");
+      var j = null;
+      try{ j = await baiduSearch(f.url); }catch(e){}
+      var items = (j && j.ok === true && j.items) ? j.items : [];
+      var same = items.filter(function(it){ return it.cate === "CATE_SAME"; });
+      total += items.length;
+      if (items.length){
+        var tmp = document.createElement("div");
+        renderBaiduResult(j, tmp, f.label);
+        blocks.push('<div style="border-top:2px solid #e2e8f0;margin-top:10px;padding-top:6px">' + tmp.innerHTML + '</div>');
+      } else {
+        blocks.push('<div style="border-top:2px solid #e2e8f0;margin-top:10px;padding-top:6px;font-size:12.5px;color:#94a3b8">' + esc(f.label) + ' 장면: 결과 없음' + (j && j.ok !== true ? " (검색 실패)" : "") + '</div>');
+      }
+    }
+    if (total === 0){
+      out.innerHTML = '<div style="padding:12px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px"><b>5장 모두 검색했지만 결과가 없습니다.</b><br>' + esc(NO_RESULT_MSG) + '</div>';
+    } else {
+      out.innerHTML = '<div style="font-weight:700;font-size:14px;margin:4px 0 6px">🔍 5장 전체 검색 완료 — 총 ' + total + '건 발견</div>' + blocks.join("");
+    }
+  }
+
+  // ── 구글 Vision 장면 검색 (캐시 포함) ──
+  var visionCache = {};
+  async function visionSearch(imageUrl){
+    if (visionCache[imageUrl]) return visionCache[imageUrl];
+    var tok = sessionToken();
+    var r = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + tok },
+      body: JSON.stringify({ feature: "source_finder", action: "lens", video_url: currentVideoUrl(), image_url: imageUrl })
     });
-    return b;
+    var j = null; try{ j = await r.json(); }catch(e){}
+    if (j && j.ok === true) visionCache[imageUrl] = j;
+    if (!j) j = { ok:false, error: "HTTP " + r.status };
+    return j;
   }
 
-  function injectNear(shituBtn){
-    // avoid duplicates within the same container
-    var host = shituBtn.parentElement || shituBtn;
-    if (host.querySelector(".ib-baidu-api-btn")) return;
-    if (!isAdminNow()) return;
-    var btn = makeButton();
-    shituBtn.insertAdjacentElement("afterend", btn);
+  function renderVisionResult(j, out, frameLabel){
+    if (!j || j.ok !== true){
+      out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">구글 검색 실패: ' + esc((j && j.error) || "오류") + '</div>';
+      return;
+    }
+    var pages = Array.isArray(j.pages) ? j.pages.filter(function(x){ return x && x.url; }) : [];
+    var html = '<div style="font-weight:700;font-size:14px;margin:4px 0 8px">🖼️ 구글 검색 결과' + (frameLabel ? ' — ' + esc(frameLabel) + ' 장면' : '') + ' — ' + pages.length + '건</div>';
+    if (Array.isArray(j.labels) && j.labels.length){
+      html += '<div style="font-size:12px;color:#1e40af;margin-bottom:6px">구글의 추측: ' + j.labels.map(esc).join(", ") + '</div>';
+    }
+    if (!pages.length){
+      html += '<div style="padding:10px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px">' + esc(NO_RESULT_MSG) + '<br><span style="font-size:12px;color:#94a3b8">다른 장면 사진으로도 시도해 보세요.</span></div>';
+    } else {
+      html += pages.slice(0, 20).map(function(pg){
+        var host = ""; try{ host = new URL(pg.url).hostname; }catch(e){}
+        return '<a href="' + esc(pg.url) + '" target="_blank" rel="noopener noreferrer" style="display:flex;gap:10px;align-items:center;text-decoration:none;color:inherit;border:1px solid #ececec;border-radius:10px;padding:8px;margin-bottom:8px;background:#fff">'
+          + (pg.img ? '<img src="' + esc(pg.img) + '" referrerpolicy="no-referrer" loading="lazy" style="width:52px;height:52px;object-fit:cover;border-radius:7px;flex:none;background:#f2f2f2">' : '')
+          + '<div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">' + esc(pg.title || pg.url) + '</div>'
+          + '<div style="font-size:12px;color:#999;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(host) + '</div></div></a>';
+      }).join("");
+    }
+    out.innerHTML = html;
   }
 
-  function scan(){
-    if (!isAdminNow()) return;
-    // find the innermost clickable elements whose label contains 识图 (the existing reverse-image button)
-    var clickables = [].slice.call(document.querySelectorAll("button, a"));
-    clickables.forEach(function(el){
-      if (el.__ibShituSeen) return;
+  // ── 화면에 부착 ──
+  function attachAll(){
+    // 1) 바이두 식별(识图) 버튼 아래: 사진 클릭 → 복사 + 바이두 열기
+    [].slice.call(document.querySelectorAll("button, a")).forEach(function(el){
+      if (el.__ibF5a) return;
       if (!/识图/.test(el.textContent || "")) return;
-      // ensure it's the innermost (no descendant button/a also matching)
       var inner = el.querySelector("button, a");
       if (inner && /识图/.test(inner.textContent || "")) return;
-      el.__ibShituSeen = true;
-      injectNear(el);
+      el.__ibF5a = true;
+      var strip = makeStrip({
+        hint: "사진을 누르면 ① 그 장면이 복사되고 ② 바이두 검색창이 열립니다. 첫 장면으로 못 찾으면 다른 장면으로!",
+        onFrame: function(f){ copyFrameOpenBaidu(f.url); }
+      });
+      el.insertAdjacentElement("afterend", strip);
+
+      // 2) 그 아래: 바이두 API 카드 검색 (전체 회원)
+      var apiWrap = document.createElement("div");
+      apiWrap.style.cssText = "margin-top:8px";
+      var apiTitle = document.createElement("div");
+      apiTitle.textContent = "🅑 바이두 API로 원본 카드 보기 — 장면을 골라 누르세요";
+      apiTitle.style.cssText = "font-size:13px;font-weight:600;color:#1c4e8a;background:#eaf2fb;border:1px solid #2c6fbb;border-radius:9px;padding:10px";
+      apiWrap.appendChild(apiTitle);
+      var apiStrip = makeStrip({
+        hint: "사진을 누르면 이 화면 안에서 바로 원본 후보 카드가 나옵니다.",
+        onFrame: function(f, out){
+          out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 ' + esc(f.label) + ' 장면으로 바이두에서 원본을 찾는 중…</div>';
+          baiduSearch(f.url).then(function(j){ renderBaiduResult(j, out, f.label); })
+            .catch(function(e){ out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">오류: ' + esc(String(e).slice(0,120)) + '</div>'; });
+        },
+        onFramesReady: function(frames, out, panel){
+          if (panel.querySelector(".ib-batch-btn")) return;
+          var bb = document.createElement("button");
+          bb.type = "button";
+          bb.className = "ib-batch-btn";
+          bb.textContent = "🔍 5장 한 번에 검색 (자동으로 전부 찾아보기)";
+          bb.style.cssText = "display:block;width:100%;margin-top:6px;padding:9px;border:1px solid #2c6fbb;background:#2c6fbb;color:#fff;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit";
+          bb.addEventListener("click", function(){ baiduBatchSearch(frames, out); });
+          panel.insertBefore(bb, out);
+        }
+      });
+      apiWrap.appendChild(apiStrip);
+      strip.insertAdjacentElement("afterend", apiWrap);
+    });
+
+    // 3) 구글 박스: 렌즈 링크 갱신 + Vision 장면 검색
+    [].slice.call(document.querySelectorAll('a[href*="lens.google.com/uploadbyurl"]')).forEach(function(lensA){
+      if (lensA.__ibF5b) return;
+      lensA.__ibF5b = true;
+      var host = lensA.parentElement || lensA;
+      var strip = makeStrip({
+        hint: "사진을 누르면 그 장면으로 구글 검색 결과가 아래에 나오고, 위의 Google Lens 링크도 그 장면으로 바뀝니다.",
+        onFrame: function(f, out){
+          try{ lensA.href = "https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(f.url); }catch(e){}
+          out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 ' + esc(f.label) + ' 장면으로 구글에서 찾는 중…</div>';
+          visionSearch(f.url).then(function(j){ renderVisionResult(j, out, f.label); })
+            .catch(function(e){ out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">오류: ' + esc(String(e).slice(0,120)) + '</div>'; });
+        }
+      });
+      host.insertAdjacentElement("afterend", strip);
     });
   }
 
   var pending = false;
   var mo = new MutationObserver(function(){
     if (pending) return; pending = true;
-    setTimeout(function(){ pending = false; try{ scan(); }catch(e){} }, 150);
+    setTimeout(function(){ pending = false; try{ attachAll(); }catch(e){} }, 200);
   });
   try{ mo.observe(document.documentElement, { childList: true, subtree: true }); }catch(e){}
-  try{ scan(); }catch(e){}
+  try{ attachAll(); }catch(e){}
 })();
-
