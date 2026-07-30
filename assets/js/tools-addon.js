@@ -1037,6 +1037,41 @@
     return j;
   }
 
+  // 영상 플랫폼 화이트리스트: 글(뉴스.블로그) 페이지 제외
+  var VIDEO_SITES = [
+    "douyin.com", "iesdouyin.com", "tiktok.com",
+    "kuaishou.com", "chenzhongtech.com",
+    "haokan.baidu.com", "quanmin.baidu.com", "mbd.baidu.com/newspage/data/videolanding",
+    "bilibili.com", "b23.tv",
+    "iqiyi.com", "v.qq.com", "youku.com", "mgtv.com",
+    "ixigua.com", "xiaohongshu.com", "xhslink.com",
+    "weibo.com", "weibo.cn",
+    "56.com", "tv.sohu.com",
+    "pearvideo.com", "meipai.com",
+    "youtube.com", "youtu.be", "dailymotion.com", "vimeo.com"
+  ];
+  function isVideoSite(u){
+    u = String(u || "");
+    for (var i = 0; i < VIDEO_SITES.length; i++){ if (u.indexOf(VIDEO_SITES[i]) >= 0) return true; }
+    return false;
+  }
+
+  // 미리보기 사진이 안 뜨는 카드는 자동 제거 + 개수 보정
+  window.__ibCardDead = function(imgEl){
+    try{
+      var a = imgEl.closest("a"); if (!a) return;
+      a.style.display = "none";
+      var out = a.closest(".ib-res-out"); if (!out) return;
+      function vis(sel){ var g = out.querySelector(sel); if (!g) return 0; return [].slice.call(g.children).filter(function(c){ return c.style.display !== "none"; }).length; }
+      var ns = vis(".ib-grid-same"), ng = vis(".ib-grid-google"), ny = vis(".ib-simi-grid");
+      var es = out.querySelector(".ib-cnt-same"); if (es) es.textContent = "동일 원본 " + ns + "건";
+      var eg = out.querySelector(".ib-cnt-google"); if (eg) eg.textContent = "구글 발견 " + ng + "건";
+      var ey = out.querySelector(".ib-cnt-simi"); if (ey) ey.textContent = "유사 " + ny + "건";
+      var tg = out.querySelector(".ib-simi-tg"); if (tg) tg.textContent = tg.textContent.replace(/유사 영상 \d+건/, "유사 영상 " + ny + "건");
+      var hs = out.querySelector(".ib-sec-same"); if (hs) hs.textContent = hs.textContent.replace(/\(\d+건\)/, "(" + ns + "건)");
+      var hg = out.querySelector(".ib-sec-google"); if (hg) hg.textContent = hg.textContent.replace(/\(\d+건\)/, "(" + ng + "건)");
+    }catch(e){}
+  };
   function platformLabel(x){
     var s = String(x.site || "");
     var u = String(x.url || "");
@@ -1062,7 +1097,7 @@
     var scene = big && x.__scene ? '<div style="font-size:11px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(x.__scene) + ' 사진에서 발견</div>' : "";
     return '<a href="' + esc(x.url || "#") + '" target="_blank" rel="noopener noreferrer" style="display:block;width:' + w + 'px;text-decoration:none;color:inherit;flex:none">'
       + '<div style="width:' + w + 'px;height:' + h + 'px;border-radius:10px;background:#f1f5f9;overflow:hidden;border:1px solid #e2e8f0">'
-      + '<img src="' + esc(x.img) + '" referrerpolicy="no-referrer" loading="lazy" style="width:100%;height:100%;object-fit:cover">'
+      + '<img src="' + esc(x.img) + '" referrerpolicy="no-referrer" loading="lazy" onerror="window.__ibCardDead && window.__ibCardDead(this)" style="width:100%;height:100%;object-fit:cover">'
       + '</div>'
       + '<div style="font-size:' + (big ? 12 : 11) + 'px;font-weight:600;color:#1e40af;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + plat + '</div>'
       + scene + '</a>';
@@ -1070,11 +1105,12 @@
 
   // ── 통합 결과: 동일원본 → 구글(이미지 있는 것만) → 유사 ──
   function renderTotal(baiduGroups, googlePages, out, note){
+    try{ out.classList.add("ib-res-out"); }catch(e){}
     var seen = {}, all = [];
     baiduGroups.forEach(function(g){
       (g.items || []).forEach(function(it){
         var key = String(it.url || "").trim();
-        if (!key || !it.img) return;
+        if (!key || !it.img || !isVideoSite(it.url)) return;
         if (seen[key]){
           if (it.cate === "CATE_SAME" && seen[key].cate !== "CATE_SAME"){ seen[key].cate = "CATE_SAME"; seen[key].__scene = g.label; }
           return;
@@ -1089,7 +1125,7 @@
     var gseen = {}, google = [];
     (googlePages || []).forEach(function(pg){
       var key = String(pg.url || "").trim();
-      if (!key || !pg.img || gseen[key] || seen[key]) return;
+      if (!key || !pg.img || !isVideoSite(pg.url) || gseen[key] || seen[key]) return;
       gseen[key] = true;
       google.push({ url: pg.url, img: pg.img, site: "", __scene: pg.__scene });
     });
@@ -1099,19 +1135,19 @@
       return;
     }
     var html = '<div style="font-weight:700;font-size:14px;margin:6px 0 10px">🔍 인비남 AI 토탈 검색 결과 <span style="font-size:11px;color:#94a3b8;font-weight:400">(고유 장면 ' + nScenes + '장으로 검색 · 같은 주소 중복 제거)</span><br>'
-      + '<span style="color:#e74c3c">동일 원본 ' + same.length + '건</span> · '
-      + '<span style="color:#2563eb">구글 발견 ' + google.length + '건</span> · '
-      + '<span style="color:#f39c12">유사 ' + simi.length + '건</span></div>';
+      + '<span class="ib-cnt-same" style="color:#e74c3c">동일 원본 ' + same.length + '건</span> · '
+      + '<span class="ib-cnt-google" style="color:#2563eb">구글 발견 ' + google.length + '건</span> · '
+      + '<span class="ib-cnt-simi" style="color:#f39c12">유사 ' + simi.length + '건</span></div>';
     if (same.length){
-      html += '<div style="font-size:13px;font-weight:700;color:#e74c3c;margin-bottom:6px">🔴 동일 원본 판정 (' + same.length + '건) — 사진을 누르면 해당 페이지가 열립니다</div>';
-      html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px">' + same.map(function(x){ return gridCard(x, true); }).join("") + '</div>';
+      html += '<div class="ib-sec-same" style="font-size:13px;font-weight:700;color:#e74c3c;margin-bottom:6px">🔴 동일 원본 판정 (' + same.length + '건) — 사진을 누르면 해당 페이지가 열립니다</div>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px" class="ib-grid-same">' + same.map(function(x){ return gridCard(x, true); }).join("") + '</div>';
       html += '<div style="font-size:11.5px;color:#94a3b8;margin-bottom:10px">⚠ 주소에 따라 영상이 아닌 글(기사·블로그)일 수 있어요. 직접 눌러 원본 영상인지 확인하세요.</div>';
     } else {
       html += '<div style="padding:10px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px;margin-bottom:10px">동일 원본 판정 없음. ' + esc(NO_RESULT_MSG) + '</div>';
     }
     if (google.length){
-      html += '<div style="font-size:13px;font-weight:700;color:#2563eb;margin:10px 0 6px">🔵 구글이 찾은 페이지 (' + google.length + '건) — 해외 원본일 가능성</div>';
-      html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px">' + google.map(function(x){ return gridCard(x, true); }).join("") + '</div>';
+      html += '<div class="ib-sec-google" style="font-size:13px;font-weight:700;color:#2563eb;margin:10px 0 6px">🔵 구글이 찾은 페이지 (' + google.length + '건) — 해외 원본일 가능성</div>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px" class="ib-grid-google">' + google.map(function(x){ return gridCard(x, true); }).join("") + '</div>';
     }
     if (simi.length){
       var open = same.length === 0 && google.length === 0;
