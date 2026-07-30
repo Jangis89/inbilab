@@ -1009,16 +1009,46 @@
 
   var NO_RESULT_MSG = "해당 영상의 원본 소스는 이곳에 없을 확률이 매우 높습니다.";
 
+  // ── 서버 공유 캐시 (Supabase search_cache): 수강생 전원이 검색 결과 공유 ──
+  var SB_TTL_MS = 30*24*3600*1000; // 30일 보관
+  function sbCfg(){ var c = window.INBILAB_CONFIG || {}; return (c.SUPABASE_URL && c.SUPABASE_ANON_KEY) ? c : null; }
+  function sbHdr(c){ return { "apikey": c.SUPABASE_ANON_KEY, "Authorization": "Bearer " + c.SUPABASE_ANON_KEY }; }
+  async function sbCacheGet(engine, imageUrl){
+    try{
+      var c = sbCfg(); if (!c) return null;
+      var k = engine + ":" + imageUrl;
+      var r = await fetch(c.SUPABASE_URL + "/rest/v1/search_cache?cache_key=eq." + encodeURIComponent(k) + "&select=payload,created_at", { headers: sbHdr(c) });
+      if (!r.ok) return null;
+      var j = await r.json();
+      if (!j || !j.length) return null;
+      if (Date.now() - new Date(j[0].created_at).getTime() > SB_TTL_MS) return null;
+      return j[0].payload || null;
+    }catch(e){ return null; }
+  }
+  function sbCachePut(engine, imageUrl, payload){
+    try{
+      var c = sbCfg(); if (!c) return;
+      var k = engine + ":" + imageUrl;
+      fetch(c.SUPABASE_URL + "/rest/v1/search_cache?on_conflict=cache_key", {
+        method: "POST",
+        headers: Object.assign({ "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates" }, sbHdr(c)),
+        body: JSON.stringify({ cache_key: k, engine: engine, video_id: currentVid() || null, payload: payload, created_at: new Date().toISOString() })
+      }).catch(function(){});
+    }catch(e){}
+  }
+
   var baiduCache = {};
   async function baiduSearch(imageUrl){
     if (baiduCache[imageUrl]) return baiduCache[imageUrl];
+    var bCached = await sbCacheGet("baidu", imageUrl);
+    if (bCached && bCached.ok === true){ baiduCache[imageUrl] = bCached; return bCached; }
     var r = await fetch("/api/ai", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + sessionToken() },
       body: JSON.stringify({ feature: "source_finder", action: "baidu_sim", video_url: currentVideoUrl(), image_url: imageUrl })
     });
     var j = null; try{ j = await r.json(); }catch(e){}
-    if (j && j.ok === true) baiduCache[imageUrl] = j;
+    if (j && j.ok === true){ baiduCache[imageUrl] = j; sbCachePut("baidu", imageUrl, j); }
     if (!j) j = { ok:false, error: "HTTP " + r.status };
     return j;
   }
@@ -1037,11 +1067,13 @@
   // 구글 렌즈(정밀·SearchApi) 우선, 키 없음/실패 시 기존 비전으로 자동 대체
   async function visionSearch(imageUrl){
     if (visionCache[imageUrl]) return visionCache[imageUrl];
+    var vCached = await sbCacheGet("lens", imageUrl);
+    if (vCached && vCached.ok === true){ visionCache[imageUrl] = vCached; return vCached; }
     var j = await lensCall("lens_pro", imageUrl);
     if (!j || j.ok !== true || j.available === false){
       j = await lensCall("lens", imageUrl);
     }
-    if (j && j.ok === true) visionCache[imageUrl] = j;
+    if (j && j.ok === true){ visionCache[imageUrl] = j; sbCachePut("lens", imageUrl, j); }
     return j;
   }
 
