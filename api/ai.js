@@ -1070,7 +1070,30 @@ module.exports = async (req, res) => {
     }
 
     // ---------- 액션: 바이두 유사 이미지 검색 (공식 千帆 相似图搜索 API) ----------
-    if (action === "baidu_sim") {
+    // ── 구글 렌즈 검색 (SearchApi 중계) — SEARCHAPI_KEY 필요, 없으면 건너뜀 ──
+  if (action === "lens_pro") {
+    const lpKey = String(process.env.SEARCHAPI_KEY || "").trim();
+    if (!lpKey) { res.status(200).json({ ok: true, available: false, pages: [] }); return; }
+    const lpVid = extractVideoId(body.video_url);
+    let lpImg = lpVid ? ("https://i.ytimg.com/vi/" + lpVid + "/hqdefault.jpg") : "";
+    const lpReq = String((body && body.image_url) || "").trim();
+    if (/^https:\/\/i\.ytimg\.com\/vi\/[A-Za-z0-9_-]{6,20}\/[A-Za-z0-9_]{1,20}\.jpg$/.test(lpReq)) lpImg = lpReq;
+    if (!lpImg) { res.status(400).json({ error: "이미지가 없습니다" }); return; }
+    try {
+      const lpR = await fetch("https://www.searchapi.io/api/v1/search?engine=google_lens&url=" + encodeURIComponent(lpImg) + "&api_key=" + lpKey);
+      const lpJ = await lpR.json().catch(function(){ return null; });
+      if (!lpR.ok || !lpJ) { res.status(200).json({ ok: false, error: "렌즈 검색 실패 HTTP " + lpR.status }); return; }
+      const lpPages = Array.isArray(lpJ.visual_matches) ? lpJ.visual_matches.map(function(m){
+        return { url: m.link, title: m.title || "", img: m.thumbnail || (m.image && m.image.link) || "" };
+      }).filter(function(p){ return p.url; }) : [];
+      res.status(200).json({ ok: true, available: true, pages: lpPages });
+    } catch (e) {
+      res.status(200).json({ ok: false, error: "렌즈 오류", detail: String((e && e.message) || e).slice(0, 120) });
+    }
+    return;
+  }
+
+  if (action === "baidu_sim") {
       const bkey = String(process.env.BAIDU_API_KEY || "").trim();
       if (!bkey) { res.status(200).json({ ok: true, available: false, items: [], note: "BAIDU_API_KEY 미설정" }); return; }
       const bvid = extractVideoId(body.video_url);
