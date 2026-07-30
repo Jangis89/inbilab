@@ -1007,28 +1007,36 @@
   }
 
   // ── 장면 이미지 복사 + 바이두 열기 (识图용) ──
-  function copyFrameOpenBaidu(url){
-    var im = new Image();
-    im.crossOrigin = "anonymous";
-    im.onload = function(){
-      try{
-        var cv = document.createElement("canvas");
-        cv.width = im.naturalWidth; cv.height = im.naturalHeight;
-        cv.getContext("2d").drawImage(im, 0, 0);
-        cv.toBlob(function(bb){
-          if (bb && typeof ClipboardItem !== "undefined"){
-            navigator.clipboard.write([new ClipboardItem({ "image/png": bb })]).then(function(){
-              toast("📸 장면 이미지가 복사됐어요! 열린 바이두 페이지에서 카메라 아이콘 → Ctrl+V 하세요.");
-            }).catch(function(){ try{ navigator.clipboard.writeText(url); }catch(e){} toast("이미지 주소를 복사했어요. 바이두 카메라 아이콘에 붙여넣으세요."); });
-          } else { try{ navigator.clipboard.writeText(url); }catch(e){} toast("이미지 주소를 복사했어요. 바이두 카메라 아이콘에 붙여넣으세요."); }
-        }, "image/png");
-      }catch(e){ try{ navigator.clipboard.writeText(url); }catch(_e){} toast("이미지 주소를 복사했어요."); }
-    };
-    im.onerror = function(){ try{ navigator.clipboard.writeText(url); }catch(e){} toast("이미지 주소를 복사했어요."); };
-    im.src = url;
+  // 순서 중요: 복사를 "완료"한 뒤에 바이두 탭을 열어야 함 (탭이 먼저 열리면 브라우저가 복사를 거부)
+  async function copyFrameOpenBaidu(url){
+    var copied = false;
+    try{
+      var im = await new Promise(function(res, rej){
+        var i = new Image();
+        i.crossOrigin = "anonymous";
+        i.onload = function(){ res(i); };
+        i.onerror = function(){ rej(new Error("load")); };
+        // 캐시된 무CORS 사본을 피하기 위해 주소에 표식 추가
+        i.src = url + (url.indexOf("?") < 0 ? "?cors=1" : "&cors=1");
+        setTimeout(function(){ rej(new Error("timeout")); }, 8000);
+      });
+      var cv = document.createElement("canvas");
+      cv.width = im.naturalWidth; cv.height = im.naturalHeight;
+      cv.getContext("2d").drawImage(im, 0, 0);
+      var bb = await new Promise(function(res){ try{ cv.toBlob(function(b){ res(b); }, "image/png"); }catch(e){ res(null); } });
+      if (bb && typeof ClipboardItem !== "undefined"){
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": bb })]);
+        copied = true;
+      }
+    }catch(e){}
+    if (copied){
+      toast("📸 장면 이미지가 복사됐어요! 열린 바이두 페이지에서 Ctrl+V(붙여넣기) 하세요.");
+    } else {
+      try{ await navigator.clipboard.writeText(url); }catch(e){}
+      toast("이미지 주소를 복사했어요. 바이두 입력창에 붙여넣고 [识图一下]를 누르세요.");
+    }
     window.open("https://graph.baidu.com/pcpage/index?tpl_from=pc", "_blank");
   }
-
   // ── 바이두 API 검색 (캐시 포함) ──
   var NO_RESULT_MSG = "해당 영상의 원본 소스는 이곳에 없을 확률이 매우 높습니다.";
   var baiduCache = {};
