@@ -1048,7 +1048,8 @@
     "weibo.com", "weibo.cn",
     "56.com", "tv.sohu.com",
     "pearvideo.com", "meipai.com",
-    "youtube.com", "youtu.be", "dailymotion.com", "vimeo.com"
+    "youtube.com", "youtu.be", "dailymotion.com", "vimeo.com",
+    "reddit.com", "redd.it", "instagram.com"
   ];
   function isVideoSite(u){
     u = String(u || "");
