@@ -1045,6 +1045,42 @@
     return j;
   }
 
+  // 영상 플랫폼 화이트리스트: 글(뉴스.블로그) 페이지 제외
+  var VIDEO_SITES = [
+    "douyin.com", "iesdouyin.com", "tiktok.com",
+    "kuaishou.com", "chenzhongtech.com",
+    "haokan.baidu.com", "quanmin.baidu.com", "mbd.baidu.com/newspage/data/videolanding",
+    "bilibili.com", "b23.tv",
+    "iqiyi.com", "v.qq.com", "youku.com", "mgtv.com",
+    "ixigua.com", "xiaohongshu.com", "xhslink.com",
+    "weibo.com", "weibo.cn",
+    "56.com", "tv.sohu.com",
+    "pearvideo.com", "meipai.com",
+    "youtube.com", "youtu.be", "dailymotion.com", "vimeo.com",
+    "reddit.com", "redd.it", "instagram.com"
+  ];
+  function isVideoSite(u){
+    u = String(u || "");
+    for (var i = 0; i < VIDEO_SITES.length; i++){ if (u.indexOf(VIDEO_SITES[i]) >= 0) return true; }
+    return false;
+  }
+
+  // 미리보기 사진이 안 뜨는 카드는 자동 제거 + 개수 보정
+  window.__ibCardDead = function(imgEl){
+    try{
+      var a = imgEl.closest("a"); if (!a) return;
+      a.style.display = "none";
+      var out = a.closest(".ib-res-out"); if (!out) return;
+      function vis(sel){ var g = out.querySelector(sel); if (!g) return 0; return [].slice.call(g.children).filter(function(c){ return c.style.display !== "none"; }).length; }
+      var ns = vis(".ib-grid-same"), ng = vis(".ib-grid-google"), ny = vis(".ib-simi-grid");
+      var es = out.querySelector(".ib-cnt-same"); if (es) es.textContent = "동일 원본 " + ns + "건";
+      var eg = out.querySelector(".ib-cnt-google"); if (eg) eg.textContent = "구글 발견 " + ng + "건";
+      var ey = out.querySelector(".ib-cnt-simi"); if (ey) ey.textContent = "유사 " + ny + "건";
+      var hs = out.querySelector(".ib-sec-same"); if (hs) hs.textContent = hs.textContent.replace(/\(\d+건\)/, "(" + ns + "건)");
+      var hy = out.querySelector(".ib-sec-simi"); if (hy) hy.textContent = hy.textContent.replace(/\(\d+건\)/, "(" + ny + "건)");
+      var hg = out.querySelector(".ib-sec-google"); if (hg) hg.textContent = hg.textContent.replace(/\(\d+건\)/, "(" + ng + "건)");
+    }catch(e){}
+  };
   function platformLabel(x){
     var s = String(x.site || "");
     var u = String(x.url || "");
