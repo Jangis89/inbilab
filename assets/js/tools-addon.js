@@ -867,9 +867,12 @@
 
 
 
-/* ===== 인비랩 원본후보찾기 확장 — 장면 사진 5장 다중 검색 (전체 회원용) ===== */
+
+/* ===== 인비남 AI 이미지 검색 — 장면 5장 + 바이두/구글 + 토탈 검색 (전체 회원용) ===== */
+/* 되돌리기: IB_HIDE_OLD 를 false 로 바꾸면 기존 바이두식별/렌즈/비전 버튼이 다시 보입니다. */
 ;(function(){
   if (window.__ibFrames5Init) return; window.__ibFrames5Init = true;
+  var IB_HIDE_OLD = true;
 
   function sessionToken(){
     try{
@@ -911,7 +914,6 @@
     return m ? m[1] : null;
   }
 
-  // ── 장면 사진 5장 (유튜브 제공 프레임, 세로 원본 우선 + 가로 대체) ──
   var FRAME_DEFS = [
     { key:"oardefault", fb:"hqdefault", label:"대표" },
     { key:"frame0",     fb:null,        label:"첫장면" },
@@ -948,66 +950,7 @@
     return frameCache[vid];
   }
 
-  // ── 접었다 펼치는 사진 스트립 부품 ──
-  function makeStrip(opts){
-    var root = document.createElement("div");
-    root.className = "ib-frame-strip";
-    root.style.cssText = "margin-top:8px";
-    var tg = document.createElement("button");
-    tg.type = "button";
-    tg.textContent = "📸 장면 사진 5장 펼치기 ▾";
-    tg.style.cssText = "display:block;width:100%;padding:8px;border:1px dashed #94a3b8;background:#f8fafc;color:#334155;border-radius:8px;font-size:12.5px;cursor:pointer;font-family:inherit";
-    var panel = document.createElement("div");
-    panel.style.cssText = "display:none;margin-top:8px";
-    var row = document.createElement("div");
-    row.style.cssText = "display:flex;gap:8px;overflow-x:auto;padding:4px 0";
-    var hint = document.createElement("div");
-    hint.style.cssText = "font-size:11.5px;color:#64748b;margin-top:4px";
-    hint.textContent = opts.hint || "";
-    var out = document.createElement("div");
-    out.className = "ib-strip-out";
-    out.style.cssText = "margin-top:8px";
-    panel.appendChild(row); if (opts.hint) panel.appendChild(hint); panel.appendChild(out);
-    root.appendChild(tg); root.appendChild(panel);
-    var loaded = false, open = false;
-    tg.addEventListener("click", function(){
-      open = !open;
-      panel.style.display = open ? "block" : "none";
-      tg.textContent = open ? "📸 장면 사진 접기 ▴" : "📸 장면 사진 5장 펼치기 ▾";
-      if (open && !loaded){
-        loaded = true;
-        var vid = currentVid();
-        if (!vid){ row.innerHTML = "<div style=\"font-size:12.5px;color:#c0392b\">영상 주소를 먼저 입력해 주세요.</div>"; loaded=false; return; }
-        row.innerHTML = "<div style=\"font-size:12.5px;color:#888\">장면 사진을 불러오는 중…</div>";
-        getFrames(vid).then(function(frames){
-          row.innerHTML = "";
-          if (!frames.length){ row.innerHTML = "<div style=\"font-size:12.5px;color:#c0392b\">이 영상은 장면 사진을 제공하지 않습니다.</div>"; return; }
-          frames.forEach(function(f){
-            var cell = document.createElement("div");
-            cell.style.cssText = "flex:none;text-align:center;cursor:pointer";
-            var im = document.createElement("img");
-            im.src = f.url; im.loading = "lazy";
-            im.style.cssText = "width:62px;height:110px;object-fit:cover;border-radius:8px;background:#f1f5f9;border:3px solid transparent";
-            var lb = document.createElement("div");
-            lb.textContent = f.label;
-            lb.style.cssText = "font-size:11px;color:#475569;margin-top:2px";
-            cell.appendChild(im); cell.appendChild(lb);
-            cell.addEventListener("click", function(){
-              [].slice.call(row.querySelectorAll("img")).forEach(function(x){ x.style.borderColor = "transparent"; });
-              im.style.borderColor = "#2563eb";
-              opts.onFrame(f, out, row);
-            });
-            row.appendChild(cell);
-          });
-          if (opts.onFramesReady) opts.onFramesReady(frames, out, panel);
-        });
-      }
-    });
-    return root;
-  }
-
-  // ── 장면 이미지 복사 + 바이두 열기 (识图용) ──
-  // 순서 중요: 복사를 "완료"한 뒤에 바이두 탭을 열어야 함 (탭이 먼저 열리면 브라우저가 복사를 거부)
+  // 복사 완료 후 바이두 열기 (순서 중요)
   async function copyFrameOpenBaidu(url){
     var copied = false;
     try{
@@ -1016,7 +959,6 @@
         i.crossOrigin = "anonymous";
         i.onload = function(){ res(i); };
         i.onerror = function(){ rej(new Error("load")); };
-        // 캐시된 무CORS 사본을 피하기 위해 주소에 표식 추가
         i.src = url + (url.indexOf("?") < 0 ? "?cors=1" : "&cors=1");
         setTimeout(function(){ rej(new Error("timeout")); }, 8000);
       });
@@ -1037,31 +979,41 @@
     }
     window.open("https://graph.baidu.com/pcpage/index?tpl_from=pc", "_blank");
   }
-  // ── 바이두 API 검색 (캐시 포함) ──
+
   var NO_RESULT_MSG = "해당 영상의 원본 소스는 이곳에 없을 확률이 매우 높습니다.";
+
   var baiduCache = {};
   async function baiduSearch(imageUrl){
-    var key = imageUrl;
-    if (baiduCache[key]) return baiduCache[key];
-    var tok = sessionToken();
-    var body = { feature: "source_finder", action: "baidu_sim", video_url: currentVideoUrl() };
-    if (imageUrl) body.image_url = imageUrl;
+    if (baiduCache[imageUrl]) return baiduCache[imageUrl];
     var r = await fetch("/api/ai", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + tok },
-      body: JSON.stringify(body)
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + sessionToken() },
+      body: JSON.stringify({ feature: "source_finder", action: "baidu_sim", video_url: currentVideoUrl(), image_url: imageUrl })
     });
     var j = null; try{ j = await r.json(); }catch(e){}
-    if (j && j.ok === true) baiduCache[key] = j;
+    if (j && j.ok === true) baiduCache[imageUrl] = j;
     if (!j) j = { ok:false, error: "HTTP " + r.status };
     return j;
   }
 
-  // ── 플랫폼 이름 한글 표시 ──
-  function platformLabel(it){
-    var s = String(it.site || "");
-    var u = String(it.url || "");
-    function has(x){ return s.indexOf(x) >= 0 || u.indexOf(x) >= 0; }
+  var visionCache = {};
+  async function visionSearch(imageUrl){
+    if (visionCache[imageUrl]) return visionCache[imageUrl];
+    var r = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + sessionToken() },
+      body: JSON.stringify({ feature: "source_finder", action: "lens", video_url: currentVideoUrl(), image_url: imageUrl })
+    });
+    var j = null; try{ j = await r.json(); }catch(e){}
+    if (j && j.ok === true) visionCache[imageUrl] = j;
+    if (!j) j = { ok:false, error: "HTTP " + r.status };
+    return j;
+  }
+
+  function platformLabel(x){
+    var s = String(x.site || "");
+    var u = String(x.url || "");
+    function has(w){ return s.indexOf(w) >= 0 || u.indexOf(w) >= 0; }
     if (has("抖音") || has("douyin")) return "더우인";
     if (has("度小视") || has("quanmin.baidu")) return "바이두 영상";
     if (has("好看") || has("haokan.baidu")) return "하오칸 영상";
@@ -1072,27 +1024,28 @@
     if (has("小红书") || has("xiaohongshu")) return "샤오홍슈";
     if (has("腾讯") || has("v.qq.com")) return "텐센트 영상";
     if (has("优酷") || has("youku")) return "유큐";
+    if (has("youtube") || has("youtu.be")) return "유튜브";
     if (has("baidu")) return "바이두";
     try{ return new URL(u).hostname.replace(/^www\./, ""); }catch(e){ return "출처 보기"; }
   }
 
-  // ── 사진 위주 카드 (중국어 제목 없음) ──
   function gridCard(x, big){
     var w = big ? 110 : 82, h = big ? 195 : 146;
     var plat = esc(platformLabel(x));
     var scene = big && x.__scene ? '<div style="font-size:11px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(x.__scene) + ' 사진에서 발견</div>' : "";
+    var inner = x.img
+      ? '<img src="' + esc(x.img) + '" referrerpolicy="no-referrer" loading="lazy" style="width:100%;height:100%;object-fit:cover">'
+      : '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:11px;color:#94a3b8;padding:4px;text-align:center;word-break:break-all">' + plat + '</div>';
     return '<a href="' + esc(x.url || "#") + '" target="_blank" rel="noopener noreferrer" style="display:block;width:' + w + 'px;text-decoration:none;color:inherit;flex:none">'
-      + '<div style="width:' + w + 'px;height:' + h + 'px;border-radius:10px;background:#f1f5f9;overflow:hidden;border:1px solid #e2e8f0">'
-      + (x.img ? '<img src="' + esc(x.img) + '" referrerpolicy="no-referrer" loading="lazy" style="width:100%;height:100%;object-fit:cover">' : '')
-      + '</div>'
+      + '<div style="width:' + w + 'px;height:' + h + 'px;border-radius:10px;background:#f1f5f9;overflow:hidden;border:1px solid #e2e8f0">' + inner + '</div>'
       + '<div style="font-size:' + (big ? 12 : 11) + 'px;font-weight:600;color:#1e40af;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + plat + '</div>'
       + scene + '</a>';
   }
 
-  // ── 통합 결과 화면: 동일원본 맨 위 + 유사 모아보기 (같은 주소만 중복 제거) ──
-  function renderUnified(groups, out){
+  // ── 토탈 검색 결과 화면: 바이두 동일원본 → 구글 발견 → 유사 ──
+  function renderTotal(baiduGroups, googlePages, out, note){
     var seen = {}, all = [];
-    groups.forEach(function(g){
+    baiduGroups.forEach(function(g){
       (g.items || []).forEach(function(it){
         var key = String(it.url || "").trim();
         if (!key) return;
@@ -1106,163 +1059,162 @@
     });
     var same = all.filter(function(x){ return x.cate === "CATE_SAME"; });
     var simi = all.filter(function(x){ return x.cate !== "CATE_SAME"; });
-    if (!all.length){
-      out.innerHTML = '<div style="padding:12px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px">' + esc(NO_RESULT_MSG) + '</div>';
+    var gseen = {}, google = [];
+    (googlePages || []).forEach(function(pg){
+      var key = String(pg.url || "").trim();
+      if (!key || gseen[key] || seen[key]) return;
+      gseen[key] = true;
+      google.push({ url: pg.url, img: pg.img, site: "", __scene: pg.__scene });
+    });
+    if (!all.length && !google.length){
+      out.innerHTML = '<div style="padding:12px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px">' + esc(NO_RESULT_MSG) + '</div>' + (note || "");
       return;
     }
-    var html = '<div style="font-weight:700;font-size:14px;margin:6px 0 10px">🅑 바이두 원본 검색 결과 — '
-      + '<span style="color:#e74c3c">동일 원본 ' + same.length + '건</span> · <span style="color:#f39c12">유사 ' + simi.length + '건</span>'
+    var html = '<div style="font-weight:700;font-size:14px;margin:6px 0 10px">🔍 인비남 AI 토탈 검색 결과 — '
+      + '<span style="color:#e74c3c">동일 원본 ' + same.length + '건</span> · '
+      + '<span style="color:#2563eb">구글 발견 ' + google.length + '건</span> · '
+      + '<span style="color:#f39c12">유사 ' + simi.length + '건</span>'
       + ' <span style="font-size:11px;color:#94a3b8;font-weight:400">같은 주소 중복만 제거됨</span></div>';
     if (same.length){
       html += '<div style="font-size:13px;font-weight:700;color:#e74c3c;margin-bottom:6px">🔴 동일 원본 판정 (' + same.length + '건) — 사진을 누르면 해당 페이지가 열립니다</div>';
       html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px">' + same.map(function(x){ return gridCard(x, true); }).join("") + '</div>';
       html += '<div style="font-size:11.5px;color:#94a3b8;margin-bottom:10px">⚠ 주소에 따라 영상이 아닌 글(기사·블로그)일 수 있어요. 직접 눌러 원본 영상인지 확인하세요.</div>';
     } else {
-      html += '<div style="padding:10px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px;margin-bottom:10px">동일 원본 판정이 없습니다. ' + esc(NO_RESULT_MSG) + '</div>';
+      html += '<div style="padding:10px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px;margin-bottom:10px">바이두 동일 원본 판정이 없습니다. ' + esc(NO_RESULT_MSG) + '</div>';
+    }
+    if (google.length){
+      html += '<div style="font-size:13px;font-weight:700;color:#2563eb;margin:10px 0 6px">🔵 구글이 찾은 페이지 (' + google.length + '건) — 해외 원본일 가능성</div>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px">' + google.map(function(x){ return gridCard(x, true); }).join("") + '</div>';
     }
     if (simi.length){
-      var open = same.length === 0;
-      html += '<button type="button" class="ib-simi-tg" style="display:block;width:100%;padding:8px;border:1px dashed #f39c12;background:#fffbeb;color:#92400e;border-radius:8px;font-size:12.5px;cursor:pointer;font-family:inherit">🟡 유사 영상 ' + simi.length + '건 ' + (open ? "접기 ▴" : "펼쳐보기 ▾") + '</button>';
+      var open = same.length === 0 && google.length === 0;
+      html += '<button type="button" class="ib-simi-tg" style="display:block;width:100%;padding:8px;border:1px dashed #f39c12;background:#fffbeb;color:#92400e;border-radius:8px;font-size:12.5px;cursor:pointer;font-family:inherit;margin-top:6px">🟡 유사 영상 ' + simi.length + '건 ' + (open ? "접기 ▴" : "펼쳐보기 ▾") + '</button>';
       html += '<div class="ib-simi-grid" style="display:' + (open ? "flex" : "none") + ';flex-wrap:wrap;gap:8px;margin-top:8px">' + simi.map(function(x){ return gridCard(x, false); }).join("") + '</div>';
     }
-    html += '<div style="font-size:11px;color:#b5b5b5;margin-top:8px">바이두 식별 기술 제공 · 동일/유사 판정은 참고용입니다.</div>';
+    html += (note || "") + '<div style="font-size:11px;color:#b5b5b5;margin-top:8px">바이두 식별 + 구글 비전 기술 제공 · 판정은 참고용입니다.</div>';
     out.innerHTML = html;
     var tgb = out.querySelector(".ib-simi-tg");
     if (tgb){
       tgb.addEventListener("click", function(){
-        var g = out.querySelector(".ib-simi-grid");
-        var vis = g.style.display !== "none";
-        g.style.display = vis ? "none" : "flex";
+        var g2 = out.querySelector(".ib-simi-grid");
+        var vis = g2.style.display !== "none";
+        g2.style.display = vis ? "none" : "flex";
         tgb.textContent = "🟡 유사 영상 " + simi.length + "건 " + (vis ? "펼쳐보기 ▾" : "접기 ▴");
       });
     }
   }
 
-  function renderBaiduResult(j, out, frameLabel){
-    if (!j || j.ok !== true){
-      out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">바이두 검색 실패: ' + esc((j && j.error) || "오류") + '</div>';
-      return 0;
-    }
-    renderUnified([{ label: frameLabel || "선택", items: j.items || [] }], out);
-    return (j.items || []).length;
-  }
-
-  async function baiduBatchSearch(frames, out){
-    var groups = [], failCount = 0;
+  // ── 토탈 검색 실행 (바이두 5장 + 구글 5장) ──
+  async function totalSearch(frames, out){
+    var groups = [], gpages = [], failB = 0, failG = 0;
+    var total = frames.length * 2, step = 0;
+    function prog(msg){ out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 ' + step + '/' + total + ' — ' + msg + ' (총 1분 정도 걸릴 수 있어요)</div>'; }
     for (var i=0;i<frames.length;i++){
-      var f = frames[i];
-      out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 ' + (i+1) + '/' + frames.length + ' — ' + esc(f.label) + ' 사진으로 검색 중… (총 수십 초 걸릴 수 있어요)</div>';
+      step++; prog(esc(frames[i].label) + " 사진을 바이두에서 검색 중…");
       var j = null;
-      try{ j = await baiduSearch(f.url); }catch(e){}
-      if (!j || j.ok !== true) failCount++;
-      groups.push({ label: f.label, items: (j && j.ok === true && j.items) ? j.items : [] });
+      try{ j = await baiduSearch(frames[i].url); }catch(e){}
+      if (!j || j.ok !== true) failB++;
+      groups.push({ label: frames[i].label, items: (j && j.ok === true && j.items) ? j.items : [] });
     }
-    if (failCount === frames.length){
-      out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">바이두 검색이 모두 실패했습니다. 잠시 후 다시 시도해 주세요.</div>';
+    for (var k=0;k<frames.length;k++){
+      step++; prog(esc(frames[k].label) + " 사진을 구글에서 검색 중…");
+      var v = null;
+      try{ v = await visionSearch(frames[k].url); }catch(e){}
+      if (v && v.ok === true && Array.isArray(v.pages)){
+        v.pages.forEach(function(pg){ if (pg && pg.url) gpages.push({ url: pg.url, img: pg.img, __scene: frames[k].label }); });
+      } else { failG++; }
+    }
+    var note = "";
+    if (failB === frames.length && failG === frames.length){
+      out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">검색이 모두 실패했습니다. 잠시 후 다시 시도해 주세요.</div>';
       return;
     }
-    renderUnified(groups, out);
+    if (failB === frames.length) note = '<div style="font-size:11.5px;color:#c0392b;margin-top:6px">⚠ 바이두 검색은 실패해서 구글 결과만 표시됩니다.</div>';
+    if (failG === frames.length) note = '<div style="font-size:11.5px;color:#c0392b;margin-top:6px">⚠ 구글 검색은 실패해서 바이두 결과만 표시됩니다.</div>';
+    renderTotal(groups, gpages, out, note);
   }
-  // ── 구글 Vision 장면 검색 (캐시 포함) ──
-  var visionCache = {};
-  async function visionSearch(imageUrl){
-    if (visionCache[imageUrl]) return visionCache[imageUrl];
-    var tok = sessionToken();
-    var r = await fetch("/api/ai", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + tok },
-      body: JSON.stringify({ feature: "source_finder", action: "lens", video_url: currentVideoUrl(), image_url: imageUrl })
+
+  // ── 통합 검색 박스 만들기 ──
+  function buildTotalBox(){
+    var box = document.createElement("div");
+    box.className = "ib-total-box";
+    box.style.cssText = "margin-top:10px;border:1px solid #c7d2fe;background:#f5f7ff;border-radius:12px;padding:12px";
+    var title = document.createElement("div");
+    title.textContent = "📸 인비남 AI 이미지 검색";
+    title.style.cssText = "font-size:14px;font-weight:800;color:#312e81;margin-bottom:2px";
+    var sub = document.createElement("div");
+    sub.textContent = "사진 아래 [바이두]·[구글]을 누르면 그 장면으로 바로 검색됩니다. 바이두는 복사 후 열린 페이지에서 Ctrl+V!";
+    sub.style.cssText = "font-size:11.5px;color:#64748b;margin-bottom:9px";
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:10px;overflow-x:auto;padding:2px 0";
+    var totalBtn = document.createElement("button");
+    totalBtn.type = "button";
+    totalBtn.textContent = "🔍 인비남 AI 토탈 검색 — 5장으로 바이두+구글 전부 찾아보기";
+    totalBtn.style.cssText = "display:block;width:100%;margin-top:10px;padding:11px;border:none;background:#4338ca;color:#fff;border-radius:9px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit";
+    var out = document.createElement("div");
+    out.style.cssText = "margin-top:10px";
+    box.appendChild(title); box.appendChild(sub); box.appendChild(row); box.appendChild(totalBtn); box.appendChild(out);
+    var vid = currentVid();
+    if (!vid){ row.innerHTML = '<div style="font-size:12.5px;color:#c0392b">영상 주소를 찾지 못했습니다.</div>'; return box; }
+    row.innerHTML = '<div style="font-size:12.5px;color:#888">장면 사진을 불러오는 중…</div>';
+    var framesReady = null;
+    getFrames(vid).then(function(frames){
+      framesReady = frames;
+      row.innerHTML = "";
+      if (!frames.length){ row.innerHTML = '<div style="font-size:12.5px;color:#c0392b">이 영상은 장면 사진을 제공하지 않습니다.</div>'; return; }
+      frames.forEach(function(f){
+        var cell = document.createElement("div");
+        cell.style.cssText = "flex:none;width:86px;text-align:center";
+        var im = document.createElement("img");
+        im.src = f.url; im.loading = "lazy";
+        im.style.cssText = "width:84px;height:149px;object-fit:cover;border-radius:9px;background:#eef2f7;border:1px solid #e2e8f0";
+        var lb = document.createElement("div");
+        lb.textContent = f.label;
+        lb.style.cssText = "font-size:11.5px;font-weight:600;color:#334155;margin:3px 0 4px";
+        var btns = document.createElement("div");
+        btns.style.cssText = "display:flex;gap:4px";
+        var bB = document.createElement("button");
+        bB.type = "button"; bB.textContent = "바이두";
+        bB.style.cssText = "flex:1;padding:5px 0;border:none;background:#2c6fbb;color:#fff;border-radius:7px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit";
+        bB.addEventListener("click", function(){ copyFrameOpenBaidu(f.url); });
+        var bG = document.createElement("button");
+        bG.type = "button"; bG.textContent = "구글";
+        bG.style.cssText = "flex:1;padding:5px 0;border:1px solid #cbd5e1;background:#fff;color:#1f2937;border-radius:7px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit";
+        bG.addEventListener("click", function(){ window.open("https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(f.url), "_blank"); });
+        btns.appendChild(bB); btns.appendChild(bG);
+        cell.appendChild(im); cell.appendChild(lb); cell.appendChild(btns);
+        row.appendChild(cell);
+      });
     });
-    var j = null; try{ j = await r.json(); }catch(e){}
-    if (j && j.ok === true) visionCache[imageUrl] = j;
-    if (!j) j = { ok:false, error: "HTTP " + r.status };
-    return j;
+    totalBtn.addEventListener("click", function(){
+      if (!framesReady || !framesReady.length){ out.innerHTML = '<div style="padding:8px;color:#c0392b;font-size:12.5px">장면 사진이 아직 준비되지 않았습니다.</div>'; return; }
+      totalBtn.disabled = true;
+      totalSearch(framesReady, out).then(function(){ totalBtn.disabled = false; }).catch(function(){ totalBtn.disabled = false; });
+    });
+    return box;
   }
 
-  function renderVisionResult(j, out, frameLabel){
-    if (!j || j.ok !== true){
-      out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">구글 검색 실패: ' + esc((j && j.error) || "오류") + '</div>';
-      return;
-    }
-    var pages = Array.isArray(j.pages) ? j.pages.filter(function(x){ return x && x.url; }) : [];
-    var html = '<div style="font-weight:700;font-size:14px;margin:4px 0 8px">🖼️ 구글 검색 결과' + (frameLabel ? ' — ' + esc(frameLabel) + ' 장면' : '') + ' — ' + pages.length + '건</div>';
-    if (Array.isArray(j.labels) && j.labels.length){
-      html += '<div style="font-size:12px;color:#1e40af;margin-bottom:6px">구글의 추측: ' + j.labels.map(esc).join(", ") + '</div>';
-    }
-    if (!pages.length){
-      html += '<div style="padding:10px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px">' + esc(NO_RESULT_MSG) + '<br><span style="font-size:12px;color:#94a3b8">다른 장면 사진으로도 시도해 보세요.</span></div>';
-    } else {
-      html += pages.slice(0, 20).map(function(pg){
-        var host = ""; try{ host = new URL(pg.url).hostname; }catch(e){}
-        return '<a href="' + esc(pg.url) + '" target="_blank" rel="noopener noreferrer" style="display:flex;gap:10px;align-items:center;text-decoration:none;color:inherit;border:1px solid #ececec;border-radius:10px;padding:8px;margin-bottom:8px;background:#fff">'
-          + (pg.img ? '<img src="' + esc(pg.img) + '" referrerpolicy="no-referrer" loading="lazy" style="width:52px;height:52px;object-fit:cover;border-radius:7px;flex:none;background:#f2f2f2">' : '')
-          + '<div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">' + esc(pg.title || pg.url) + '</div>'
-          + '<div style="font-size:12px;color:#999;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(host) + '</div></div></a>';
-      }).join("");
-    }
-    out.innerHTML = html;
-  }
-
-  // ── 화면에 부착 ──
+  // ── 부착 + 기존 버튼 숨기기 ──
   function attachAll(){
-    // 1) 바이두 식별(识图) 버튼 아래: 사진 클릭 → 복사 + 바이두 열기
-    [].slice.call(document.querySelectorAll("button, a")).forEach(function(el){
-      if (el.__ibF5a) return;
-      if (!/识图/.test(el.textContent || "")) return;
+    var shitu = [].slice.call(document.querySelectorAll("button, a")).filter(function(el){
+      if (!/识图/.test(el.textContent || "")) return false;
       var inner = el.querySelector("button, a");
-      if (inner && /识图/.test(inner.textContent || "")) return;
-      el.__ibF5a = true;
-      var strip = makeStrip({
-        hint: "사진을 누르면 ① 그 장면이 복사되고 ② 바이두 검색창이 열립니다. 첫 장면으로 못 찾으면 다른 장면으로!",
-        onFrame: function(f){ copyFrameOpenBaidu(f.url); }
-      });
-      el.insertAdjacentElement("afterend", strip);
-
-      // 2) 그 아래: 바이두 API 카드 검색 (전체 회원)
-      var apiWrap = document.createElement("div");
-      apiWrap.style.cssText = "margin-top:8px";
-      var apiTitle = document.createElement("div");
-      apiTitle.textContent = "🅑 바이두 API로 원본 카드 보기 — 장면을 골라 누르세요";
-      apiTitle.style.cssText = "font-size:13px;font-weight:600;color:#1c4e8a;background:#eaf2fb;border:1px solid #2c6fbb;border-radius:9px;padding:10px";
-      apiWrap.appendChild(apiTitle);
-      var apiStrip = makeStrip({
-        hint: "사진을 누르면 이 화면 안에서 바로 원본 후보 카드가 나옵니다.",
-        onFrame: function(f, out){
-          out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 ' + esc(f.label) + ' 장면으로 바이두에서 원본을 찾는 중…</div>';
-          baiduSearch(f.url).then(function(j){ renderBaiduResult(j, out, f.label); })
-            .catch(function(e){ out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">오류: ' + esc(String(e).slice(0,120)) + '</div>'; });
-        },
-        onFramesReady: function(frames, out, panel){
-          if (panel.querySelector(".ib-batch-btn")) return;
-          var bb = document.createElement("button");
-          bb.type = "button";
-          bb.className = "ib-batch-btn";
-          bb.textContent = "🔍 5장 한 번에 검색 (자동으로 전부 찾아보기)";
-          bb.style.cssText = "display:block;width:100%;margin-top:6px;padding:9px;border:1px solid #2c6fbb;background:#2c6fbb;color:#fff;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit";
-          bb.addEventListener("click", function(){ baiduBatchSearch(frames, out); });
-          panel.insertBefore(bb, out);
-        }
-      });
-      apiWrap.appendChild(apiStrip);
-      strip.insertAdjacentElement("afterend", apiWrap);
+      if (inner && /识图/.test(inner.textContent || "")) return false;
+      return true;
     });
-
-    // 3) 구글 박스: 렌즈 링크 갱신 + Vision 장면 검색
-    [].slice.call(document.querySelectorAll('a[href*="lens.google.com/uploadbyurl"]')).forEach(function(lensA){
-      if (lensA.__ibF5b) return;
-      lensA.__ibF5b = true;
-      var host = lensA.parentElement || lensA;
-      var strip = makeStrip({
-        hint: "사진을 누르면 그 장면으로 구글 검색 결과가 아래에 나오고, 위의 Google Lens 링크도 그 장면으로 바뀝니다.",
-        onFrame: function(f, out){
-          try{ lensA.href = "https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(f.url); }catch(e){}
-          out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 ' + esc(f.label) + ' 장면으로 구글에서 찾는 중…</div>';
-          visionSearch(f.url).then(function(j){ renderVisionResult(j, out, f.label); })
-            .catch(function(e){ out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">오류: ' + esc(String(e).slice(0,120)) + '</div>'; });
-        }
-      });
-      host.insertAdjacentElement("afterend", strip);
+    shitu.forEach(function(el){
+      if (!el.__ibF6){
+        el.__ibF6 = true;
+        el.insertAdjacentElement("afterend", buildTotalBox());
+      }
+      if (IB_HIDE_OLD) el.style.display = "none";
     });
+    if (IB_HIDE_OLD){
+      [].slice.call(document.querySelectorAll('a[href*="lens.google.com/uploadbyurl"]')).forEach(function(a){ a.style.display = "none"; });
+      [].slice.call(document.querySelectorAll("button")).forEach(function(b){
+        if (/웹 이미지 일치 후보/.test(b.textContent || "")) b.style.display = "none";
+      });
+    }
   }
 
   var pending = false;
