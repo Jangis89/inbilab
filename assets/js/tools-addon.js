@@ -1057,24 +1057,85 @@
     return j;
   }
 
-  function cardHtml(it){
-    var same = it.cate === "CATE_SAME";
-    var badge = same
-      ? '<span style="background:#e74c3c;color:#fff;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600">동일 원본</span>'
-      : '<span style="background:#f39c12;color:#fff;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600">유사</span>';
-    var link = it.url || "#";
-    var img  = it.img || "";
-    var title= esc(it.title || "제목 없음");
-    var site = esc(it.site || "");
-    return '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer" '
-      + 'style="display:flex;gap:10px;text-decoration:none;color:inherit;border:1px solid #ececec;border-radius:10px;padding:8px;margin-bottom:8px;align-items:center;background:#fff">'
-      + (img ? '<img src="' + esc(img) + '" referrerpolicy="no-referrer" loading="lazy" '
-              + 'style="width:52px;height:92px;object-fit:cover;border-radius:7px;flex:none;background:#f2f2f2">' : '')
-      + '<div style="min-width:0;flex:1">'
-      + '<div style="font-size:13px;font-weight:600;margin-bottom:3px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">' + title + '</div>'
-      + '<div style="font-size:12px;color:#999;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + site + '</div>'
-      + badge
-      + '</div></a>';
+  // ── 플랫폼 이름 한글 표시 ──
+  function platformLabel(it){
+    var s = String(it.site || "");
+    var u = String(it.url || "");
+    function has(x){ return s.indexOf(x) >= 0 || u.indexOf(x) >= 0; }
+    if (has("抖音") || has("douyin")) return "더우인";
+    if (has("度小视") || has("quanmin.baidu")) return "바이두 영상";
+    if (has("好看") || has("haokan.baidu")) return "하오칸 영상";
+    if (has("微博") || has("weibo")) return "웨이보";
+    if (has("快手") || has("kuaishou")) return "콰이쇼우";
+    if (has("哔哩") || has("bilibili")) return "비리비리";
+    if (has("西瓜") || has("ixigua")) return "시과 영상";
+    if (has("小红书") || has("xiaohongshu")) return "샤오홍슈";
+    if (has("腾讯") || has("v.qq.com")) return "텐센트 영상";
+    if (has("优酷") || has("youku")) return "유큐";
+    if (has("baidu")) return "바이두";
+    try{ return new URL(u).hostname.replace(/^www\./, ""); }catch(e){ return "출처 보기"; }
+  }
+
+  // ── 사진 위주 카드 (중국어 제목 없음) ──
+  function gridCard(x, big){
+    var w = big ? 110 : 82, h = big ? 195 : 146;
+    var plat = esc(platformLabel(x));
+    var scene = big && x.__scene ? '<div style="font-size:11px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(x.__scene) + ' 사진에서 발견</div>' : "";
+    return '<a href="' + esc(x.url || "#") + '" target="_blank" rel="noopener noreferrer" style="display:block;width:' + w + 'px;text-decoration:none;color:inherit;flex:none">'
+      + '<div style="width:' + w + 'px;height:' + h + 'px;border-radius:10px;background:#f1f5f9;overflow:hidden;border:1px solid #e2e8f0">'
+      + (x.img ? '<img src="' + esc(x.img) + '" referrerpolicy="no-referrer" loading="lazy" style="width:100%;height:100%;object-fit:cover">' : '')
+      + '</div>'
+      + '<div style="font-size:' + (big ? 12 : 11) + 'px;font-weight:600;color:#1e40af;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + plat + '</div>'
+      + scene + '</a>';
+  }
+
+  // ── 통합 결과 화면: 동일원본 맨 위 + 유사 모아보기 (같은 주소만 중복 제거) ──
+  function renderUnified(groups, out){
+    var seen = {}, all = [];
+    groups.forEach(function(g){
+      (g.items || []).forEach(function(it){
+        var key = String(it.url || "").trim();
+        if (!key) return;
+        if (seen[key]){
+          if (it.cate === "CATE_SAME" && seen[key].cate !== "CATE_SAME"){ seen[key].cate = "CATE_SAME"; seen[key].__scene = g.label; }
+          return;
+        }
+        var c = { cate: it.cate, url: it.url, img: it.img, site: it.site, __scene: g.label };
+        seen[key] = c; all.push(c);
+      });
+    });
+    var same = all.filter(function(x){ return x.cate === "CATE_SAME"; });
+    var simi = all.filter(function(x){ return x.cate !== "CATE_SAME"; });
+    if (!all.length){
+      out.innerHTML = '<div style="padding:12px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px">' + esc(NO_RESULT_MSG) + '</div>';
+      return;
+    }
+    var html = '<div style="font-weight:700;font-size:14px;margin:6px 0 10px">🅑 바이두 원본 검색 결과 — '
+      + '<span style="color:#e74c3c">동일 원본 ' + same.length + '건</span> · <span style="color:#f39c12">유사 ' + simi.length + '건</span>'
+      + ' <span style="font-size:11px;color:#94a3b8;font-weight:400">같은 주소 중복만 제거됨</span></div>';
+    if (same.length){
+      html += '<div style="font-size:13px;font-weight:700;color:#e74c3c;margin-bottom:6px">🔴 동일 원본 판정 (' + same.length + '건) — 사진을 누르면 해당 페이지가 열립니다</div>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px">' + same.map(function(x){ return gridCard(x, true); }).join("") + '</div>';
+      html += '<div style="font-size:11.5px;color:#94a3b8;margin-bottom:10px">⚠ 주소에 따라 영상이 아닌 글(기사·블로그)일 수 있어요. 직접 눌러 원본 영상인지 확인하세요.</div>';
+    } else {
+      html += '<div style="padding:10px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px;margin-bottom:10px">동일 원본 판정이 없습니다. ' + esc(NO_RESULT_MSG) + '</div>';
+    }
+    if (simi.length){
+      var open = same.length === 0;
+      html += '<button type="button" class="ib-simi-tg" style="display:block;width:100%;padding:8px;border:1px dashed #f39c12;background:#fffbeb;color:#92400e;border-radius:8px;font-size:12.5px;cursor:pointer;font-family:inherit">🟡 유사 영상 ' + simi.length + '건 ' + (open ? "접기 ▴" : "펼쳐보기 ▾") + '</button>';
+      html += '<div class="ib-simi-grid" style="display:' + (open ? "flex" : "none") + ';flex-wrap:wrap;gap:8px;margin-top:8px">' + simi.map(function(x){ return gridCard(x, false); }).join("") + '</div>';
+    }
+    html += '<div style="font-size:11px;color:#b5b5b5;margin-top:8px">바이두 식별 기술 제공 · 동일/유사 판정은 참고용입니다.</div>';
+    out.innerHTML = html;
+    var tgb = out.querySelector(".ib-simi-tg");
+    if (tgb){
+      tgb.addEventListener("click", function(){
+        var g = out.querySelector(".ib-simi-grid");
+        var vis = g.style.display !== "none";
+        g.style.display = vis ? "none" : "flex";
+        tgb.textContent = "🟡 유사 영상 " + simi.length + "건 " + (vis ? "펼쳐보기 ▾" : "접기 ▴");
+      });
+    }
   }
 
   function renderBaiduResult(j, out, frameLabel){
@@ -1082,49 +1143,26 @@
       out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">바이두 검색 실패: ' + esc((j && j.error) || "오류") + '</div>';
       return 0;
     }
-    var items = j.items || [];
-    if (!items.length){
-      out.innerHTML = '<div style="padding:10px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px">' + esc(NO_RESULT_MSG) + '<br><span style="font-size:12px;color:#94a3b8">다른 장면 사진으로도 시도해 보세요.</span></div>';
-      return 0;
-    }
-    var same = items.filter(function(it){ return it.cate === "CATE_SAME"; });
-    var simi = items.filter(function(it){ return it.cate !== "CATE_SAME"; });
-    var head = '<div style="font-weight:700;font-size:14px;margin:4px 0 9px">🅑 바이두 원본 검색 결과' + (frameLabel ? ' — ' + esc(frameLabel) + ' 장면' : '') + ' — '
-      + '<span style="color:#e74c3c">동일 원본 ' + same.length + '건</span> · '
-      + '<span style="color:#f39c12">유사 ' + simi.length + '건</span></div>';
-    var ordered = same.concat(simi);
-    out.innerHTML = head
-      + '<div style="max-height:520px;overflow:auto">' + ordered.map(cardHtml).join("") + '</div>'
-      + '<div style="font-size:11px;color:#b5b5b5;margin-top:6px">百度识图 提供技术支持 · 결과는 참고용이며 실제 원본 여부는 직접 확인하세요.</div>';
-    return items.length;
+    renderUnified([{ label: frameLabel || "선택", items: j.items || [] }], out);
+    return (j.items || []).length;
   }
 
   async function baiduBatchSearch(frames, out){
-    out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 장면 5장을 차례로 검색하는 중… (수십 초 걸릴 수 있어요)</div>';
-    var blocks = [], total = 0;
+    var groups = [], failCount = 0;
     for (var i=0;i<frames.length;i++){
       var f = frames[i];
-      out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 ' + (i+1) + '/' + frames.length + ' — ' + esc(f.label) + ' 장면 검색 중…</div>' + blocks.join("");
+      out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 ' + (i+1) + '/' + frames.length + ' — ' + esc(f.label) + ' 사진으로 검색 중… (총 수십 초 걸릴 수 있어요)</div>';
       var j = null;
       try{ j = await baiduSearch(f.url); }catch(e){}
-      var items = (j && j.ok === true && j.items) ? j.items : [];
-      var same = items.filter(function(it){ return it.cate === "CATE_SAME"; });
-      total += items.length;
-      if (items.length){
-        var tmp = document.createElement("div");
-        renderBaiduResult(j, tmp, f.label);
-        blocks.push('<div style="border-top:2px solid #e2e8f0;margin-top:10px;padding-top:6px">' + tmp.innerHTML + '</div>');
-      } else {
-        blocks.push('<div style="border-top:2px solid #e2e8f0;margin-top:10px;padding-top:6px;font-size:12.5px;color:#94a3b8">' + esc(f.label) + ' 장면: 결과 없음' + (j && j.ok !== true ? " (검색 실패)" : "") + '</div>');
-      }
+      if (!j || j.ok !== true) failCount++;
+      groups.push({ label: f.label, items: (j && j.ok === true && j.items) ? j.items : [] });
     }
-    if (total === 0){
-      out.innerHTML = '<div style="padding:12px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px"><b>5장 모두 검색했지만 결과가 없습니다.</b><br>' + esc(NO_RESULT_MSG) + '</div>';
-    } else {
-      out.innerHTML = '<div style="font-weight:700;font-size:14px;margin:4px 0 6px">🔍 5장 전체 검색 완료 — 총 ' + total + '건 발견</div>' + blocks.join("");
+    if (failCount === frames.length){
+      out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">바이두 검색이 모두 실패했습니다. 잠시 후 다시 시도해 주세요.</div>';
+      return;
     }
+    renderUnified(groups, out);
   }
-
   // ── 구글 Vision 장면 검색 (캐시 포함) ──
   var visionCache = {};
   async function visionSearch(imageUrl){
