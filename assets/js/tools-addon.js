@@ -1069,6 +1069,7 @@
       var ey = out.querySelector(".ib-cnt-simi"); if (ey) ey.textContent = "유사 " + ny + "건";
       var tg = out.querySelector(".ib-simi-tg"); if (tg) tg.textContent = tg.textContent.replace(/유사 영상 \d+건/, "유사 영상 " + ny + "건");
       var hs = out.querySelector(".ib-sec-same"); if (hs) hs.textContent = hs.textContent.replace(/\(\d+건\)/, "(" + ns + "건)");
+      var hy = out.querySelector(".ib-sec-simi"); if (hy) hy.textContent = hy.textContent.replace(/\(\d+건\)/, "(" + ny + "건)");
       var hg = out.querySelector(".ib-sec-google"); if (hg) hg.textContent = hg.textContent.replace(/\(\d+건\)/, "(" + ng + "건)");
     }catch(e){}
   };
@@ -1157,9 +1158,8 @@
       html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px" class="ib-grid-google">' + google.map(function(x){ return gridCard(x, true); }).join("") + '</div>';
     }
     if (simi.length){
-      var open = same.length === 0 && google.length === 0;
-      html += '<button type="button" class="ib-simi-tg" style="display:block;width:100%;padding:8px;border:1px dashed #f39c12;background:#fffbeb;color:#92400e;border-radius:8px;font-size:12.5px;cursor:pointer;font-family:inherit;margin-top:6px">🟡 유사 영상 ' + simi.length + '건 ' + (open ? "접기 ▴" : "펼쳐보기 ▾") + '</button>';
-      html += '<div class="ib-simi-grid" style="display:' + (open ? "flex" : "none") + ';flex-wrap:wrap;gap:8px;margin-top:8px">' + simi.map(function(x){ return gridCard(x, false); }).join("") + '</div>';
+      html += '<div class="ib-sec-simi" style="font-size:13px;font-weight:700;color:#f39c12;margin:10px 0 6px">🟡 유사 영상 (' + simi.length + '건) — 비슷한 장면의 영상들</div>';
+      html += '<div class="ib-simi-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">' + simi.map(function(x){ return gridCard(x, false); }).join("") + '</div>';
     }
     html += (note || "") + '<div style="font-size:11px;color:#b5b5b5;margin-top:8px">바이두 식별 + 구글 비전 기술 제공 · 판정은 참고용입니다.</div>';
     out.innerHTML = html;
