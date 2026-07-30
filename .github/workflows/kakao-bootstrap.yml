@@ -5,6 +5,10 @@ on:
       code:
         description: Kakao authorization code
         required: true
+      slot:
+        description: "1=대표 관리자, 2=동업자"
+        required: false
+        default: "1"
 jobs:
   boot:
     runs-on: ubuntu-latest
@@ -15,6 +19,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
           KAKAO_CODE: ${{ github.event.inputs.code }}
+          KAKAO_SLOT: ${{ github.event.inputs.slot }}
         run: |
           cat > boot.mjs <<'SCRIPT'
           const KEY=process.env.KAKAO_REST_KEY, SB=process.env.SUPABASE_URL, SK=process.env.SUPABASE_SERVICE_ROLE, CODE=process.env.KAKAO_CODE;
@@ -22,7 +27,7 @@ jobs:
           const tok=await (await fetch("https://kauth.kakao.com/oauth/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"authorization_code",client_id:KEY,redirect_uri:RURI,code:CODE})})).json();
           if(!tok.access_token){console.log("token_fail",JSON.stringify(tok));process.exit(1);}
           console.log("access_ok has_refresh",!!tok.refresh_token);
-          const up=await fetch(SB+"/rest/v1/app_secrets?on_conflict=key",{method:"POST",headers:{apikey:SK,Authorization:"Bearer "+SK,"Content-Type":"application/json",Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({key:"kakao_refresh_token",value:tok.refresh_token})});
+          const up=await fetch(SB+"/rest/v1/app_secrets?on_conflict=key",{method:"POST",headers:{apikey:SK,Authorization:"Bearer "+SK,"Content-Type":"application/json",Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({key:(process.env.KAKAO_SLOT==="2"?"kakao_refresh_token_2":"kakao_refresh_token"),value:tok.refresh_token})});
           console.log("store_status",up.status);
           const msg=await fetch("https://kapi.kakao.com/v2/api/talk/memo/default/send",{method:"POST",headers:{Authorization:"Bearer "+tok.access_token,"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({template_object:JSON.stringify({object_type:"text",text:"[OK] 인비랩 카카오 알림 연결 완료! 이제 수집 결과가 여기로 옵니다.",link:{web_url:"https://inbilab.ai.kr",mobile_web_url:"https://inbilab.ai.kr"}})})});
           console.log("msg_status",msg.status, await msg.text());
