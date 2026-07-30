@@ -1173,7 +1173,11 @@
     var note = "";
     if (failB === frames.length) note = '<div style="font-size:11.5px;color:#c0392b;margin-top:6px">⚠ 바이두 검색은 실패해서 구글 결과만 표시됩니다.</div>';
     if (failG === frames.length) note = '<div style="font-size:11.5px;color:#c0392b;margin-top:6px">⚠ 구글 검색은 실패해서 바이두 결과만 표시됩니다.</div>';
-    renderTotal(groups, gpages, out, note);
+    try{ renderTotal(groups, gpages, out, note); }
+    catch(e){
+      out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">결과 표시 오류: ' + esc(String((e && e.stack) || e).slice(0, 300)) + '</div>';
+      try{ console.error("renderTotal 오류", e); }catch(_e){}
+    }
   }
 
   // ── 통합 검색 박스 ──
