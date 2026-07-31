@@ -329,15 +329,18 @@ async function baiduGetSettings() {
   } catch {}
   return s;
 }
-async function baiduGuard(userId, token) {
+async function baiduGuard(userId, token, isAdmin) {
   const s = await baiduGetSettings();
-  if (!s.enabled) return { allow: false, reason: "baidu_disabled" };
   if (s.stop) return { allow: false, reason: "emergency_stop" };
+  if (!s.enabled && !isAdmin) return { allow: false, reason: "baidu_disabled" };
+  // 관리자는 횟수 상한 없이 테스트 가능 (사용량 기록은 남김)
+  const gLimit = isAdmin ? 99999999 : s.globalLimit;
+  const uLimit = isAdmin ? 99999999 : s.userLimit;
   try {
     const r = await fetch(SUPABASE_URL + "/rest/v1/rpc/baidu_check_and_inc", {
       method: "POST",
       headers: { apikey: ANON_KEY, Authorization: "Bearer " + token, "Content-Type": "application/json" },
-      body: JSON.stringify({ p_user: userId, p_global_limit: s.globalLimit, p_user_limit: s.userLimit }),
+      body: JSON.stringify({ p_user: userId, p_global_limit: gLimit, p_user_limit: uLimit }),
     });
     if (!r.ok) return { allow: true, reason: "counter_unavailable" };
     const j = await r.json().catch(() => null);
@@ -1141,7 +1144,7 @@ module.exports = async (req, res) => {
       const bvid = extractVideoId(body.video_url);
       if (!bvid) { res.status(400).json({ error: "유튜브 영상 주소가 아닙니다" }); return; }
       // [안전장치] 예산 상한·긴급 중단 확인 — 차단 시 구글 렌즈로 안내
-      const bguard = await baiduGuard(user.id, token);
+      const bguard = await baiduGuard(user.id, token, isAdmin);
       if (!bguard.allow) {
         res.status(200).json({ ok: false, blocked: true, reason: bguard.reason, use_lens: true, items: [] });
         return;
