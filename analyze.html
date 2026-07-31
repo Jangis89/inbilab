@@ -157,7 +157,7 @@
       <label><input type="radio" name="msel" value="flash"> Flash만</label>
     </div>
 
-    <div class="an-load" id="an-load"><div class="spin"></div><span id="load-txt">AI가 영상을 보고 있습니다…</span></div>
+    <div class="an-load" id="an-load"><div class="spin"></div><span id="load-txt">인계동 비둘기 AI가 영상을 분석중입니다</span></div>
     <div class="an-err" id="an-err"></div>
 
     <div class="an-res" id="an-res">
@@ -286,8 +286,8 @@
     btn.disabled = true;
     load.className = "an-load show";
     let sec = 0;
-    $id("load-txt").textContent = "AI가 영상을 보고 있습니다… (0초)";
-    loadTimer = setInterval(() => { sec++; $id("load-txt").textContent = "AI가 영상을 보고 있습니다… (" + sec + "초)"; }, 1000);
+    $id("load-txt").textContent = "인계동 비둘기 AI가 영상을 분석중입니다";
+    loadTimer = setInterval(() => { sec++; $id("load-txt").textContent = "인계동 비둘기 AI가 영상을 분석중입니다"; }, 1000);
 
     try {
       const { data } = await sb.auth.getSession();
@@ -688,6 +688,6 @@
     renderFooter();
   })();
 </script>
-<script src="assets/js/tools-addon.js"></script>
+<script src="assets/js/tools-addon.js?v=20260801a"></script>
 </body>
 </html>
