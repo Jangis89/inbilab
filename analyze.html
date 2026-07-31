@@ -366,8 +366,10 @@
       b.addEventListener("click", function () { runPlan(Number(b.getAttribute("data-di")) || 0, "", false); });
     });
   }
-  async function runPlan(di, ending, force) {
+  async function runPlan(di, ending, force, trMode) {
     var a = window.__ibAnalysis, vid = window.__ibVid;
+    var trSend = trMode === "off" ? "" : ((typeof trText === "function" && trText()) || "");
+    window.__ibTrUsed = !!trSend;
     if (!a || !vid || !Array.isArray(a.directions) || !a.directions.length) return;
     var dir = a.directions[di] || a.directions[0];
     var card = document.getElementById("ib-verdict-card");
@@ -381,7 +383,7 @@
       const r = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
-        body: JSON.stringify({ action: "blueprint", feature: "blueprint", video_url: "https://www.youtube.com/shorts/" + vid, model_pref: modelPref(), direction: { title: dir.title || "", oneline: dir.oneline || "" }, analysis: a, ending: ending || "", force: force === true }),
+        body: JSON.stringify({ action: "blueprint", feature: "blueprint", video_url: "https://www.youtube.com/shorts/" + vid, model_pref: modelPref(), direction: { title: dir.title || "", oneline: dir.oneline || "" }, analysis: a, ending: ending || "", transcript: trSend, force: force === true }),
       });
       const j = await r.json().catch(function () { return null; });
       if (!r.ok || !j || !j.ok || !j.plan) {
@@ -416,9 +418,11 @@
       var active = endType.indexOf(label.slice(0, 2)) === 0;
       return "<button type='button' class='ib-end-btn' data-end='" + code + "' style='font-family:inherit;font-size:12px;font-weight:700;border-radius:999px;padding:4px 11px;margin-right:6px;cursor:pointer;border:1.5px solid " + (active ? "#6366f1;background:#eef2ff;color:#312e81" : "#e2e8f0;background:#fff;color:#64748b") + "'>" + label + "</button>";
     }
+    var isAdm = false; try { var msEl = document.getElementById("model-sel"); isAdm = !!(msEl && msEl.style.display !== "none"); } catch (e) {}
+    var trTag = isAdm ? (window.__ibTrUsed ? " · 대본 포함" : " · 대본 제외") : "";
     var btnS = "font-family:inherit;font-size:13px;font-weight:800;border:none;border-radius:9px;padding:8px 14px;margin-right:7px;cursor:pointer;";
     wrap.innerHTML = "<div style='background:#fff;border:1.5px solid #c7d2fe;border-radius:14px;padding:17px 18px;margin-bottom:13px'>"
-      + "<div style='font-size:12px;font-weight:800;color:#6366f1'>📋 영상 기획안 — " + esc(dir.title || "") + "</div>"
+      + "<div style='font-size:12px;font-weight:800;color:#6366f1'>📋 영상 기획안 — " + esc(dir.title || "") + esc(trTag) + "</div>"
       + "<div style='font-size:16px;font-weight:800;color:#1e1b4b;margin-top:3px'>" + esc(p.concept || "") + "</div>"
       + (p.hook ? "<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-top:10px'><div style='font-size:12px;font-weight:800;color:#0f766e'>⚡ 첫 3초</div><div style='font-size:13.5px;color:#1e293b;margin-top:3px'><b>자막:</b> " + esc(p.hook.caption || "-") + "</div>" + (p.hook.narration ? "<div style='font-size:13px;color:#475569'><b>나레이션:</b> " + esc(p.hook.narration) + "</div>" : "") + "<div style='font-size:12.5px;color:#64748b'><b>화면:</b> " + esc(p.hook.visual || "-") + "</div></div>" : "")
       + "<div style='font-size:13px;font-weight:800;color:#312e81;margin-top:12px'>🎬 장면 순서</div>" + scenes
@@ -428,13 +432,15 @@
       + (p.length_sec ? "<div style='font-size:12.5px;color:#64748b;margin-top:9px'>⏱️ 예상 길이: 약 " + esc(String(p.length_sec)) + "초</div>" : "")
       + (Array.isArray(p.title_ideas) && p.title_ideas.length ? "<div style='font-size:13px;font-weight:800;color:#312e81;margin-top:11px'>✏️ 제목 후보</div><div style='font-size:13px;color:#334155;line-height:1.7'>" + p.title_ideas.map(function (x) { return "· " + esc(x); }).join("<br>") + "</div>" : "")
       + (Array.isArray(p.hashtags) && p.hashtags.length ? "<div style='font-size:12.5px;color:#2563eb;margin-top:7px'>" + p.hashtags.map(function (x) { x = String(x); return esc(x.indexOf("#") === 0 ? x : "#" + x); }).join(" ") + "</div>" : "")
-      + "<div style='margin-top:13px'><button type='button' id='ib-plan-copy' style='" + btnS + "background:#6366f1;color:#fff'>📋 전체 복사</button><button type='button' id='ib-plan-dl' style='" + btnS + "background:#eef2ff;color:#312e81'>📄 기획안.txt 저장</button><button type='button' id='ib-plan-redo' style='" + btnS + "background:#f1f5f9;color:#475569'>🔄 다시 만들기</button></div>"
+      + "<div style='margin-top:13px'><button type='button' id='ib-plan-copy' style='" + btnS + "background:#6366f1;color:#fff'>📋 전체 복사</button><button type='button' id='ib-plan-dl' style='" + btnS + "background:#eef2ff;color:#312e81'>📄 기획안.txt 저장</button><button type='button' id='ib-plan-redo' style='" + btnS + "background:#f1f5f9;color:#475569'>🔄 다시 만들기</button></div>" + (isAdm ? "<div style='margin-top:8px'><span style='font-size:11px;color:#94a3b8'>비교(관리자): </span><button type='button' id='ib-plan-tron' style='font-family:inherit;font-size:12px;font-weight:700;border:1.5px solid #e2e8f0;background:#fff;color:#475569;border-radius:999px;padding:4px 11px;margin-right:6px;cursor:pointer'>대본 포함 버전</button><button type='button' id='ib-plan-troff' style='font-family:inherit;font-size:12px;font-weight:700;border:1.5px solid #e2e8f0;background:#fff;color:#475569;border-radius:999px;padding:4px 11px;cursor:pointer'>대본 제외 버전</button>" + ((typeof trText === "function" && trText()) ? "" : " <span style='font-size:11px;color:#b45309'>※ 대본 포함 버전은 먼저 대본 따기를 실행해야 합니다</span>") + "</div>" : "")
       + "<div style='margin-top:6px;font-size:11px;color:#94a3b8'>※ AI 참고 의견입니다. 소스는 사용권을 꼭 확인하세요.</div>"
       + "</div>";
     [].slice.call(wrap.querySelectorAll(".ib-end-btn")).forEach(function (b) { b.addEventListener("click", function () { runPlan(di, b.getAttribute("data-end"), false); }); });
     var cp = document.getElementById("ib-plan-copy"); if (cp) cp.addEventListener("click", function () { try { navigator.clipboard.writeText(planText(p, dir)); cp.textContent = "✅ 복사됨"; setTimeout(function () { cp.textContent = "📋 전체 복사"; }, 1500); } catch (e) {} });
     var dl = document.getElementById("ib-plan-dl"); if (dl) dl.addEventListener("click", function () { var blob = new Blob([planText(p, dir)], { type: "text/plain;charset=utf-8" }); var u = URL.createObjectURL(blob); var aa = document.createElement("a"); aa.href = u; aa.download = "기획안_" + (window.__ibVid || "video") + ".txt"; aa.click(); setTimeout(function () { URL.revokeObjectURL(u); }, 3000); });
     var rd = document.getElementById("ib-plan-redo"); if (rd) rd.addEventListener("click", function () { runPlan(di, "", true); });
+    var tOn = document.getElementById("ib-plan-tron"); if (tOn) tOn.addEventListener("click", function () { runPlan(di, "", false, "on"); });
+    var tOff = document.getElementById("ib-plan-troff"); if (tOff) tOff.addEventListener("click", function () { runPlan(di, "", false, "off"); });
   }
 
   function planText(p, dir) {
