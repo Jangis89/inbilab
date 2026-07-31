@@ -361,6 +361,64 @@ async function baiduGuard(userId, token, isAdmin) {
   }
 }
 
+// ===== [안전장치2] 1초1회 속도제한 + 중복요청 방지 =====
+function ibSleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+async function sbGetCacheSrv(key, token) {
+  try {
+    const r = await fetch(SUPABASE_URL + "/rest/v1/search_cache?cache_key=eq." + encodeURIComponent(key) + "&select=payload,created_at", {
+      headers: { apikey: ANON_KEY, Authorization: "Bearer " + token },
+    });
+    if (!r.ok) return null;
+    const rows = await r.json();
+    if (!rows || !rows[0]) return null;
+    if (Date.now() - new Date(rows[0].created_at).getTime() > 30 * 24 * 3600 * 1000) return null;
+    return rows[0].payload || null;
+  } catch { return null; }
+}
+async function sbPutCacheSrv(key, videoId, payload, token) {
+  try {
+    await fetch(SUPABASE_URL + "/rest/v1/search_cache?on_conflict=cache_key", {
+      method: "POST",
+      headers: { apikey: ANON_KEY, Authorization: "Bearer " + token, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({ cache_key: key, engine: "baidu", video_id: videoId || null, payload: payload, created_at: new Date().toISOString() }),
+    });
+  } catch {}
+}
+async function baiduLockAcquire(key, token) {
+  try {
+    const r = await fetch(SUPABASE_URL + "/rest/v1/baidu_inflight?on_conflict=key", {
+      method: "POST",
+      headers: { apikey: ANON_KEY, Authorization: "Bearer " + token, "Content-Type": "application/json", Prefer: "resolution=ignore-duplicates,return=representation" },
+      body: JSON.stringify({ key: key, started: new Date().toISOString() }),
+    });
+    if (!r.ok) return true;
+    const rows = await r.json().catch(function () { return []; });
+    if (rows && rows.length) return true;
+    const g = await fetch(SUPABASE_URL + "/rest/v1/baidu_inflight?key=eq." + encodeURIComponent(key) + "&select=started", { headers: { apikey: ANON_KEY, Authorization: "Bearer " + token } });
+    const gr = g.ok ? await g.json().catch(function () { return []; }) : [];
+    if (gr && gr[0] && Date.now() - new Date(gr[0].started).getTime() > 60000) {
+      await fetch(SUPABASE_URL + "/rest/v1/baidu_inflight?key=eq." + encodeURIComponent(key), { method: "PATCH", headers: { apikey: ANON_KEY, Authorization: "Bearer " + token, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ started: new Date().toISOString() }) });
+      return true;
+    }
+    return false;
+  } catch { return true; }
+}
+async function baiduLockRelease(key, token) {
+  try { await fetch(SUPABASE_URL + "/rest/v1/baidu_inflight?key=eq." + encodeURIComponent(key), { method: "DELETE", headers: { apikey: ANON_KEY, Authorization: "Bearer " + token, Prefer: "return=minimal" } }); } catch {}
+}
+async function baiduRateAcquire(token) {
+  for (let i = 0; i < 6; i++) {
+    try {
+      const r = await fetch(SUPABASE_URL + "/rest/v1/rpc/baidu_try_acquire", { method: "POST", headers: { apikey: ANON_KEY, Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: "{}" });
+      if (!r.ok) return true;
+      const v = await r.json().catch(function () { return null; });
+      if (v === true) return true;
+    } catch { return true; }
+    await ibSleep(450);
+  }
+  return false;
+}
+
 module.exports = async (req, res) => {
   try {
     if (req.method !== "POST") {
@@ -1153,13 +1211,6 @@ module.exports = async (req, res) => {
       if (!bkey) { res.status(200).json({ ok: true, available: false, items: [], note: "BAIDU_API_KEY 미설정" }); return; }
       const bvid = extractVideoId(body.video_url);
       if (!bvid) { res.status(400).json({ error: "유튜브 영상 주소가 아닙니다" }); return; }
-      // [안전장치] 예산 상한·긴급 중단 확인 — 차단 시 구글 렌즈로 안내
-      const bguard = await baiduGuard(user.id, token, isAdmin);
-      if (!bguard.allow) {
-        await logBaidu(user.id, token, bvid, { ok: false, blocked: true, reason: String(bguard.reason || "").slice(0, 60) });
-        res.status(200).json({ ok: false, blocked: true, reason: bguard.reason, use_lens: true, items: [] });
-        return;
-      }
       let bimg = "https://i.ytimg.com/vi/" + bvid + "/hqdefault.jpg";
       try {
         const oc2 = await fetch("https://i.ytimg.com/vi/" + bvid + "/oar2.jpg", { method: "HEAD" });
@@ -1167,13 +1218,45 @@ module.exports = async (req, res) => {
       } catch {}
       const bReqImg = String((body && body.image_url) || "").trim();
     if (/^https:\/\/i\.ytimg\.com\/vi\/[A-Za-z0-9_-]{6,20}\/[A-Za-z0-9_]{1,20}\.jpg$/.test(bReqImg)) bimg = bReqImg;
+      // [중복방지] 서버 공유 캐시 먼저 확인 — 있으면 바이두 호출 없이 즉시 반환
+      const bCacheKey = "baidu:" + bimg;
+      const bCachedSrv = await sbGetCacheSrv(bCacheKey, token);
+      if (bCachedSrv && bCachedSrv.ok === true) {
+        res.status(200).json(Object.assign({ from_cache: true }, bCachedSrv));
+        return;
+      }
+      // [중복방지] 같은 사진 검색이 진행 중이면 잠시 기다렸다 그 결과 재사용
+      const bGotLock = await baiduLockAcquire(bCacheKey, token);
+      if (!bGotLock) {
+        for (let bw = 0; bw < 7; bw++) {
+          await ibSleep(900);
+          const bAgain = await sbGetCacheSrv(bCacheKey, token);
+          if (bAgain && bAgain.ok === true) { res.status(200).json(Object.assign({ from_cache: true }, bAgain)); return; }
+        }
+      }
+      // [안전장치] 예산 상한·긴급 중단 확인 — 차단 시 구글 렌즈로 안내
+      const bguard = await baiduGuard(user.id, token, isAdmin);
+      if (!bguard.allow) {
+        await baiduLockRelease(bCacheKey, token);
+        await logBaidu(user.id, token, bvid, { ok: false, blocked: true, reason: String(bguard.reason || "").slice(0, 60) });
+        res.status(200).json({ ok: false, blocked: true, reason: bguard.reason, use_lens: true, items: [] });
+        return;
+      }
+      // [1초 1회] 속도제한 — 혼잡하면 잠시 대기, 계속 혼잡하면 렌즈 전환
+      const bRateOk = await baiduRateAcquire(token);
+      if (!bRateOk) {
+        await baiduLockRelease(bCacheKey, token);
+        await logBaidu(user.id, token, bvid, { ok: false, blocked: true, reason: "rate_limited" });
+        res.status(200).json({ ok: false, blocked: true, reason: "rate_limited", use_lens: true, items: [] });
+        return;
+      }
     let bb64 = "";
       try {
         const ir = await fetch(bimg);
-        if (!ir.ok) { res.status(502).json({ error: "썸네일을 가져오지 못했습니다 (HTTP " + ir.status + ")" }); return; }
+        if (!ir.ok) { await baiduLockRelease(bCacheKey, token); res.status(502).json({ error: "썸네일을 가져오지 못했습니다 (HTTP " + ir.status + ")" }); return; }
         bb64 = Buffer.from(await ir.arrayBuffer()).toString("base64");
       } catch (e) {
-        res.status(502).json({ error: "썸네일 다운로드 실패", detail: String((e && e.message) || e) });
+        await baiduLockRelease(bCacheKey, token); res.status(502).json({ error: "썸네일 다운로드 실패", detail: String((e && e.message) || e) });
         return;
       }
       try {
@@ -1187,7 +1270,8 @@ module.exports = async (req, res) => {
         const bres = bj && bj.result ? bj.result : null;
         const bResErr = bres && typeof bres.err_code !== "undefined" ? Number(bres.err_code) : 0;
         if (!br.ok || !bj || (bcode !== "0" && bcode !== "") || bResErr !== 0) {
-          await logBaidu(user.id, token, bvid, { ok: false, blocked: false, err_code: String(bcode || "").slice(0, 60), http_status: br.status });
+          await baiduLockRelease(bCacheKey, token); 
+        await logBaidu(user.id, token, bvid, { ok: false, blocked: false, err_code: String(bcode || "").slice(0, 60), http_status: br.status });
           res.status(200).json({
             ok: false, http: br.status,
             err_code: bcode || null,
@@ -1207,13 +1291,16 @@ module.exports = async (req, res) => {
         });
         const sameN = bitems.filter(function (x) { return x.cate === "CATE_SAME"; }).length;
         await logBaidu(user.id, token, bvid, { ok: true, blocked: false, item_count: bitems.length, same_count: sameN, http_status: 200 });
-        res.status(200).json({
+        const bOut = {
           ok: true, available: true,
           img_kind: (bimg.indexOf("oar2") !== -1 ? "세로원본" : "가로썸네일"),
           count: bitems.length, same_count: sameN, items: bitems,
-        });
+        };
+        await sbPutCacheSrv(bCacheKey, bvid, bOut, token);
+        await baiduLockRelease(bCacheKey, token);
+        res.status(200).json(bOut);
       } catch (e) {
-        res.status(502).json({ error: "바이두 API 호출 실패", detail: String((e && e.message) || e) });
+        await baiduLockRelease(bCacheKey, token); res.status(502).json({ error: "바이두 API 호출 실패", detail: String((e && e.message) || e) });
       }
       return;
     }
