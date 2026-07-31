@@ -425,7 +425,7 @@
     // [운영자 지시] 불필요 섹션 제거: 유튜브직접검색·해외플랫폼·CC·저작권무료소스
     ["src-ytlinks","src-intl","src-cc","src-stock"].forEach(function (id) {
       var el = document.getElementById(id);
-      if (el) el.remove();
+      if (el) el.style.display = "none"; // 삭제하면 기본 코드가 깨짐 — 숨김만!
     });
     // [운영자 지시] 역검색(src-lens)을 맨 위로 — 핵심 기능 우선
     ["src-lens","src-origin","ib-prev-sum","src-cards","ib-long-wrap"].forEach(function (id) {
