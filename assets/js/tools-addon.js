@@ -589,7 +589,7 @@
       if (c.is_short_candidate) { badges.push('<span class="ib-b ib-short">쇼츠 후보' + (c.short_confidence ? (' · 확신 ' + c.short_confidence) : '') + '</span>'); nShort++; }
       else if (hasDur) { badges.push('<span class="ib-b ib-long">긴 원본 후보</span>'); nLong++; longNodes.push(node); }
       else { nUnknown++; }
-      if (c.match_type) { var mt = ({same_source:"🎯 동일 원본 후보",same_event:"🔁 같은 사건·인물",visual_similar:"👀 시각적 유사",long_full_version:"📼 전체본 후보"})[c.match_type]; if (mt) badges.push('<span class="ib-b" style="background:#ede9fe;color:#5b21b6">' + mt + ' <span style="opacity:.65">(추정)</span></span>'); }
+      if (c.match_type) { var mt = ({same_source:"🎯 원본 추정",same_event:"🔁 같은 사건·인물",visual_similar:"👀 비슷한 장면",long_full_version:"📼 전체본 후보"})[c.match_type]; if (mt) badges.push('<span class="ib-b" style="background:#ede9fe;color:#5b21b6">' + mt + ' <span style="opacity:.65">(추정)</span></span>'); }
       if (c.found_by) { var fbq = String(c.found_by).replace(/[<>&"\']/g, "").slice(0, 24); badges.push('<span class="ib-b">🔎 「' + fbq + '」로 발견</span>'); }
       if (c.embeddable) badges.push('<span class="ib-b ib-embed">인비랩 재생 가능</span>');
       if (c.embeddable && c.video_id) { (function (nd, cid, isS) { nd.querySelectorAll("a").forEach(function (a) { if ((a.getAttribute("href") || "").indexOf(cid) !== -1) { a.addEventListener("click", function (ev) { ev.preventDefault(); ibPlayerModal(cid, isS); }); } }); })(node, c.video_id, !!c.is_short_candidate); }
@@ -1137,8 +1137,8 @@
       var out = a.closest(".ib-res-out"); if (!out) return;
       function vis(sel){ var g = out.querySelector(sel); if (!g) return 0; return [].slice.call(g.children).filter(function(c){ return c.style.display !== "none"; }).length; }
       var ns = vis(".ib-grid-same"), ng = vis(".ib-grid-google"), ny = vis(".ib-simi-grid");
-      var es = out.querySelector(".ib-cnt-same"); if (es) es.textContent = "동일 원본 " + ns + "건";
-      var eg = out.querySelector(".ib-cnt-google"); if (eg) eg.textContent = "구글 발견 " + ng + "건";
+      var es = out.querySelector(".ib-cnt-same"); if (es) es.textContent = ns + "건";
+      var eg = out.querySelector(".ib-cnt-google"); if (eg) eg.textContent = ng + "건";
       var ey = out.querySelector(".ib-cnt-simi"); if (ey) ey.textContent = "유사 " + ny + "건";
       var hs = out.querySelector(".ib-sec-same"); if (hs) hs.textContent = hs.textContent.replace(/\(\d+건\)/, "(" + ns + "건)");
       var hy = out.querySelector(".ib-sec-simi"); if (hy) hy.textContent = hy.textContent.replace(/\(\d+건\)/, "(" + ny + "건)");
@@ -1227,14 +1227,14 @@
       
       html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px" class="ib-grid-same">' + same.map(function(x){ return gridCard(x, true); }).join("") + '</div>';
       
-    } else {
-      html += '<div style="padding:10px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px;margin-bottom:10px">' + esc(NO_RESULT_MSG) + '</div>';
     }
     if (google.length){
+      html += '<div style="font-size:13.5px;font-weight:800;color:#2563eb;margin:12px 0 6px">서양권</div>';
       
       html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px" class="ib-grid-google">' + google.map(function(x){ return gridCard(x, true); }).join("") + '</div>';
     }
     if (simi.length){
+      html += '<div style="font-size:13.5px;font-weight:800;color:#f39c12;margin:12px 0 6px">동양권</div>';
       
       html += '<div class="ib-simi-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">' + simi.map(function(x){ return gridCard(x, false); }).join("") + '</div>';
     }
@@ -1298,7 +1298,7 @@
     if (baiduBlocked) note += '<div style="font-size:11.5px;color:#e67e22;margin-top:6px">⚠ ' + (blockReason === "rate_limited" ? "검색이 몰려 바이두가 잠시 혼잡합니다. 구글 결과 위주로 표시됩니다." : "바이두 검색이 잠시 제한되어 구글 결과 위주로 표시됩니다.") + '</div>';
     if (!baiduBlocked && failB === frames.length) note += '<div style="font-size:11.5px;color:#c0392b;margin-top:6px">⚠ 바이두 검색은 실패해서 구글 결과만 표시됩니다.</div>';
     if (failG === frames.length) note += '<div style="font-size:11.5px;color:#c0392b;margin-top:6px">⚠ 구글 검색은 실패해서 바이두 결과만 표시됩니다.</div>';
-    if (foundSame) note += '<div style="font-size:11.5px;color:#2e7d32;margin-top:6px">✅ 앞 장면에서 동일 원본을 찾아 나머지 장면 검색은 생략했습니다.</div>';
+    if (foundSame) note += '<div style="font-size:11.5px;color:#2e7d32;margin-top:6px">✅ 앞 장면에서 원본을 찾아 나머지 장면 검색은 생략했습니다.</div>';
     try{ renderTotal(groups, gpages, out, note); }
     catch(e){
       out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">결과 표시 오류: ' + esc(String((e && e.stack) || e).slice(0, 300)) + '</div>';
