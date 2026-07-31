@@ -345,7 +345,7 @@
     }
     card.innerHTML =
       "<div style='font-size:12px;font-weight:800;color:#6366f1;margin-bottom:4px'>🧭 제작 결론</div>" +
-      "<div style='font-size:17px;font-weight:800;color:#1e1b4b'>" + escapeHtml(a.verdict_label) + "</div>" +
+      "<div style='font-size:17px;font-weight:800;color:#1e1b4b'>" + escapeHtml(String(a.verdict_label).replace(/^\s*[123]\s*[=:.)\-]*\s*/, "")) + "</div>" +
       "<ul style='margin:8px 0 0 18px;padding:0;font-size:13.5px;color:#334155;line-height:1.6'>" + reasons + "</ul>" +
       caution + rights +
       "<div style='margin-top:6px;font-size:11px;color:#94a3b8'>※ AI 참고 의견입니다. 최종 판단은 직접 해주세요.</div>";
