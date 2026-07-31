@@ -74,13 +74,14 @@
     var logs = [];
     if(day){
       var startUTC = day + "T00:00:00+00:00";
-      var lg = await sb.from("baidu_call_log").select("created_at,user_id,outcome,reason,same_count,item_count").gte("created_at",startUTC).order("created_at",{ascending:false}).limit(500);
+      var lg = await sb.from("baidu_call_log").select("created_at,user_id,ok,blocked,err_code,reason,same_count,item_count").gte("created_at",startUTC).order("created_at",{ascending:false}).limit(500);
       logs = lg.data||[];
     }
     render(day, globalCalls, users, logs);
   }
 
-  function countBy(logs, key){ return logs.filter(function(l){return l.outcome===key;}).length; }
+  function outcomeOf(l){ if(l.blocked) return "blocked"; if(l.ok) return "ok"; if(String(l.err_code||"")==="QUOTA_USER_DAILY_FREE") return "quota_free"; return "error"; }
+  function countBy(logs, key){ return logs.filter(function(l){return outcomeOf(l)===key;}).length; }
 
   function render(day, globalCalls, users, logs){
     var enabled = String(S.BAIDU_API_ENABLED)==="true";
@@ -145,8 +146,9 @@
       h += '<table><tr><th>시각</th><th>수강생</th><th>결과</th><th>비고</th></tr>';
       logs.slice(0,25).forEach(function(l){
         var t = new Date(l.created_at); var hh = t.toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
-        var oc = {ok:"성공",blocked:"차단",quota_free:"무료소진",error:"오류"}[l.outcome]||esc(l.outcome);
-        var extra = l.outcome==="ok" ? ("동일"+(l.same_count||0)+"·결과"+(l.item_count||0)) : esc(l.reason||"");
+        var ocKey = outcomeOf(l);
+        var oc = {ok:"성공",blocked:"차단",quota_free:"무료소진",error:"오류"}[ocKey]||esc(ocKey);
+        var extra = ocKey==="ok" ? ("동일"+(l.same_count||0)+"·결과"+(l.item_count||0)) : esc(l.err_code||l.reason||"");
         h += '<tr><td>'+hh+'</td><td>'+esc(String(l.user_id||"").slice(0,8))+'…</td><td>'+oc+'</td><td class="muted">'+extra+'</td></tr>';
       });
       h += '</table>';
