@@ -484,6 +484,21 @@ module.exports = async (req, res) => {
 
     const key = process.env.GEMINI_API_KEY;
 
+    // ---------- 액션: 댓글 가져오기 (읽기 전용 테스트) ----------
+    if (action === "yt_comments") {
+      const cvid = String((req.body || {}).videoId || "").trim();
+      if (!/^[A-Za-z0-9_-]{11}$/.test(cvid)) { res.status(400).json({ error: "videoId(11자리)가 필요합니다" }); return; }
+      const cj = await ytApi("commentThreads", { part: "snippet", videoId: cvid, maxResults: 10, order: "relevance", textFormat: "plainText" });
+      if (!cj) { res.status(500).json({ error: "YOUTUBE_API_KEY 미설정" }); return; }
+      if (cj.__error) { res.status(502).json({ error: cj.__error }); return; }
+      const citems = (cj.items || []).map(function (it) {
+        const s = it && it.snippet && it.snippet.topLevelComment && it.snippet.topLevelComment.snippet;
+        return s ? { text: String(s.textDisplay || "").slice(0, 200), likes: s.likeCount || 0 } : null;
+      }).filter(Boolean);
+      res.status(200).json({ ok: true, count: citems.length, comments: citems });
+      return;
+    }
+
     // ---------- 액션: 연결 테스트 ----------
     if (action === "ping") {
       if (!key) {
