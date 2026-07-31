@@ -306,6 +306,48 @@ __CONTEXT__
 JSON만 출력하세요:
 { "variations": [ { "type_id": 7, "strategy": "숫자·랭킹", "caption": ["윗줄", "아랫줄"], "narration": "...", "first_scene": "..." } ] }`;
 
+// ===== [안전장치] 바이두 예산 상한 + 긴급 중단 (설정은 Supabase app_settings에서 즉시 변경 가능) =====
+let __bgCache = { t: 0, s: null };
+async function baiduGetSettings() {
+  const now = Date.now();
+  if (__bgCache.s && now - __bgCache.t < 60000) return __bgCache.s;
+  const s = { enabled: true, stop: false, globalLimit: 2000, userLimit: 40 };
+  try {
+    const r = await fetch(SUPABASE_URL + "/rest/v1/app_settings?select=key,value", {
+      headers: { apikey: ANON_KEY, Authorization: "Bearer " + ANON_KEY },
+    });
+    if (r.ok) {
+      const rows = await r.json();
+      for (const row of rows) {
+        if (row.key === "BAIDU_API_ENABLED") s.enabled = String(row.value) === "true";
+        if (row.key === "BAIDU_EMERGENCY_STOP") s.stop = String(row.value) === "true";
+        if (row.key === "BAIDU_DAILY_GLOBAL_CALL_LIMIT") s.globalLimit = Number(row.value) || 2000;
+        if (row.key === "BAIDU_PER_USER_DAILY_CALL_LIMIT") s.userLimit = Number(row.value) || 40;
+      }
+      __bgCache = { t: now, s: s };
+    }
+  } catch {}
+  return s;
+}
+async function baiduGuard(userId, token) {
+  const s = await baiduGetSettings();
+  if (!s.enabled) return { allow: false, reason: "baidu_disabled" };
+  if (s.stop) return { allow: false, reason: "emergency_stop" };
+  try {
+    const r = await fetch(SUPABASE_URL + "/rest/v1/rpc/baidu_check_and_inc", {
+      method: "POST",
+      headers: { apikey: ANON_KEY, Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ p_user: userId, p_global_limit: s.globalLimit, p_user_limit: s.userLimit }),
+    });
+    if (!r.ok) return { allow: true, reason: "counter_unavailable" };
+    const j = await r.json().catch(() => null);
+    if (j && j.allow === false) return { allow: false, reason: j.reason || "limit" };
+    return { allow: true };
+  } catch {
+    return { allow: true, reason: "counter_error" };
+  }
+}
+
 module.exports = async (req, res) => {
   try {
     if (req.method !== "POST") {
@@ -1098,6 +1140,12 @@ module.exports = async (req, res) => {
       if (!bkey) { res.status(200).json({ ok: true, available: false, items: [], note: "BAIDU_API_KEY 미설정" }); return; }
       const bvid = extractVideoId(body.video_url);
       if (!bvid) { res.status(400).json({ error: "유튜브 영상 주소가 아닙니다" }); return; }
+      // [안전장치] 예산 상한·긴급 중단 확인 — 차단 시 구글 렌즈로 안내
+      const bguard = await baiduGuard(user.id, token);
+      if (!bguard.allow) {
+        res.status(200).json({ ok: false, blocked: true, reason: bguard.reason, use_lens: true, items: [] });
+        return;
+      }
       let bimg = "https://i.ytimg.com/vi/" + bvid + "/hqdefault.jpg";
       try {
         const oc2 = await fetch("https://i.ytimg.com/vi/" + bvid + "/oar2.jpg", { method: "HEAD" });
