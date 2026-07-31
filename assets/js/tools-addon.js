@@ -1219,14 +1219,21 @@
     var groups = [], gpages = [], failB = 0, failG = 0;
     var total = frames.length * 2, step = 0;
     function prog(msg){ out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 ' + step + '/' + total + ' — ' + msg + ' (총 1분 정도 걸릴 수 있어요)</div>'; }
+    // [호출 절감] 점진 검색: 1장 먼저 검색 → 동일 원본을 찾으면 나머지 장면 생략
+    var foundSame = false, baiduBlocked = false, blockReason = "";
     for (var i = 0; i < frames.length; i++){
+      if (baiduBlocked || (foundSame && i > 0)){ groups.push({ label: frames[i].label, items: [] }); continue; }
       step++; prog(esc(frames[i].label) + " 사진을 바이두에서 검색 중…");
       var j = null;
       try{ j = await baiduSearch(frames[i].url); }catch(e){}
+      if (j && j.blocked === true){ baiduBlocked = true; blockReason = String(j.reason || ""); groups.push({ label: frames[i].label, items: [] }); continue; }
       if (!j || j.ok !== true) failB++;
-      groups.push({ label: frames[i].label, items: (j && j.ok === true && j.items) ? j.items : [] });
+      var itemsArr = (j && j.ok === true && j.items) ? j.items : [];
+      groups.push({ label: frames[i].label, items: itemsArr });
+      for (var si = 0; si < itemsArr.length; si++){ if (itemsArr[si] && itemsArr[si].cate === "CATE_SAME"){ foundSame = true; break; } }
     }
     for (var k = 0; k < frames.length; k++){
+      if (foundSame && k > 0) continue;
       step++; prog(esc(frames[k].label) + " 사진을 구글에서 검색 중…");
       var v = null;
       try{ v = await visionSearch(frames[k].url); }catch(e){}
@@ -1234,13 +1241,15 @@
         v.pages.forEach(function(pg){ if (pg && pg.url) gpages.push({ url: pg.url, img: pg.img, __scene: frames[k].label }); });
       } else { failG++; }
     }
-    if (failB === frames.length && failG === frames.length){
+    if (!baiduBlocked && failB === frames.length && failG === frames.length){
       out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">검색이 모두 실패했습니다. 잠시 후 다시 시도해 주세요.</div>';
       return;
     }
     var note = "";
-    if (failB === frames.length) note = '<div style="font-size:11.5px;color:#c0392b;margin-top:6px">⚠ 바이두 검색은 실패해서 구글 결과만 표시됩니다.</div>';
-    if (failG === frames.length) note = '<div style="font-size:11.5px;color:#c0392b;margin-top:6px">⚠ 구글 검색은 실패해서 바이두 결과만 표시됩니다.</div>';
+    if (baiduBlocked) note += '<div style="font-size:11.5px;color:#e67e22;margin-top:6px">⚠ 바이두 검색이 오늘 한도에 도달해 구글 결과 위주로 표시됩니다.</div>';
+    if (!baiduBlocked && failB === frames.length) note += '<div style="font-size:11.5px;color:#c0392b;margin-top:6px">⚠ 바이두 검색은 실패해서 구글 결과만 표시됩니다.</div>';
+    if (failG === frames.length) note += '<div style="font-size:11.5px;color:#c0392b;margin-top:6px">⚠ 구글 검색은 실패해서 바이두 결과만 표시됩니다.</div>';
+    if (foundSame) note += '<div style="font-size:11.5px;color:#2e7d32;margin-top:6px">✅ 앞 장면에서 동일 원본을 찾아 나머지 장면 검색은 생략했습니다.</div>';
     try{ renderTotal(groups, gpages, out, note); }
     catch(e){
       out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">결과 표시 오류: ' + esc(String((e && e.stack) || e).slice(0, 300)) + '</div>';
