@@ -574,7 +574,7 @@
     if (!document.getElementById("ib-prev-style")) {
       var st = document.createElement("style");
       st.id = "ib-prev-style";
-      st.textContent = ".ib-badges{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px}.ib-b{font-size:11px;padding:2px 7px;border-radius:999px;background:var(--line,#eee);color:var(--sub,#555);white-space:nowrap}.ib-short{background:#ffe8d6;color:#b5480a}.ib-long{background:#e6ecff;color:#274bd1}.ib-embed{background:#e4f7e8;color:#1c8a3b}.ib-sum{font-size:12px;color:var(--sub,#666);margin:2px 0 8px}";
+      st.textContent = ".ib-badges{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px}.ib-b{font-size:11px;padding:2px 7px;border-radius:999px;background:var(--line,#eee);color:var(--sub,#555);white-space:nowrap}.ib-short{background:#ffe8d6;color:#b5480a}.ib-long{background:#e6ecff;color:#274bd1}.ib-embed{background:#e4f7e8;color:#1c8a3b}.ib-sum{font-size:13.5px;color:var(--sub,#666);margin:2px 0 8px}";
       document.head.appendChild(st);
     }
     var nodes = host.querySelectorAll(".src-card");
@@ -617,12 +617,12 @@
       sum.id = "ib-prev-sum";
       sum.className = "ib-sum";
       var sumLabel = "🎬 같거나 비슷한 영상 " + (nShort + nLong) + "개" + (nUnknown ? (" (+" + nUnknown + ")") : "");
-      sum.textContent = sumLabel + " — 펼쳐보기 ▾";
+      sum.textContent = sumLabel + " — 접기 ▴";
       sum.style.cursor = "pointer";
-      // 기본은 접힘 — 수강생이 원할 때만 펼쳐본다 (운영자 지시)
-      host.style.display = "none";
+      // 기본은 펼침 (운영자 지시 2026-08-01)
+      host.style.display = "";
       var lw0 = document.getElementById("ib-long-wrap");
-      if (lw0) lw0.style.display = "none";
+      if (lw0) lw0.style.display = "";
       sum.addEventListener("click", function () {
         var opened = host.style.display !== "none";
         host.style.display = opened ? "none" : "";
