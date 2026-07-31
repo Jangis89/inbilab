@@ -364,8 +364,8 @@
     btn.disabled = true;
     load.className = "an-load show";
     let sec = 0;
-    $id("src-load-txt").textContent = "AI가 원본 단서를 찾고 있습니다… (0초)";
-    srcTimer = setInterval(() => { sec++; $id("src-load-txt").textContent = "AI가 원본 단서를 찾고 유튜브를 검색 중입니다… (" + sec + "초)"; }, 1000);
+    $id("src-load-txt").textContent = "인계동 비둘기 레이더 가동중..";
+    srcTimer = setInterval(() => { sec++; $id("src-load-txt").textContent = "인계동 비둘기 레이더 가동중.."; }, 1000);
     try {
       const { data } = await sb.auth.getSession();
       const token = data && data.session ? data.session.access_token : "";
