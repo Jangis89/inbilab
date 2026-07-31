@@ -1145,6 +1145,14 @@
   }
 
   // ── 통합 결과: 동일원본 → 구글(이미지 있는 것만) → 유사 ──
+  // [모음 페이지 판별] 특정 영상이 아닌 검색·모음 페이지 (내용이 수시로 바뀌어 착각 유발)
+  function isListingPage(u){
+    var s = String(u || "");
+    return /tiktok\.com\/(discover|content|tag|music|channel)\//i.test(s)
+        || /instagram\.com\/(popular|explore|directory|topics)\//i.test(s)
+        || /youtube\.com\/(hashtag\/|results|channel\/|source\/)/i.test(s)
+        || /reddit\.com\/r\/[A-Za-z0-9_]+\/?$/i.test(s);
+  }
   function renderTotal(baiduGroups, googlePages, out, note){
     try{ out.classList.add("ib-res-out"); }catch(e){}
     var seen = {}, all = [];
@@ -1163,22 +1171,22 @@
     var same = all.filter(function(x){ return x.cate === "CATE_SAME"; });
     var simi = all.filter(function(x){ return x.cate !== "CATE_SAME"; });
     // 구글: 미리보기 이미지가 있는 결과만 (이미지 없는 링크는 수강생 시간 낭비 → 제외)
-    var gseen = {}, google = [];
+    var gseen = {}, google = [], listing = [];
     (googlePages || []).forEach(function(pg){
       var key = String(pg.url || "").trim();
       var pimg = pg.img;
-      if (!pimg){
-        var ym = key.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
-        if (ym) pimg = "https://i.ytimg.com/vi/" + ym[1] + "/hqdefault.jpg";
-      }
+      // [사진=목적지 일치] 유튜브는 항상 그 영상의 진짜 썸네일로 표시 (클릭 착각 방지)
+      var ym = key.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+      if (ym) pimg = "https://i.ytimg.com/vi/" + ym[1] + "/hqdefault.jpg";
       if (!key || !pimg || !isVideoSite(key) || gseen[key] || seen[key]) return;
       var cvNow = currentVid();
       if (cvNow && key.indexOf(cvNow) >= 0) return; // 지금 분석 중인 영상 자신은 제외
       gseen[key] = true;
-      google.push({ url: pg.url, img: pimg, site: "", __scene: pg.__scene });
+      var gEntry = { url: pg.url, img: pimg, site: "", __scene: pg.__scene };
+      if (isListingPage(key)) listing.push(gEntry); else google.push(gEntry);
     });
     var nScenes = baiduGroups.length;
-    if (!same.length && !google.length && !simi.length){
+    if (!same.length && !google.length && !simi.length && !listing.length){
       out.innerHTML = '<div style="padding:12px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px"><b>검색 결과 없음.</b> ' + esc(NO_RESULT_MSG) + '</div>' + (note || "");
       return;
     }
@@ -1200,6 +1208,10 @@
     if (simi.length){
       html += '<div class="ib-sec-simi" style="font-size:13px;font-weight:700;color:#f39c12;margin:10px 0 6px">🟡 유사 영상 (' + simi.length + '건) — 비슷한 장면의 영상들</div>';
       html += '<div class="ib-simi-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">' + simi.map(function(x){ return gridCard(x, false); }).join("") + '</div>';
+    }
+    if (listing.length){
+      html += '<div class="ib-sec-listing" style="font-size:13px;font-weight:700;color:#94a3b8;margin:10px 0 6px">📂 모음 페이지 (' + listing.length + '건) — 특정 영상이 아닌 검색·모음 페이지입니다. 내용이 수시로 바뀌니 참고만 하세요</div>';
+      html += '<div class="ib-grid-listing" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;opacity:.85">' + listing.map(function(x){ return gridCard(x, false); }).join("") + '</div>';
     }
     html += (note || "") + '<div style="font-size:11px;color:#b5b5b5;margin-top:8px">바이두 식별 + 구글 비전 기술 제공 · 판정은 참고용입니다.</div>';
     out.innerHTML = html;
