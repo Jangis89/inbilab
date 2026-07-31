@@ -329,12 +329,12 @@ async function baiduGetSettings() {
   } catch {}
   return s;
 }
-async function logBaidu(userId, token, videoId, outcome, reason, sameCount, itemCount, http) {
+async function logBaidu(userId, token, videoId, fields) {
   try {
     await fetch(SUPABASE_URL + "/rest/v1/baidu_call_log", {
       method: "POST",
       headers: { apikey: ANON_KEY, Authorization: "Bearer " + token, "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ user_id: userId, video_id: videoId || null, outcome: outcome, reason: String(reason || "").slice(0, 60), same_count: sameCount || 0, item_count: itemCount || 0, http: http || 0 }),
+      body: JSON.stringify(Object.assign({ user_id: userId, video_id: videoId || null }, fields || {})),
     });
   } catch {}
 }
@@ -1156,7 +1156,7 @@ module.exports = async (req, res) => {
       // [안전장치] 예산 상한·긴급 중단 확인 — 차단 시 구글 렌즈로 안내
       const bguard = await baiduGuard(user.id, token, isAdmin);
       if (!bguard.allow) {
-        await logBaidu(user.id, token, bvid, "blocked", bguard.reason, 0, 0, 0);
+        await logBaidu(user.id, token, bvid, { ok: false, blocked: true, reason: String(bguard.reason || "").slice(0, 60) });
         res.status(200).json({ ok: false, blocked: true, reason: bguard.reason, use_lens: true, items: [] });
         return;
       }
@@ -1187,7 +1187,7 @@ module.exports = async (req, res) => {
         const bres = bj && bj.result ? bj.result : null;
         const bResErr = bres && typeof bres.err_code !== "undefined" ? Number(bres.err_code) : 0;
         if (!br.ok || !bj || (bcode !== "0" && bcode !== "") || bResErr !== 0) {
-          await logBaidu(user.id, token, bvid, (bcode === "QUOTA_USER_DAILY_FREE" ? "quota_free" : "error"), bcode || "", 0, 0, br.status);
+          await logBaidu(user.id, token, bvid, { ok: false, blocked: false, err_code: String(bcode || "").slice(0, 60), http_status: br.status });
           res.status(200).json({
             ok: false, http: br.status,
             err_code: bcode || null,
@@ -1206,7 +1206,7 @@ module.exports = async (req, res) => {
           };
         });
         const sameN = bitems.filter(function (x) { return x.cate === "CATE_SAME"; }).length;
-        await logBaidu(user.id, token, bvid, "ok", "", sameN, bitems.length, 200);
+        await logBaidu(user.id, token, bvid, { ok: true, blocked: false, item_count: bitems.length, same_count: sameN, http_status: 200 });
         res.status(200).json({
           ok: true, available: true,
           img_kind: (bimg.indexOf("oar2") !== -1 ? "세로원본" : "가로썸네일"),
