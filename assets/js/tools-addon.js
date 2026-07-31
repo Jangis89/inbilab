@@ -406,7 +406,13 @@
   function ibReorder(){
     var host = document.getElementById("src-res");
     if (!host) return;
-    ["src-origin","ib-prev-sum","src-cards","ib-long-wrap","src-ytlinks","src-intl","src-lens","src-cc","src-stock"].forEach(function (id) {
+    // [운영자 지시] 불필요 섹션 제거: 유튜브직접검색·해외플랫폼·CC·저작권무료소스
+    ["src-ytlinks","src-intl","src-cc","src-stock"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.remove();
+    });
+    // [운영자 지시] 역검색(src-lens)을 맨 위로 — 핵심 기능 우선
+    ["src-lens","src-origin","ib-prev-sum","src-cards","ib-long-wrap"].forEach(function (id) {
       var el = document.getElementById(id);
       if (el && el.parentNode === host) host.appendChild(el);
     });
@@ -597,7 +603,20 @@
       var sum = document.createElement("div");
       sum.id = "ib-prev-sum";
       sum.className = "ib-sum";
-      sum.textContent = "🎬 쇼츠 후보 " + nShort + "개 · 긴 원본 후보 " + nLong + "개" + (nUnknown ? (" · 길이 미확인 " + nUnknown + "개") : "");
+      var sumLabel = "🎬 같거나 비슷한 영상 " + (nShort + nLong) + "개" + (nUnknown ? (" (+" + nUnknown + ")") : "");
+      sum.textContent = sumLabel + " — 펼쳐보기 ▾";
+      sum.style.cursor = "pointer";
+      // 기본은 접힘 — 수강생이 원할 때만 펼쳐본다 (운영자 지시)
+      host.style.display = "none";
+      var lw0 = document.getElementById("ib-long-wrap");
+      if (lw0) lw0.style.display = "none";
+      sum.addEventListener("click", function () {
+        var opened = host.style.display !== "none";
+        host.style.display = opened ? "none" : "";
+        var lw = document.getElementById("ib-long-wrap");
+        if (lw) lw.style.display = opened ? "none" : "";
+        sum.textContent = sumLabel + (opened ? " — 펼쳐보기 ▾" : " — 접기 ▴");
+      });
       if (host.parentNode) host.parentNode.insertBefore(sum, host);
     }
   }
