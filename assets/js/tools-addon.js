@@ -1219,7 +1219,8 @@
     });
     var nScenes = baiduGroups.length;
     if (!same.length && !google.length && !simi.length && !listing.length){
-      out.innerHTML = '<div style="padding:12px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px"><b>검색 결과 없음.</b> ' + esc(NO_RESULT_MSG) + '</div>' + (note || "");
+      out.innerHTML = '<div style="padding:12px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px"><b>검색 결과 없음.</b> ' + esc(NO_RESULT_MSG) + '<br>직접 확인하고 싶다면 위의 💡 안내를 따라 검색해 보세요.</div>' + (note || "");
+      if (typeof window.__ibGuideOpen === "function") window.__ibGuideOpen();
       return;
     }
     var html = '';
@@ -1319,20 +1320,33 @@
     }
     var title = document.createElement("div");
     title.textContent = "📸 인비남 AI 이미지 검색";
-    title.style.cssText = "font-size:14px;font-weight:800;color:#312e81;margin-bottom:2px";
+    title.style.cssText = "font-size:14px;font-weight:800;color:#312e81;margin-bottom:2px;text-align:center";
     var sub = document.createElement("div");
     sub.textContent = "사진을 누르면 그 장면으로 검색합니다.";
-    sub.style.cssText = "font-size:11.5px;color:#64748b;margin-bottom:9px";
+    sub.style.cssText = "font-size:11.5px;color:#64748b;margin-bottom:9px;text-align:center";
     var row = document.createElement("div");
     row.style.cssText = "display:flex;gap:14px;justify-content:center;flex-wrap:wrap;padding:6px 0";
     var info = document.createElement("div");
     info.style.cssText = "font-size:11.5px;color:#64748b;margin-top:4px";
     var totalBtn = document.createElement("div");
-    totalBtn.textContent = "🛰️ 인계동 비둘기 레이더 탐지 영상 목록";
+    totalBtn.textContent = "✨ 인계동 비둘기 레이더 탐지 영상 목록";
     totalBtn.style.cssText = "display:block;width:100%;margin-top:14px;padding:6px 0;text-align:center;font-size:16.5px;font-weight:800;color:#312e81;font-family:inherit";
     var out = document.createElement("div");
     out.style.cssText = "margin-top:10px";
-    box.appendChild(title); box.appendChild(sub); box.appendChild(row); box.appendChild(info); box.appendChild(totalBtn); box.appendChild(out);
+    // ── 직접 검색 안내 (기본 접힘 · 결과 없으면 자동 펼침) ──
+    var guideWrap = document.createElement("div");
+    guideWrap.id = "ib-guide";
+    var gTg = document.createElement("div");
+    var GUIDE_LABEL = "💡 결과가 안 나올 때 직접 찾는 법 ";
+    gTg.textContent = GUIDE_LABEL + "▾";
+    gTg.style.cssText = "margin-top:10px;text-align:center;font-size:13px;font-weight:700;color:#64748b;cursor:pointer";
+    var gBody = document.createElement("div");
+    gBody.style.cssText = "display:none;margin:8px auto 0;max-width:520px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px;font-size:13px;color:#334155;line-height:1.8;text-align:left";
+    gBody.innerHTML = '1. 사진 밑의 <b>바이두</b>나 <b>구글</b> 버튼을 누르세요. <span style="color:#94a3b8">(사진은 자동으로 복사됩니다)</span><br>2. 새로 열린 검색창에서 <b>카메라 모양</b>을 누르세요.<br>3. 붙여넣기 <b>Ctrl+V</b> <span style="color:#94a3b8">(맥은 Cmd+V)</span>를 누르면 바로 검색됩니다.';
+    gTg.addEventListener("click", function(){ var open = gBody.style.display !== "none"; gBody.style.display = open ? "none" : "block"; gTg.textContent = GUIDE_LABEL + (open ? "▾" : "▴"); });
+    guideWrap.appendChild(gTg); guideWrap.appendChild(gBody);
+    window.__ibGuideOpen = function(){ try { gBody.style.display = "block"; gTg.textContent = GUIDE_LABEL + "▴"; } catch(e){} };
+    box.appendChild(title); box.appendChild(sub); box.appendChild(row); box.appendChild(info); box.appendChild(guideWrap); box.appendChild(totalBtn); box.appendChild(out);
     var vid = currentVid();
     if (!vid){ row.innerHTML = '<div style="font-size:12.5px;color:#c0392b">영상 주소를 찾지 못했습니다.</div>'; return box; }
     row.innerHTML = '<div style="font-size:12.5px;color:#888">장면 사진을 뽑고 중복을 걸러내는 중…</div>';
