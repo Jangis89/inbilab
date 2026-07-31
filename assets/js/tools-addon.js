@@ -1248,7 +1248,7 @@
       html += '<div class="ib-simi-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">' + simi.map(function(x){ return gridCard(x, false); }).join("") + '</div>';
     }
     if (listing.length){
-      
+      html += '<div style="font-size:13.5px;font-weight:800;color:#64748b;margin:12px 0 6px">📂 여러 영상이 모여있는 페이지</div>';
       html += '<div class="ib-grid-listing" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;opacity:.85">' + listing.map(function(x){ return gridCard(x, false); }).join("") + '</div>';
     }
     html += (note || "");
