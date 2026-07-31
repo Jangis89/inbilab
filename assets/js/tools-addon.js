@@ -1180,18 +1180,26 @@
   // [모음 페이지 판별] 특정 영상이 아닌 검색·모음 페이지 (내용이 수시로 바뀌어 착각 유발)
   function isListingPage(u){
     var s = String(u || "");
-    return /tiktok\.com\/(discover|content|tag|music|channel)\//i.test(s)
+    // [틱톡 화이트리스트] 개별 영상 주소만 영상 카드로 인정 — 나머지 틱톡 주소는 전부 모음 페이지 취급
+    if (/tiktok\.com/i.test(s)){
+      return !(/tiktok\.com\/@[^\/]+\/video\/\d+/i.test(s) || /\/\/(vm|vt)\.tiktok\.com\/[A-Za-z0-9]+/i.test(s));
+    }
+    return false
         || /instagram\.com\/(popular|explore|directory|topics)\//i.test(s)
         || /youtube\.com\/(hashtag\/|results|channel\/|source\/)/i.test(s)
         || /reddit\.com\/r\/[A-Za-z0-9_]+\/?$/i.test(s);
   }
   function renderTotal(baiduGroups, googlePages, out, note){
     try{ out.classList.add("ib-res-out"); }catch(e){}
-    var seen = {}, all = [];
+    var seen = {}, all = [], listing = [];
     baiduGroups.forEach(function(g){
       (g.items || []).forEach(function(it){
         var key = String(it.url || "").trim();
         if (!key || !it.img || !isVideoSite(it.url)) return;
+        if (isListingPage(key)){
+          if (!seen[key]){ var c0 = { cate: it.cate, url: it.url, img: it.img, site: it.site, __scene: g.label }; seen[key] = c0; listing.push(c0); }
+          return;
+        }
         if (seen[key]){
           if (it.cate === "CATE_SAME" && seen[key].cate !== "CATE_SAME"){ seen[key].cate = "CATE_SAME"; seen[key].__scene = g.label; }
           return;
@@ -1203,7 +1211,7 @@
     var same = all.filter(function(x){ return x.cate === "CATE_SAME"; });
     var simi = all.filter(function(x){ return x.cate !== "CATE_SAME"; });
     // 구글: 미리보기 이미지가 있는 결과만 (이미지 없는 링크는 수강생 시간 낭비 → 제외)
-    var gseen = {}, google = [], listing = [];
+    var gseen = {}, google = [];
     (googlePages || []).forEach(function(pg){
       var key = String(pg.url || "").trim();
       var pimg = pg.img;
