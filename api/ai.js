@@ -129,6 +129,7 @@ const ANALYZE_PROMPT = `당신은 유튜브 쇼츠 제작 전문 분석가입니
   "needed_sources": ["이 포맷을 재현할 때 필요한 소스 종류 (예: 무료 스톡영상, 게임 플레이 화면, AI 이미지, 자료 사진, 경기 영상 등)"],
   "difficulty": "편집 난이도 1~5 사이 숫자 (1=아주 쉬움, 5=전문가급)",
   "tip": "이 포맷을 따라 만들 때 가장 중요한 팁 한 줄 (그대로 베끼지 말고 새 소재로 재구성하는 방향)",
+  "audience_reaction": "아래에 시청자 댓글 데이터가 있으면, 댓글에서 많이 나온 반응을 한 줄로 (없으면 빈 문자열. 성공한 이유 같은 단정 표현 금지)",
   "verdict": "1 | 2 | 3 중 숫자 하나 (초보 수강생의 벤치마킹 기준: 1=구조를 참고해도 좋습니다, 2=많이 바꿔서 활용해야 합니다, 3=아이디어만 참고하는 편이 좋습니다)",
   "verdict_label": "위 세 문구 중 해당하는 문구를 토씨 하나 바꾸지 말고 그대로",
   "verdict_reasons": ["그렇게 판단한 이유 2개 (각각 한 문장, 초등학생도 이해할 쉬운 말)"],
@@ -136,7 +137,27 @@ const ANALYZE_PROMPT = `당신은 유튜브 쇼츠 제작 전문 분석가입니
   "directions": [{"title": "방향 이름 (예: 역전 원인 해설형)", "oneline": "이 방향으로 만들면 어떤 영상이 되는지 한 줄"}, {"title": "...", "oneline": "..."}, {"title": "...", "oneline": "..."}]
 }`;
 // directions: 첫 번째가 가장 추천하는 방향. 1번은 쉽고 안전한 성격, 2번은 조회수형, 3번은 차별화형 성격으로 이 영상에 맞게.
-const ANALYZE_PROMPT_VER = "v2";
+const ANALYZE_PROMPT_VER = "v3";
+
+const PLAN_PROMPT_VER = "p1";
+const PLAN_PROMPT = `당신은 유튜브 쇼츠 기획 전문가입니다. 아래 [영상 분석 결과]를 재료로, 초보 수강생이 그대로 따라 만들 수 있는 완전한 영상 기획안을 만드세요. 원본을 그대로 베끼는 방식은 금지 — 자기만의 해석·해설·구성이 들어간 2차 창작이어야 합니다. 자막에는 영상에 실제로 넣을 수 있는 사실만 쓰세요.
+
+제작 방향: __DIRECTION__
+엔딩 방식: __ENDING__
+
+아래 JSON 형식으로만 답하세요. 다른 텍스트 없이 JSON만. 모든 값은 초등학생도 이해할 쉬운 한국어로.
+{
+  "concept": "영상 한 줄 콘셉트",
+  "hook": { "caption": "첫 3초 화면 자막", "narration": "첫 3초 나레이션 (없으면 빈 문자열)", "visual": "첫 3초 화면에 보일 것" },
+  "scenes": [ { "no": 1, "caption": "자막", "narration": "나레이션 (없으면 빈 문자열)", "visual": "필요한 화면 설명", "rehook": "시청자 이탈을 막는 장치 한 줄 (없으면 빈 문자열)" } ],
+  "scenes_note": "scenes는 첫 3초 이후부터 5~7개",
+  "sources": [ { "scene": "장면 번호", "need": "필요한 소스", "how": "구하는 방법 (직접 촬영, 무료 스톡, AI 이미지, 직접 만든 도식 등)", "alt": "대체 소스", "risk": "확인 | 주의  (주의 = 중계·방송·영화·음원처럼 사용권 문제가 잦은 것)" } ],
+  "ending": { "type": "루프형 | 결론형 | 예고형", "why": "이 엔딩을 고른 이유 한 줄", "content": "마지막 장면 자막과 나레이션" },
+  "length_sec": 30,
+  "title_ideas": ["업로드용 제목 후보 3개"],
+  "hashtags": ["해시태그 5개"]
+}`;
+
 
 const SOURCE_PROMPT = `당신은 영상 원본 추적 전문가입니다. 이 영상을 직접 보고, 이 영상이 어떤 원본 소스를 재활용·편집했는지 추적할 단서를 뽑으세요.
 
@@ -543,12 +564,25 @@ module.exports = async (req, res) => {
       }
       const videoUrl = "https://www.youtube.com/watch?v=" + vid;
 
+      // [시청자 반응] 상위 댓글을 분석 재료로 (유튜브 무료 한도 1점, 실패해도 분석은 진행)
+      let cmTxt = "";
+      try {
+        const cj = await ytApi("commentThreads", { part: "snippet", videoId: vid, maxResults: 100, order: "relevance", textFormat: "plainText" });
+        if (cj && Array.isArray(cj.items)) {
+          const cs = cj.items.map(function (it) {
+            const s = it && it.snippet && it.snippet.topLevelComment && it.snippet.topLevelComment.snippet;
+            return s ? { t: String(s.textDisplay || "").replace(/\s+/g, " ").slice(0, 120), l: Number(s.likeCount || 0) } : null;
+          }).filter(Boolean).sort(function (a, b) { return b.l - a.l; }).slice(0, 30);
+          if (cs.length) cmTxt = "\n\n[참고: 이 영상의 시청자 댓글 상위 " + cs.length + "개 (좋아요순)]\n" + cs.map(function (c) { return "- (좋아요 " + c.l + ") " + c.t; }).join("\n");
+        }
+      } catch (e) {}
+
       const r = await callGemini(MODELS, key, {
         contents: [
           {
             parts: [
               { file_data: { file_uri: videoUrl } },
-              { text: ANALYZE_PROMPT },
+              { text: ANALYZE_PROMPT + cmTxt },
             ],
           },
         ],
@@ -1148,6 +1182,45 @@ module.exports = async (req, res) => {
         return;
       }
       const videoUrl = "https://www.youtube.com/watch?v=" + vid;
+
+      // ── [기획안 모드] 분석 결과 + 선택한 방향으로 전체 기획안 생성 (영상 재분석 없음, 품질 우선 Pro) ──
+      if (body.direction && body.analysis) {
+        const dirTitle = String(body.direction.title || "").slice(0, 80);
+        const dirLine = String(body.direction.oneline || "").slice(0, 200);
+        const endingPick = ["loop", "clean", "tease"].indexOf(String(body.ending || "")) > -1 ? String(body.ending) : "";
+        const planModels = pref === "flash" ? ["gemini-flash-latest"] : ["gemini-pro-latest", "gemini-flash-latest"];
+        const planKey = "plan:" + vid + ":" + PLAN_PROMPT_VER + ":" + (pref === "flash" ? "f" : "p") + ":" + encodeURIComponent(dirTitle).slice(0, 60) + ":" + (endingPick || "auto");
+        if (body.force !== true) {
+          const pc = await sbGetCacheSrv(planKey, token);
+          if (pc && pc.scenes) { res.status(200).json({ ok: true, video_id: vid, plan: pc, cached: true }); return; }
+        }
+        const endTxt = endingPick === "loop" ? "루프형 — 마지막 장면이 첫 장면과 자연스럽게 이어져 반복 재생을 유도"
+          : endingPick === "clean" ? "결론형 — 깔끔하게 마무리"
+          : endingPick === "tease" ? "예고형 — 다음 편이 궁금하게"
+          : "영상 소재에 가장 잘 맞는 방식을 네가 하나 골라라 (루프형/결론형/예고형)";
+        const planPrompt = PLAN_PROMPT.replace("__DIRECTION__", dirTitle + " — " + dirLine).replace("__ENDING__", endTxt)
+          + "\n\n[영상 분석 결과]\n" + JSON.stringify(body.analysis).slice(0, 6000)
+          + (body.transcript ? "\n\n[영상에서 추출한 대본·자막]\n" + String(body.transcript).slice(0, 4000) : "");
+        const pr = await callGemini(planModels, key, {
+          contents: [{ parts: [{ text: planPrompt }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0.55 },
+        });
+        if (!pr.ok) {
+          let pd = pr.detail || "";
+          if (pr.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(pd)) pd = "오늘 AI 사용량이 모두 소진되었습니다. 몇 시간 후 다시 시도해 주세요.";
+          res.status(502).json({ error: "기획안 생성 실패", detail: pd });
+          return;
+        }
+        const plan = parseJsonLoose(geminiText(pr.gj));
+        if (!plan || !Array.isArray(plan.scenes) || !plan.scenes.length) {
+          res.status(502).json({ error: "기획안 결과 해석에 실패했습니다. 다시 시도해 주세요." });
+          return;
+        }
+        try { await sbPutCacheSrv(planKey, vid, plan, token); } catch (e) {}
+        if (!isAdmin) await recordUsage(user.id, feature, token);
+        res.status(200).json({ ok: true, video_id: vid, plan: plan });
+        return;
+      }
 
       // 1) 캐시 확인: 같은 영상은 다시 분석하지 않음 (비용 0원, 한도 차감 없음)
       const force = isAdmin && body.force === true;
