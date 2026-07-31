@@ -1246,7 +1246,7 @@
       return;
     }
     var note = "";
-    if (baiduBlocked) note += '<div style="font-size:11.5px;color:#e67e22;margin-top:6px">⚠ 바이두 검색이 오늘 한도에 도달해 구글 결과 위주로 표시됩니다.</div>';
+    if (baiduBlocked) note += '<div style="font-size:11.5px;color:#e67e22;margin-top:6px">⚠ ' + (blockReason === "rate_limited" ? "검색이 몰려 바이두가 잠시 혼잡합니다. 구글 결과 위주로 표시됩니다." : "바이두 검색이 잠시 제한되어 구글 결과 위주로 표시됩니다.") + '</div>';
     if (!baiduBlocked && failB === frames.length) note += '<div style="font-size:11.5px;color:#c0392b;margin-top:6px">⚠ 바이두 검색은 실패해서 구글 결과만 표시됩니다.</div>';
     if (failG === frames.length) note += '<div style="font-size:11.5px;color:#c0392b;margin-top:6px">⚠ 구글 검색은 실패해서 바이두 결과만 표시됩니다.</div>';
     if (foundSame) note += '<div style="font-size:11.5px;color:#2e7d32;margin-top:6px">✅ 앞 장면에서 동일 원본을 찾아 나머지 장면 검색은 생략했습니다.</div>';
