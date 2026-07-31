@@ -768,8 +768,7 @@
         div2.innerHTML = "<div class='ib-t'>🔍 원본 찾기</div>" +
           "<a class='lens-btn' href='https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(thumb) + "' target='_blank' rel='noopener'>Google Lens에서 직접 확인 →</a> " +
           "<button class='lens-btn' id='lens-run' style='border:none;cursor:pointer;font-family:inherit;background:#1e40af;'>🖼️ 웹 이미지 일치 후보 — Google Vision</button>" +
-          "<div class='prev-grid' id='lens-grid' style='grid-template-columns:repeat(2,1fr);'></div>" +
-          "<div class='lens-tip'>썸네일과 똑같거나 비슷한 이미지가 있는 페이지를 구글이 찾아줍니다.</div>";
+          "<div class='prev-grid' id='lens-grid' style='grid-template-columns:repeat(2,1fr);'></div>";
         host.appendChild(div2);
         const runBtn = div2.querySelector("#lens-run");
         if (runBtn) runBtn.addEventListener("click", function () { runLens(vid); });
@@ -1223,27 +1222,24 @@
       out.innerHTML = '<div style="padding:12px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px"><b>검색 결과 없음.</b> ' + esc(NO_RESULT_MSG) + '</div>' + (note || "");
       return;
     }
-    var html = '<div style="font-weight:700;font-size:14px;margin:6px 0 10px">🔍 인비남 AI 토탈 검색 결과<br>'
-      + '<span class="ib-cnt-same" style="color:#e74c3c">동일 원본 ' + same.length + '건</span> · '
-      + '<span class="ib-cnt-google" style="color:#2563eb">구글 발견 ' + google.length + '건</span> · '
-      + '<span class="ib-cnt-simi" style="color:#f39c12">유사 ' + simi.length + '건</span></div>';
+    var html = '';
     if (same.length){
-      html += '<div class="ib-sec-same" style="font-size:13px;font-weight:700;color:#e74c3c;margin-bottom:6px">🔴 동일 원본 판정 (' + same.length + '건) — 사진을 누르면 해당 페이지가 열립니다</div>';
+      
       html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px" class="ib-grid-same">' + same.map(function(x){ return gridCard(x, true); }).join("") + '</div>';
-      html += '<div style="font-size:11.5px;color:#94a3b8;margin-bottom:10px">⚠ 주소에 따라 영상이 아닌 글(기사·블로그)일 수 있어요. 직접 눌러 원본 영상인지 확인하세요.</div>';
+      
     } else {
-      html += '<div style="padding:10px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px;margin-bottom:10px">동일 원본 판정 없음. ' + esc(NO_RESULT_MSG) + '</div>';
+      html += '<div style="padding:10px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px;margin-bottom:10px">' + esc(NO_RESULT_MSG) + '</div>';
     }
     if (google.length){
-      html += '<div class="ib-sec-google" style="font-size:13px;font-weight:700;color:#2563eb;margin:10px 0 6px">🔵 구글이 찾은 페이지 (' + google.length + '건) — 해외 원본일 가능성</div>';
+      
       html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px" class="ib-grid-google">' + google.map(function(x){ return gridCard(x, true); }).join("") + '</div>';
     }
     if (simi.length){
-      html += '<div class="ib-sec-simi" style="font-size:13px;font-weight:700;color:#f39c12;margin:10px 0 6px">🟡 유사 영상 (' + simi.length + '건) — 비슷한 장면의 영상들</div>';
+      
       html += '<div class="ib-simi-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">' + simi.map(function(x){ return gridCard(x, false); }).join("") + '</div>';
     }
     if (listing.length){
-      html += '<div class="ib-sec-listing" style="font-size:13px;font-weight:700;color:#94a3b8;margin:10px 0 6px">📂 모음 페이지 (' + listing.length + '건) — 특정 영상이 아닌 검색·모음 페이지입니다. 내용이 수시로 바뀌니 참고만 하세요</div>';
+      
       html += '<div class="ib-grid-listing" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;opacity:.85">' + listing.map(function(x){ return gridCard(x, false); }).join("") + '</div>';
     }
     html += (note || "");
