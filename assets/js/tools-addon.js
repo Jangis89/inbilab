@@ -1229,12 +1229,12 @@
       
     }
     if (google.length){
-      html += '<div style="font-size:13.5px;font-weight:800;color:#2563eb;margin:12px 0 6px">서양권</div>';
+      html += '<div style="font-size:13.5px;font-weight:800;color:#2563eb;margin:12px 0 6px">서양권 플랫폼</div>';
       
       html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px" class="ib-grid-google">' + google.map(function(x){ return gridCard(x, true); }).join("") + '</div>';
     }
     if (simi.length){
-      html += '<div style="font-size:13.5px;font-weight:800;color:#f39c12;margin:12px 0 6px">동양권</div>';
+      html += '<div style="font-size:13.5px;font-weight:800;color:#f39c12;margin:12px 0 6px">동양권 플랫폼</div>';
       
       html += '<div class="ib-simi-grid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">' + simi.map(function(x){ return gridCard(x, false); }).join("") + '</div>';
     }
@@ -1327,10 +1327,9 @@
     row.style.cssText = "display:flex;gap:14px;justify-content:center;flex-wrap:wrap;padding:6px 0";
     var info = document.createElement("div");
     info.style.cssText = "font-size:11.5px;color:#64748b;margin-top:4px";
-    var totalBtn = document.createElement("button");
-    totalBtn.type = "button";
-    totalBtn.textContent = "🔍 인비남 AI 토탈 검색";
-    totalBtn.style.cssText = "display:block;width:100%;margin-top:10px;padding:11px;border:none;background:#4338ca;color:#fff;border-radius:9px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit";
+    var totalBtn = document.createElement("div");
+    totalBtn.textContent = "🛰️ 인계동 비둘기 레이더 탐지 영상 목록";
+    totalBtn.style.cssText = "display:block;width:100%;margin-top:14px;padding:6px 0;text-align:center;font-size:16.5px;font-weight:800;color:#312e81;font-family:inherit";
     var out = document.createElement("div");
     out.style.cssText = "margin-top:10px";
     box.appendChild(title); box.appendChild(sub); box.appendChild(row); box.appendChild(info); box.appendChild(totalBtn); box.appendChild(out);
@@ -1376,11 +1375,14 @@
         row.appendChild(cell);
       });
       info.textContent = "";
+      // [1단계 축소] 원본 후보 찾기만 눌러도 토탈 검색 자동 시작
+      setTimeout(function(){ try { totalBtn.click(); } catch (e) {} }, 250);
     });
     totalBtn.addEventListener("click", function(){
       if (!framesReady || !framesReady.length){ out.innerHTML = '<div style="padding:8px;color:#c0392b;font-size:12.5px">장면 사진이 아직 준비되지 않았습니다.</div>'; return; }
-      totalBtn.disabled = true;
-      totalSearch(framesReady, out).then(function(){ totalBtn.disabled = false; }).catch(function(){ totalBtn.disabled = false; });
+      if (totalBtn.__ibBusy) return;
+      totalBtn.__ibBusy = true;
+      totalSearch(framesReady, out).then(function(){ totalBtn.__ibBusy = false; }).catch(function(){ totalBtn.__ibBusy = false; });
     });
     return box;
   }
