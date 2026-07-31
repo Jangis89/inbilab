@@ -128,8 +128,15 @@ const ANALYZE_PROMPT = `당신은 유튜브 쇼츠 제작 전문 분석가입니
   "faceless_reason": "그렇게 판단한 이유 한 줄",
   "needed_sources": ["이 포맷을 재현할 때 필요한 소스 종류 (예: 무료 스톡영상, 게임 플레이 화면, AI 이미지, 자료 사진, 경기 영상 등)"],
   "difficulty": "편집 난이도 1~5 사이 숫자 (1=아주 쉬움, 5=전문가급)",
-  "tip": "이 포맷을 따라 만들 때 가장 중요한 팁 한 줄 (그대로 베끼지 말고 새 소재로 재구성하는 방향)"
+  "tip": "이 포맷을 따라 만들 때 가장 중요한 팁 한 줄 (그대로 베끼지 말고 새 소재로 재구성하는 방향)",
+  "verdict": "1 | 2 | 3 중 숫자 하나 (초보 수강생의 벤치마킹 기준: 1=구조를 참고해도 좋습니다, 2=많이 바꿔서 활용해야 합니다, 3=아이디어만 참고하는 편이 좋습니다)",
+  "verdict_label": "위 세 문구 중 해당하는 문구를 토씨 하나 바꾸지 말고 그대로",
+  "verdict_reasons": ["그렇게 판단한 이유 2개 (각각 한 문장, 초등학생도 이해할 쉬운 말)"],
+  "verdict_caution": "가장 큰 주의점 한 문장 (저작권, 소재 구하기, 난이도 중 실제로 가장 걸리는 것)",
+  "directions": [{"title": "방향 이름 (예: 역전 원인 해설형)", "oneline": "이 방향으로 만들면 어떤 영상이 되는지 한 줄"}, {"title": "...", "oneline": "..."}, {"title": "...", "oneline": "..."}]
 }`;
+// directions: 첫 번째가 가장 추천하는 방향. 1번은 쉽고 안전한 성격, 2번은 조회수형, 3번은 차별화형 성격으로 이 영상에 맞게.
+const ANALYZE_PROMPT_VER = "v2";
 
 const SOURCE_PROMPT = `당신은 영상 원본 추적 전문가입니다. 이 영상을 직접 보고, 이 영상이 어떤 원본 소스를 재활용·편집했는지 추적할 단서를 뽑으세요.
 
@@ -566,6 +573,15 @@ module.exports = async (req, res) => {
         res.status(502).json({ error: "분석 결과 해석에 실패했습니다. 다시 시도해 주세요." });
         return;
       }
+      // [저작권 표시] 규칙 기반 — AI가 안전을 보증하지 않는다 (합의사항)
+      try {
+        const RIGHTS_RISKY = ["스포츠", "중계", "경기", "격투", "축구", "야구", "농구", "배구", "골프", "UFC", "GLORY", "KBO", "올림픽", "방송", "예능", "드라마", "영화", "애니메이션", "음원", "노래", "뮤직", "콘서트", "공연", "가수", "아이돌"];
+        const rightsHay = [analysis.category, analysis.topic, analysis.summary, (analysis.keywords || []).join(" "), analysis.format].join(" ");
+        analysis.rights_notice = RIGHTS_RISKY.some(function (w) { return rightsHay.indexOf(w) > -1; })
+          ? "주의가 필요한 소재입니다 (중계·방송·영화·음원은 사용권 문제가 잦습니다)"
+          : "사용권 확인이 필요합니다";
+      } catch (e) {}
+      analysis.prompt_ver = ANALYZE_PROMPT_VER;
       if (!isAdmin) await recordUsage(user.id, feature, token);
       res.status(200).json({ ok: true, video_id: vid, analysis: analysis, model: r.model });
       return;
