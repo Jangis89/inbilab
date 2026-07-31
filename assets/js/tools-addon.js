@@ -1263,7 +1263,15 @@
   async function totalSearch(frames, out){
     var groups = [], gpages = [], failB = 0, failG = 0;
     var total = frames.length * 2, step = 0;
-    function prog(msg){ out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 ' + step + '/' + total + ' — ' + msg + ' (총 1분 정도 걸릴 수 있어요)</div>'; }
+    function prog(msg){
+      var pct = Math.max(4, Math.min(100, Math.round((step / total) * 100)));
+      out.innerHTML = '<div style="padding:14px 6px 10px">'
+        + '<div style="height:10px;background:#e2e8f0;border-radius:999px;overflow:hidden">'
+        + '<div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,#6366f1,#4338ca);border-radius:999px;transition:width .4s ease"></div>'
+        + '</div>'
+        + '<div style="font-size:12px;color:#94a3b8;margin-top:6px;text-align:center">원본을 찾고 있어요… ' + pct + '%</div>'
+        + '</div>';
+    }
     // [호출 절감] 점진 검색: 1장 먼저 검색 → 동일 원본을 찾으면 나머지 장면 생략
     var foundSame = false, baiduBlocked = false, blockReason = "";
     for (var i = 0; i < frames.length; i++){
@@ -1325,7 +1333,7 @@
     info.style.cssText = "font-size:11.5px;color:#64748b;margin-top:4px";
     var totalBtn = document.createElement("button");
     totalBtn.type = "button";
-    totalBtn.textContent = "🔍 인비남 AI 토탈 검색 — 모든 장면으로 바이두+구글 전부 찾아보기";
+    totalBtn.textContent = "🔍 인비남 AI 토탈 검색";
     totalBtn.style.cssText = "display:block;width:100%;margin-top:10px;padding:11px;border:none;background:#4338ca;color:#fff;border-radius:9px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit";
     var out = document.createElement("div");
     out.style.cssText = "margin-top:10px";
