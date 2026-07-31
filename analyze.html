@@ -257,8 +257,7 @@
   let loadTimer = null;
   function modelLabel(m, what) {
     if (!m) return "";
-    if (m.indexOf("pro") >= 0) return "🤖 " + what + " 모델: Gemini Pro (고성능)";
-    return "🤖 " + what + " 모델: Gemini Flash (기본)";
+    return ""; // 내부 구성 비공개
   }
   let lastAnalysis = null;
   let lastVideoId = null;
@@ -329,27 +328,129 @@
 
   function renderVerdictCard(vid, a) {
     var host = document.getElementById("an-res") || document.body;
-    var old = document.getElementById("ib-verdict-card");
-    if (old) old.remove();
+    var old = document.getElementById("ib-verdict-card"); if (old) old.remove();
+    var oldP = document.getElementById("ib-plan-wrap"); if (oldP) oldP.remove();
     if (!a || !a.verdict_label) return;
-    window.__ibAnalysis = a; window.__ibVid = vid;
+    window.__ibAnalysis = a; window.__ibVid = vid; window.__ibPlan = null;
     var card = document.createElement("div");
     card.id = "ib-verdict-card";
     card.style.cssText = "background:#eef2ff;border:1.5px solid #c7d2fe;border-radius:14px;padding:16px 18px;margin-bottom:13px";
     var reasons = (a.verdict_reasons || []).slice(0, 2).map(function (x) { return "<li style='margin:2px 0'>" + escapeHtml(x) + "</li>"; }).join("");
     var caution = a.verdict_caution ? "<div style='margin-top:7px;font-size:13.5px;color:#b45309'>⚠️ " + escapeHtml(a.verdict_caution) + "</div>" : "";
+    var react = a.audience_reaction ? "<div style='margin-top:7px;font-size:13.5px;color:#0f766e'>💬 댓글에서 많이 나온 반응: " + escapeHtml(a.audience_reaction) + "</div>" : "";
     var rights = "";
     if (a.rights_notice) {
       var warn = a.rights_notice.indexOf("주의") === 0;
       rights = "<div style='display:inline-block;margin-top:8px;font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;background:" + (warn ? "#fef3c7;color:#92400e" : "#e2e8f0;color:#475569") + "'>" + escapeHtml(a.rights_notice) + "</div>";
     }
+    var dirsHtml = "";
+    if (Array.isArray(a.directions) && a.directions.length) {
+      dirsHtml = "<div style='margin-top:12px;border-top:1px dashed #c7d2fe;padding-top:11px'>"
+        + "<div style='font-size:13.5px;font-weight:800;color:#312e81;margin-bottom:4px'>🎬 제작 방향을 고르면 기획안을 만들어 드립니다</div>"
+        + a.directions.slice(0, 3).map(function (dd, di) {
+            return "<button type='button' class='ib-dir-btn' data-di='" + di + "' style='display:block;width:100%;text-align:left;background:#fff;border:1.5px solid " + (di === 0 ? "#818cf8" : "#e2e8f0") + ";border-radius:10px;padding:9px 12px;margin:6px 0;cursor:pointer;font-family:inherit'>"
+              + "<span style='font-size:13.5px;font-weight:800;color:#1e1b4b'>" + escapeHtml(dd.title || ("방향 " + (di + 1))) + "</span>"
+              + (di === 0 ? " <span style='font-size:11px;font-weight:800;color:#fff;background:#6366f1;border-radius:999px;padding:2px 8px;margin-left:5px'>추천</span>" : "")
+              + "<span style='display:block;font-size:12.5px;color:#64748b;margin-top:2px'>" + escapeHtml(dd.oneline || "") + "</span></button>";
+          }).join("")
+        + "</div>";
+    }
     card.innerHTML =
       "<div style='font-size:12px;font-weight:800;color:#6366f1;margin-bottom:4px'>🧭 제작 결론</div>" +
       "<div style='font-size:17px;font-weight:800;color:#1e1b4b'>" + escapeHtml(String(a.verdict_label).replace(/^\s*[123]\s*[=:.)\-]*\s*/, "")) + "</div>" +
       "<ul style='margin:8px 0 0 18px;padding:0;font-size:13.5px;color:#334155;line-height:1.6'>" + reasons + "</ul>" +
-      caution + rights +
-      "<div style='margin-top:6px;font-size:11px;color:#94a3b8'>※ AI 참고 의견입니다. 최종 판단은 직접 해주세요.</div>";
+      react + caution + rights +
+      "<div style='margin-top:6px;font-size:11px;color:#94a3b8'>※ AI 참고 의견입니다. 최종 판단은 직접 해주세요.</div>" + dirsHtml;
     host.insertBefore(card, host.firstChild);
+    [].slice.call(card.querySelectorAll(".ib-dir-btn")).forEach(function (b) {
+      b.addEventListener("click", function () { runPlan(Number(b.getAttribute("data-di")) || 0, "", false); });
+    });
+  }
+  async function runPlan(di, ending, force) {
+    var a = window.__ibAnalysis, vid = window.__ibVid;
+    if (!a || !vid || !Array.isArray(a.directions) || !a.directions.length) return;
+    var dir = a.directions[di] || a.directions[0];
+    var card = document.getElementById("ib-verdict-card");
+    var wrap = document.getElementById("ib-plan-wrap");
+    if (!wrap) { wrap = document.createElement("div"); wrap.id = "ib-plan-wrap"; if (card && card.parentNode) card.parentNode.insertBefore(wrap, card.nextSibling); else return; }
+    wrap.innerHTML = "<div style='background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:20px;margin-bottom:13px;text-align:center;color:#6366f1;font-weight:700;font-size:14px'>🕊️ 인계동 비둘기 AI가 기획안을 만들고 있습니다.. (30초~1분)</div>";
+    wrap.scrollIntoView({ behavior: "smooth", block: "start" });
+    try {
+      const { data } = await sb.auth.getSession();
+      const token = data && data.session ? data.session.access_token : "";
+      const r = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ action: "blueprint", feature: "blueprint", video_url: "https://www.youtube.com/shorts/" + vid, model_pref: modelPref(), direction: { title: dir.title || "", oneline: dir.oneline || "" }, analysis: a, ending: ending || "", force: force === true }),
+      });
+      const j = await r.json().catch(function () { return null; });
+      if (!r.ok || !j || !j.ok || !j.plan) {
+        wrap.innerHTML = "<div style='background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:14px;color:#991b1b;font-size:13.5px;margin-bottom:13px'>기획안 생성에 실패했습니다: " + escapeHtml((j && (j.detail || j.error)) || ("오류 " + r.status)) + "</div>";
+        return;
+      }
+      window.__ibPlan = j.plan;
+      renderPlan(j.plan, dir, di);
+    } catch (e) {
+      wrap.innerHTML = "<div style='background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:14px;color:#991b1b;font-size:13.5px;margin-bottom:13px'>기획안 생성 중 문제가 생겼습니다. 잠시 후 다시 시도해 주세요.</div>";
+    }
+  }
+  function renderPlan(p, dir, di) {
+    var wrap = document.getElementById("ib-plan-wrap"); if (!wrap) return;
+    var esc = escapeHtml;
+    var scenes = (p.scenes || []).map(function (s, i) {
+      return "<div style='border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin:7px 0'>"
+        + "<div style='font-size:12px;font-weight:800;color:#6366f1'>장면 " + esc(String(s.no || (i + 1))) + (s.rehook ? " <span style='color:#b45309;font-weight:700'>· 🎣 " + esc(s.rehook) + "</span>" : "") + "</div>"
+        + "<div style='font-size:13.5px;color:#1e293b;margin-top:3px'><b>자막:</b> " + esc(s.caption || "-") + "</div>"
+        + (s.narration ? "<div style='font-size:13px;color:#475569;margin-top:2px'><b>나레이션:</b> " + esc(s.narration) + "</div>" : "")
+        + "<div style='font-size:12.5px;color:#64748b;margin-top:2px'><b>화면:</b> " + esc(s.visual || "-") + "</div></div>";
+    }).join("");
+    var srcRows = (p.sources || []).map(function (s) {
+      var risky = String(s.risk || "").indexOf("주의") > -1;
+      var badge = "<span style='font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;background:" + (risky ? "#fef3c7;color:#92400e" : "#e2e8f0;color:#475569") + "'>" + (risky ? "주의" : "사용권 확인") + "</span>";
+      var q = encodeURIComponent(String(s.need || "").slice(0, 40));
+      var links = "<a href='https://www.youtube.com/results?search_query=" + q + "' target='_blank' style='font-size:11.5px;color:#2563eb;text-decoration:none'>유튜브 검색</a><br><a href='https://www.pexels.com/ko-kr/search/videos/" + q + "/' target='_blank' style='font-size:11.5px;color:#2563eb;text-decoration:none'>무료소스 검색</a>";
+      return "<tr>" + [esc(String(s.scene || "")), esc(s.need || ""), esc(s.how || ""), esc(s.alt || ""), badge + "<br>" + links].map(function (c) { return "<td style='border:1px solid #e2e8f0;padding:7px 9px;font-size:12.5px;color:#334155;vertical-align:top'>" + c + "</td>"; }).join("") + "</tr>";
+    }).join("");
+    var endType = String((p.ending && p.ending.type) || "");
+    function endBtn(code, label) {
+      var active = endType.indexOf(label.slice(0, 2)) === 0;
+      return "<button type='button' class='ib-end-btn' data-end='" + code + "' style='font-family:inherit;font-size:12px;font-weight:700;border-radius:999px;padding:4px 11px;margin-right:6px;cursor:pointer;border:1.5px solid " + (active ? "#6366f1;background:#eef2ff;color:#312e81" : "#e2e8f0;background:#fff;color:#64748b") + "'>" + label + "</button>";
+    }
+    var btnS = "font-family:inherit;font-size:13px;font-weight:800;border:none;border-radius:9px;padding:8px 14px;margin-right:7px;cursor:pointer;";
+    wrap.innerHTML = "<div style='background:#fff;border:1.5px solid #c7d2fe;border-radius:14px;padding:17px 18px;margin-bottom:13px'>"
+      + "<div style='font-size:12px;font-weight:800;color:#6366f1'>📋 영상 기획안 — " + esc(dir.title || "") + "</div>"
+      + "<div style='font-size:16px;font-weight:800;color:#1e1b4b;margin-top:3px'>" + esc(p.concept || "") + "</div>"
+      + (p.hook ? "<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-top:10px'><div style='font-size:12px;font-weight:800;color:#0f766e'>⚡ 첫 3초</div><div style='font-size:13.5px;color:#1e293b;margin-top:3px'><b>자막:</b> " + esc(p.hook.caption || "-") + "</div>" + (p.hook.narration ? "<div style='font-size:13px;color:#475569'><b>나레이션:</b> " + esc(p.hook.narration) + "</div>" : "") + "<div style='font-size:12.5px;color:#64748b'><b>화면:</b> " + esc(p.hook.visual || "-") + "</div></div>" : "")
+      + "<div style='font-size:13px;font-weight:800;color:#312e81;margin-top:12px'>🎬 장면 순서</div>" + scenes
+      + "<div style='font-size:13px;font-weight:800;color:#312e81;margin-top:12px'>📦 소스 준비표</div>"
+      + "<div style='overflow-x:auto'><table style='border-collapse:collapse;width:100%;margin-top:6px'><tr>" + ["장면", "필요한 소스", "구하는 방법", "대체 소스", "확인·검색"].map(function (h) { return "<th style='border:1px solid #e2e8f0;background:#f8fafc;padding:6px 9px;font-size:12px;color:#475569'>" + h + "</th>"; }).join("") + "</tr>" + srcRows + "</table></div>"
+      + (p.ending ? "<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-top:12px'><div style='font-size:12px;font-weight:800;color:#0f766e'>🏁 엔딩 — " + esc(endType) + "</div><div style='font-size:12.5px;color:#64748b;margin-top:2px'>" + esc(p.ending.why || "") + "</div><div style='font-size:13.5px;color:#1e293b;margin-top:3px'>" + esc(p.ending.content || "") + "</div><div style='margin-top:8px'>" + endBtn("loop", "루프형") + endBtn("clean", "결론형") + endBtn("tease", "예고형") + "<span style='font-size:11.5px;color:#94a3b8'>← 눌러서 다른 엔딩으로 바꿀 수 있어요</span></div></div>" : "")
+      + (p.length_sec ? "<div style='font-size:12.5px;color:#64748b;margin-top:9px'>⏱️ 예상 길이: 약 " + esc(String(p.length_sec)) + "초</div>" : "")
+      + (Array.isArray(p.title_ideas) && p.title_ideas.length ? "<div style='font-size:13px;font-weight:800;color:#312e81;margin-top:11px'>✏️ 제목 후보</div><div style='font-size:13px;color:#334155;line-height:1.7'>" + p.title_ideas.map(function (x) { return "· " + esc(x); }).join("<br>") + "</div>" : "")
+      + (Array.isArray(p.hashtags) && p.hashtags.length ? "<div style='font-size:12.5px;color:#2563eb;margin-top:7px'>" + p.hashtags.map(function (x) { x = String(x); return esc(x.indexOf("#") === 0 ? x : "#" + x); }).join(" ") + "</div>" : "")
+      + "<div style='margin-top:13px'><button type='button' id='ib-plan-copy' style='" + btnS + "background:#6366f1;color:#fff'>📋 전체 복사</button><button type='button' id='ib-plan-dl' style='" + btnS + "background:#eef2ff;color:#312e81'>📄 기획안.txt 저장</button><button type='button' id='ib-plan-redo' style='" + btnS + "background:#f1f5f9;color:#475569'>🔄 다시 만들기</button></div>"
+      + "<div style='margin-top:6px;font-size:11px;color:#94a3b8'>※ AI 참고 의견입니다. 소스는 사용권을 꼭 확인하세요.</div>"
+      + "</div>";
+    [].slice.call(wrap.querySelectorAll(".ib-end-btn")).forEach(function (b) { b.addEventListener("click", function () { runPlan(di, b.getAttribute("data-end"), false); }); });
+    var cp = document.getElementById("ib-plan-copy"); if (cp) cp.addEventListener("click", function () { try { navigator.clipboard.writeText(planText(p, dir)); cp.textContent = "✅ 복사됨"; setTimeout(function () { cp.textContent = "📋 전체 복사"; }, 1500); } catch (e) {} });
+    var dl = document.getElementById("ib-plan-dl"); if (dl) dl.addEventListener("click", function () { var blob = new Blob([planText(p, dir)], { type: "text/plain;charset=utf-8" }); var u = URL.createObjectURL(blob); var aa = document.createElement("a"); aa.href = u; aa.download = "기획안_" + (window.__ibVid || "video") + ".txt"; aa.click(); setTimeout(function () { URL.revokeObjectURL(u); }, 3000); });
+    var rd = document.getElementById("ib-plan-redo"); if (rd) rd.addEventListener("click", function () { runPlan(di, "", true); });
+  }
+
+  function planText(p, dir) {
+    var L = [];
+    L.push("[영상 기획안] " + (dir.title || ""));
+    L.push("콘셉트: " + (p.concept || ""));
+    if (p.hook) { L.push(""); L.push("<첫 3초>"); L.push("자막: " + (p.hook.caption || "")); if (p.hook.narration) L.push("나레이션: " + p.hook.narration); L.push("화면: " + (p.hook.visual || "")); }
+    L.push(""); L.push("<장면 순서>");
+    (p.scenes || []).forEach(function (s, i) { L.push((s.no || (i + 1)) + ". 자막: " + (s.caption || "")); if (s.narration) L.push("   나레이션: " + s.narration); L.push("   화면: " + (s.visual || "")); if (s.rehook) L.push("   붙잡기: " + s.rehook); });
+    L.push(""); L.push("<소스 준비표>");
+    (p.sources || []).forEach(function (s) { L.push("- [" + (s.scene || "") + "] " + (s.need || "") + " / 구하기: " + (s.how || "") + " / 대체: " + (s.alt || "") + " / " + (String(s.risk || "").indexOf("주의") > -1 ? "주의" : "사용권 확인")); });
+    if (p.ending) { L.push(""); L.push("<엔딩: " + (p.ending.type || "") + ">"); L.push(p.ending.content || ""); }
+    if (p.length_sec) L.push("예상 길이: 약 " + p.length_sec + "초");
+    if (Array.isArray(p.title_ideas)) { L.push(""); L.push("<제목 후보>"); p.title_ideas.forEach(function (x) { L.push("- " + x); }); }
+    if (Array.isArray(p.hashtags)) L.push(p.hashtags.map(function (x) { x = String(x); return x.indexOf("#") === 0 ? x : "#" + x; }).join(" "));
+    return L.join("\n");
   }
 
   function renderResult(vid, a) {
