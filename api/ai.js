@@ -1189,7 +1189,7 @@ module.exports = async (req, res) => {
         const dirLine = String(body.direction.oneline || "").slice(0, 200);
         const endingPick = ["loop", "clean", "tease"].indexOf(String(body.ending || "")) > -1 ? String(body.ending) : "";
         const planModels = pref === "flash" ? ["gemini-flash-latest"] : ["gemini-pro-latest", "gemini-flash-latest"];
-        const planKey = "plan:" + vid + ":" + PLAN_PROMPT_VER + ":" + (pref === "flash" ? "f" : "p") + ":" + encodeURIComponent(dirTitle).slice(0, 60) + ":" + (endingPick || "auto");
+        const planKey = "plan:" + vid + ":" + PLAN_PROMPT_VER + ":" + (pref === "flash" ? "f" : "p") + ":" + encodeURIComponent(dirTitle).slice(0, 60) + ":" + (endingPick || "auto") + ":" + (body.transcript ? "t" : "n");
         if (body.force !== true) {
           const pc = await sbGetCacheSrv(planKey, token);
           if (pc && pc.scenes) { res.status(200).json({ ok: true, video_id: vid, plan: pc, cached: true }); return; }
