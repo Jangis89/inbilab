@@ -13,6 +13,22 @@
   };
 
   // ---------------- 후킹 분석 (analyze.html) ----------------
+  // [관리자 전용 표시] 모델 선택 등은 관리자에게만 보여준다
+  var __ibAdminP = null;
+  function ibIsAdmin(){
+    if (__ibAdminP) return __ibAdminP;
+    __ibAdminP = (async function(){
+      try {
+        if (!window.sb || !window.isAdmin || !sb.auth || !sb.auth.getUser) return false;
+        var r = await sb.auth.getUser();
+        var u = r && r.data && r.data.user;
+        if (!u) return false;
+        return !!(await window.isAdmin(u));
+      } catch (e) { return false; }
+    })();
+    return __ibAdminP;
+  }
+  (function(){ var ms = document.getElementById("model-sel"); if (ms) ibIsAdmin().then(function(a){ if (a) ms.style.display = ""; }); })();
   function initHook() {
     const anRes = document.getElementById("an-res");
     if (!anRes) return; // 분석 페이지가 아니면 통과
@@ -67,7 +83,7 @@
     box.style.display = "none";
     box.innerHTML = `
       <h3>🪝 후킹 분석 <span style="font-size:12px;color:#94a3b8;font-weight:600;">첫 3~5초 해부</span></h3>
-      <div class="hk-desc">이 영상이 첫 3초 동안 <b>무엇으로, 어떤 심리 전략으로</b> 시청자를 붙잡았는지 분석하고, <b>같은 영상을 다르게 여는</b> 응용 3버전을 제안합니다.</div>
+      <div class="hk-desc">첫 3초가 왜 통했는지 분석하고, 응용 3가지를 제안합니다.</div>
       <button class="hkbtn" id="btn-hk">후킹 분석하기</button>
       <div class="an-load" id="hk-load"><div class="spin"></div><span id="hk-load-txt">AI가 첫 3초를 해부하고 있습니다…</span></div>
       <div class="an-err" id="hk-err"></div>
@@ -526,10 +542,7 @@
         window.open("https://graph.baidu.com/pcpage/index?tpl_from=pc", "_blank");
       });
       lens.appendChild(b);
-      var tip2 = document.createElement("div");
-      tip2.style.cssText = "font-size:11.5px;color:#666;margin-top:5px;line-height:1.5";
-      tip2.textContent = "💡 중국에서 온 영상은 바이두 식별이 원본을 특히 잘 찾습니다. 버튼 클릭 → 열린 페이지의 📷 아이콘 클릭 → Ctrl+V, 이 세 번이면 끝!";
-      lens.appendChild(tip2);
+      
     }
   }
   function ibPlayerModal(vid, isShort) {
@@ -704,7 +717,8 @@
       if (j.cached) {
         const n = document.createElement("div");
         n.id = "src-cachenote";
-        n.style.cssText = "background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:9px 13px;font-size:13px;color:#3730a3;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.5;";
+        n.style.cssText = "background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:9px 13px;font-size:13px;color:#3730a3;margin-bottom:12px;display:none;align-items:center;gap:10px;flex-wrap:wrap;line-height:1.5;";
+        ibIsAdmin().then(function (a) { if (a) n.style.display = "flex"; });
         n.innerHTML = "<span>💾 이전에 탐색해 둔 결과를 바로 불러왔습니다 (검색 한도 소모 없음" + (j.cached_at ? " · " + fmtDate(j.cached_at) + " 탐색" : "") + ")</span>" +
           (srcAdmin ? "<button id='src-force' style='padding:5px 13px;border-radius:9px;border:1.5px solid #4f46e5;background:#fff;color:#4f46e5;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;'>🔄 새로 탐색 (관리자)</button>" : "");
         host.insertAdjacentElement("afterbegin", n);
@@ -751,11 +765,11 @@
         const thumb = "https://i.ytimg.com/vi/" + vid + "/hqdefault.jpg";
         const div2 = document.createElement("div");
         div2.className = "lens-box"; div2.id = "src-lens";
-        div2.innerHTML = "<div class='ib-t'>🔍 웹 이미지로 원본 찾기 (역검색)</div>" +
+        div2.innerHTML = "<div class='ib-t'>🔍 원본 찾기</div>" +
           "<a class='lens-btn' href='https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(thumb) + "' target='_blank' rel='noopener'>Google Lens에서 직접 확인 →</a> " +
           "<button class='lens-btn' id='lens-run' style='border:none;cursor:pointer;font-family:inherit;background:#1e40af;'>🖼️ 웹 이미지 일치 후보 — Google Vision</button>" +
           "<div class='prev-grid' id='lens-grid' style='grid-template-columns:repeat(2,1fr);'></div>" +
-          "<div class='lens-tip'>썸네일과 똑같거나 비슷한 이미지가 있는 페이지를 구글이 찾아줍니다.<br>💡 영상 속 <b>특정 장면</b>으로 찾고 싶다면: 그 장면에서 일시정지 → 스크린샷 → <a href='https://lens.google.com/' target='_blank' rel='noopener' style='color:#1d4ed8;'>lens.google.com</a>에 직접 올려보세요.</div>";
+          "<div class='lens-tip'>썸네일과 똑같거나 비슷한 이미지가 있는 페이지를 구글이 찾아줍니다.</div>";
         host.appendChild(div2);
         const runBtn = div2.querySelector("#lens-run");
         if (runBtn) runBtn.addEventListener("click", function () { runLens(vid); });
@@ -1209,7 +1223,7 @@
       out.innerHTML = '<div style="padding:12px;color:#64748b;font-size:13px;background:#f8fafc;border-radius:8px"><b>검색 결과 없음.</b> ' + esc(NO_RESULT_MSG) + '</div>' + (note || "");
       return;
     }
-    var html = '<div style="font-weight:700;font-size:14px;margin:6px 0 10px">🔍 인비남 AI 토탈 검색 결과 <span style="font-size:11px;color:#94a3b8;font-weight:400">(고유 장면 ' + nScenes + '장으로 검색 · 같은 주소 중복 제거)</span><br>'
+    var html = '<div style="font-weight:700;font-size:14px;margin:6px 0 10px">🔍 인비남 AI 토탈 검색 결과<br>'
       + '<span class="ib-cnt-same" style="color:#e74c3c">동일 원본 ' + same.length + '건</span> · '
       + '<span class="ib-cnt-google" style="color:#2563eb">구글 발견 ' + google.length + '건</span> · '
       + '<span class="ib-cnt-simi" style="color:#f39c12">유사 ' + simi.length + '건</span></div>';
@@ -1232,7 +1246,7 @@
       html += '<div class="ib-sec-listing" style="font-size:13px;font-weight:700;color:#94a3b8;margin:10px 0 6px">📂 모음 페이지 (' + listing.length + '건) — 특정 영상이 아닌 검색·모음 페이지입니다. 내용이 수시로 바뀌니 참고만 하세요</div>';
       html += '<div class="ib-grid-listing" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;opacity:.85">' + listing.map(function(x){ return gridCard(x, false); }).join("") + '</div>';
     }
-    html += (note || "") + '<div style="font-size:11px;color:#b5b5b5;margin-top:8px">바이두 식별 + 구글 비전 기술 제공 · 판정은 참고용입니다.</div>';
+    html += (note || "");
     out.innerHTML = html;
     var tgb = out.querySelector(".ib-simi-tg");
     if (tgb){
@@ -1297,7 +1311,7 @@
     title.textContent = "📸 인비남 AI 이미지 검색";
     title.style.cssText = "font-size:14px;font-weight:800;color:#312e81;margin-bottom:2px";
     var sub = document.createElement("div");
-    sub.textContent = "사진을 누르면 그 장면만 이 화면에서 바로 검색! [바이두]·[구글] 버튼은 해당 사이트에서 직접 검색합니다.";
+    sub.textContent = "사진을 누르면 그 장면으로 검색합니다.";
     sub.style.cssText = "font-size:11.5px;color:#64748b;margin-bottom:9px";
     var row = document.createElement("div");
     row.style.cssText = "display:flex;gap:10px;overflow-x:auto;padding:2px 0";
@@ -1351,7 +1365,7 @@
         cell.appendChild(im); cell.appendChild(lb); cell.appendChild(btns);
         row.appendChild(cell);
       });
-      info.textContent = "✔ 서로 다른 고유 장면 " + frames.length + "장 확보" + (dropped.length ? " (겹치는 사진 " + dropped.length + "장 자동 제외: " + dropped.join(", ") + ")" : "");
+      info.textContent = "";
     });
     totalBtn.addEventListener("click", function(){
       if (!framesReady || !framesReady.length){ out.innerHTML = '<div style="padding:8px;color:#c0392b;font-size:12.5px">장면 사진이 아직 준비되지 않았습니다.</div>'; return; }
