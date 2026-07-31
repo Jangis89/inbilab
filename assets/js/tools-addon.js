@@ -1307,6 +1307,12 @@
     var box = document.createElement("div");
     box.className = "ib-total-box";
     box.style.cssText = "margin-top:10px;border:1px solid #c7d2fe;background:#f5f7ff;border-radius:12px;padding:12px";
+    if (!document.getElementById("ib-frame-style")) {
+      var fst = document.createElement("style");
+      fst.id = "ib-frame-style";
+      fst.textContent = ".ib-frame-im:hover{transform:translateY(-2px) scale(1.04);box-shadow:0 8px 18px rgba(15,23,42,.2);}";
+      document.head.appendChild(fst);
+    }
     var title = document.createElement("div");
     title.textContent = "📸 인비남 AI 이미지 검색";
     title.style.cssText = "font-size:14px;font-weight:800;color:#312e81;margin-bottom:2px";
@@ -1314,7 +1320,7 @@
     sub.textContent = "사진을 누르면 그 장면으로 검색합니다.";
     sub.style.cssText = "font-size:11.5px;color:#64748b;margin-bottom:9px";
     var row = document.createElement("div");
-    row.style.cssText = "display:flex;gap:10px;overflow-x:auto;padding:2px 0";
+    row.style.cssText = "display:flex;gap:14px;justify-content:center;flex-wrap:wrap;padding:6px 0";
     var info = document.createElement("div");
     info.style.cssText = "font-size:11.5px;color:#64748b;margin-top:4px";
     var totalBtn = document.createElement("button");
@@ -1335,10 +1341,10 @@
       if (!frames.length){ row.innerHTML = '<div style="font-size:12.5px;color:#c0392b">이 영상은 장면 사진을 제공하지 않습니다.</div>'; return; }
       frames.forEach(function(f){
         var cell = document.createElement("div");
-        cell.style.cssText = "flex:none;width:86px;text-align:center";
+        cell.style.cssText = "flex:none;width:96px;text-align:center;position:relative";
         var im = document.createElement("img");
-        im.src = f.url; im.loading = "lazy";
-        im.style.cssText = "width:84px;height:149px;object-fit:cover;border-radius:9px;background:#eef2f7;border:3px solid transparent;cursor:pointer";
+        im.src = f.url; im.loading = "lazy"; im.className = "ib-frame-im";
+        im.style.cssText = "width:96px;height:170px;object-fit:cover;border-radius:12px;background:#eef2f7;border:3px solid transparent;cursor:pointer;box-shadow:0 3px 10px rgba(15,23,42,.14);transition:transform .15s ease, box-shadow .15s ease";
         im.addEventListener("click", function(){
           [].slice.call(row.querySelectorAll("img")).forEach(function(x){ x.style.borderColor = "transparent"; });
           im.style.borderColor = "#4338ca";
@@ -1350,9 +1356,9 @@
         });
         var lb = document.createElement("div");
         lb.textContent = f.label;
-        lb.style.cssText = "font-size:11.5px;font-weight:600;color:#334155;margin:3px 0 4px";
+        lb.style.cssText = "position:absolute;top:6px;left:6px;background:rgba(15,23,42,.62);color:#fff;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;pointer-events:none";
         var btns = document.createElement("div");
-        btns.style.cssText = "display:flex;gap:4px";
+        btns.style.cssText = "display:flex;gap:4px;margin-top:6px";
         var bB = document.createElement("button");
         bB.type = "button"; bB.textContent = "바이두";
         bB.style.cssText = "flex:1;padding:5px 0;border:none;background:#2c6fbb;color:#fff;border-radius:7px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit";
