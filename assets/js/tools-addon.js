@@ -270,7 +270,7 @@
       renderChips();
 
       document.getElementById("hk-model").textContent = model
-        ? (model.indexOf("pro") >= 0 ? "🤖 분석 모델: Gemini Pro (고성능)" : "🤖 분석 모델: Gemini Flash (기본)")
+        ? (model.indexOf("pro") >= 0 ? "🤖 분석 모드: 고성능" : "🤖 분석 모드: 기본")
         : "";
     }
 
