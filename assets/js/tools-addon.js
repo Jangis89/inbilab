@@ -1039,6 +1039,27 @@
     window.open("https://graph.baidu.com/pcpage/index?tpl_from=pc", "_blank");
   }
 
+  async function copyFrameOpenGoogle(url){
+    var copied = false;
+    try{
+      var im = await loadImgEl(url);
+      if (im){
+        var cv = document.createElement("canvas");
+        cv.width = im.naturalWidth; cv.height = im.naturalHeight;
+        cv.getContext("2d").drawImage(im, 0, 0);
+        var bb = await new Promise(function(res){ try{ cv.toBlob(function(b){ res(b); }, "image/png"); }catch(e){ res(null); } });
+        if (bb && typeof ClipboardItem !== "undefined"){
+          await navigator.clipboard.write([new ClipboardItem({ "image/png": bb })]);
+          copied = true;
+        }
+      }
+    }catch(e){}
+    if (copied){
+      toast("📸 사진을 복사해 뒀어요. 구글 결과가 비어 보이면 검색창의 카메라 모양을 누르고 붙여넣기(Ctrl+V) 하세요.");
+    }
+    window.open("https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(url), "_blank");
+  }
+
   var NO_RESULT_MSG = "해당 영상의 원본 소스는 이곳에 없을 확률이 매우 높습니다.";
 
   // ── 서버 공유 캐시 (Supabase search_cache): 수강생 전원이 검색 결과 공유 ──
@@ -1391,7 +1412,7 @@
         var bG = document.createElement("button");
         bG.type = "button"; bG.textContent = "구글";
         bG.style.cssText = "flex:1;padding:5px 0;border:1px solid #cbd5e1;background:#fff;color:#1f2937;border-radius:7px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit";
-        bG.addEventListener("click", function(){ window.open("https://lens.google.com/uploadbyurl?url=" + encodeURIComponent(f.url), "_blank"); });
+        bG.addEventListener("click", function(){ copyFrameOpenGoogle(f.url); });
         btns.appendChild(bB); btns.appendChild(bG);
         cell.appendChild(im); cell.appendChild(lb); cell.appendChild(btns);
         row.appendChild(cell);
