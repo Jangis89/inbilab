@@ -163,8 +163,12 @@
       const show = anRes.className.indexOf("show") >= 0;
       box.style.display = show && canHook ? "block" : "none";
       if (show) {
-        document.getElementById("hk-res").className = "hk-res";
-        document.getElementById("hk-err").className = "an-err";
+        // [통합 1단계] 영상이 바뀐 경우에만 후킹 표시 초기화 (같은 영상 재분석은 결과 유지)
+        var nowVid = curVid();
+        if (!(nowVid && window.__ibHkShownVid === nowVid)) {
+          document.getElementById("hk-res").className = "hk-res";
+          document.getElementById("hk-err").className = "an-err";
+        }
       }
     }).observe(anRes, { attributes: true, attributeFilter: ["class"] });
 
@@ -213,6 +217,7 @@
           lastHook = j.hook;
           renderHook(j.hook, j.model);
           document.getElementById("hk-res").className = "hk-res show";
+          window.__ibHkShownVid = vid;
         }
       } catch (e) {
         err.textContent = "요청이 실패했습니다: " + e.message;
