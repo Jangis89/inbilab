@@ -39,6 +39,7 @@
     .hk-box .hk-desc{font-size:13.5px;color:var(--sub);margin-bottom:12px;line-height:1.55;}
     .hk-box .hkbtn{padding:12px 22px;border-radius:11px;border:none;background:#e11d48;color:#fff;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;}
     .hk-box .hkbtn:disabled{opacity:.5;}
+    .hk-box.ib-folded > *:not(h3){display:none;}
     .hk-res{display:none;margin-top:14px;}
     .hk-res.show{display:block;}
     .hk-sec{border-top:1px solid var(--line);padding:12px 0;}
@@ -128,6 +129,17 @@
     const srcBox = document.getElementById("src-box");
     if (srcBox) srcBox.insertAdjacentElement("beforebegin", box);
     else anRes.insertAdjacentElement("afterend", box);
+    // [통합 1단계] 접기·펼치기 버튼 (기본 펼침) + 자동 실행용 함수 노출
+    try {
+      var hkTg = document.createElement("button");
+      hkTg.type = "button"; hkTg.id = "ib-hk-toggle";
+      hkTg.textContent = "▲ 접기";
+      hkTg.style.cssText = "float:right;background:#eef2ff;border:1.5px solid #c7d2fe;color:#312e81;border-radius:999px;padding:6px 16px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit";
+      hkTg.addEventListener("click", function () { var folded = box.classList.toggle("ib-folded"); hkTg.textContent = folded ? "▼ 펼치기" : "▲ 접기"; });
+      var hkH3 = box.querySelector("h3");
+      if (hkH3) hkH3.appendChild(hkTg);
+    } catch (e) {}
+    window.__ibRunHook = runHook;
     document.getElementById("btn-hk").addEventListener("click", runHook);
 
     let canHook = false;
@@ -169,8 +181,8 @@
     let lastHook = null;
     let hkTimer = null;
 
-    async function runHook() {
-      const vid = curVid();
+    async function runHook(vidArg) {
+      const vid = vidArg || curVid();
       if (!vid) return;
       const btn = document.getElementById("btn-hk");
       const load = document.getElementById("hk-load");
