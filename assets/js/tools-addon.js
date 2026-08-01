@@ -83,7 +83,7 @@
     box.id = "hk-box";
     box.style.display = "none";
     box.innerHTML = `
-      <h3>2단계 · 🪝 후킹 분석 <span style="font-size:12px;color:#94a3b8;font-weight:600;">첫 3~5초 해부</span></h3>
+      <h3>1단계 · 🪝 후킹 분석 <span style="font-size:12px;color:#94a3b8;font-weight:600;">첫 3~5초 해부</span></h3>
       <div class="hk-desc">첫 3초가 왜 통했는지 분석하고, 응용 3가지를 제안합니다.</div>
       <button class="hkbtn" id="btn-hk">후킹 분석하기</button>
       <div class="an-load" id="hk-load"><div class="spin"></div><span id="hk-load-txt">AI가 첫 3초를 해부하고 있습니다…</span></div>
