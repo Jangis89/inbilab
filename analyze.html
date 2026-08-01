@@ -292,7 +292,8 @@
     // [통합 1단계] 후킹 분석을 동시에(병렬) 자동 실행 — 같은 영상은 한 번만
     try {
       const hkM = url.match(/(?:youtube\.com\/(?:watch\?[^#]*v=|shorts\/|embed\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
-      if (hkM && typeof window.__ibRunHook === "function" && window.__ibHkAuto !== hkM[1]) {
+      var hkShown = false; try { var hkResEl = document.getElementById("hk-res"); hkShown = !!(hkResEl && hkResEl.className.indexOf("show") > -1); } catch (e) {}
+      if (hkM && typeof window.__ibRunHook === "function" && (window.__ibHkAuto !== hkM[1] || !hkShown)) {
         window.__ibHkAuto = hkM[1];
         window.__ibRunHook(hkM[1]);
         const hb = document.getElementById("btn-hk");
