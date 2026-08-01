@@ -139,6 +139,24 @@
       var hkH3 = box.querySelector("h3");
       if (hkH3) hkH3.appendChild(hkTg);
     } catch (e) {}
+        var varsHost = document.getElementById("hk-vars");
+    if (varsHost) varsHost.addEventListener("click", function (ev) {
+      var t = ev.target;
+      while (t && t !== varsHost && !(t.classList && t.classList.contains("hv-plan"))) t = t.parentNode;
+      if (!t || t === varsHost) return;
+      var reg = (window.__ibHkVarReg || [])[Number(t.getAttribute("data-reg"))];
+      if (!reg || typeof window.__ibMakePlan !== "function") return;
+      var parts = [];
+      var cap = Array.isArray(reg.caption) ? reg.caption.filter(Boolean).join(" / ") : "";
+      if (cap) parts.push("첫 자막: " + cap);
+      var nar = reg.narration || reg.first_line || "";
+      if (nar) parts.push("첫 나레이션: " + nar);
+      if (reg.first_scene) parts.push("시작 장면: " + reg.first_scene);
+      var orig = t.textContent;
+      t.textContent = "⏳ 기획안 만드는 중… 화면 아래로 이동합니다";
+      setTimeout(function () { t.textContent = orig; }, 4000);
+      window.__ibMakePlan({ title: reg.strategy || reg.kind || "선택 전략", oneline: parts.join(" · ") });
+    });
     window.__ibRunHook = runHook;
     document.getElementById("btn-hk").addEventListener("click", runHook);
 
@@ -288,6 +306,10 @@
       const nar = v.narration || v.first_line || "";
       if (nar) inner += "<div class='hv-nar'>🎙️ 나레이션: “" + escapeHtml(nar) + "”</div>";
       if (v.first_scene) inner += "<div class='hv-s'>시작 장면: " + escapeHtml(v.first_scene) + "</div>";
+      if (typeof window.__ibMakePlan === "function") {
+        var regId = (window.__ibHkVarReg = window.__ibHkVarReg || []).push(v) - 1;
+        inner += "<button class='hv-plan' data-reg='" + regId + "' style='display:block;width:100%;margin-top:9px;background:#312e81;color:#fff;border:none;border-radius:10px;padding:10px 14px;font-size:13.5px;font-weight:800;cursor:pointer;font-family:inherit'>📋 이 컨셉으로 기획안 만들기</button>";
+      }
       return "<div class='hk-var'>" + inner + "</div>";
     }
 
