@@ -1189,7 +1189,7 @@ module.exports = async (req, res) => {
         const dirLine = String(body.direction.oneline || "").slice(0, 200);
         const endingPick = ["loop", "clean", "tease"].indexOf(String(body.ending || "")) > -1 ? String(body.ending) : "";
         const planModels = pref === "flash" ? ["gemini-flash-latest"] : ["gemini-pro-latest", "gemini-flash-latest"];
-        const planKey = "plan:" + vid + ":" + PLAN_PROMPT_VER + ":" + (pref === "flash" ? "f" : "p") + ":" + encodeURIComponent(dirTitle).slice(0, 60) + ":" + (endingPick || "auto") + ":" + (body.transcript ? "t" : "n");
+        const planKey = "plan:" + vid + ":" + PLAN_PROMPT_VER + ":" + (pref === "flash" ? "f" : "p") + ":" + encodeURIComponent(dirTitle).slice(0, 60) + ":" + (endingPick || "auto") + ":" + (body.transcript ? "t" : "n") + (body.hook_notes ? "h" : "");
         if (body.force !== true) {
           const pc = await sbGetCacheSrv(planKey, token);
           if (pc && pc.scenes) { res.status(200).json({ ok: true, video_id: vid, plan: pc, cached: true }); return; }
@@ -1200,7 +1200,8 @@ module.exports = async (req, res) => {
           : "영상 소재에 가장 잘 맞는 방식을 네가 하나 골라라 (루프형/결론형/예고형)";
         const planPrompt = PLAN_PROMPT.replace("__DIRECTION__", dirTitle + " — " + dirLine).replace("__ENDING__", endTxt)
           + "\n\n[영상 분석 결과]\n" + JSON.stringify(body.analysis).slice(0, 6000)
-          + (body.transcript ? "\n\n[영상에서 추출한 대본·자막]\n" + String(body.transcript).slice(0, 4000) : "");
+          + (body.transcript ? "\n\n[영상에서 추출한 대본·자막]\n" + String(body.transcript).slice(0, 4000) : "")
+          + (body.hook_notes ? "\n\n[이 영상의 후킹(첫 3초) 분석 참고]\n" + String(body.hook_notes).slice(0, 2500) : "");
         const pr = await callGemini(planModels, key, {
           contents: [{ parts: [{ text: planPrompt }] }],
           generationConfig: { responseMimeType: "application/json", temperature: 0.55 },
