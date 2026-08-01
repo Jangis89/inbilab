@@ -289,6 +289,17 @@
     $id("load-txt").textContent = "인계동 비둘기 AI가 영상을 분석중입니다";
     loadTimer = setInterval(() => { sec++; $id("load-txt").textContent = "인계동 비둘기 AI가 영상을 분석중입니다"; }, 1000);
 
+    // [통합 1단계] 후킹 분석을 동시에(병렬) 자동 실행 — 같은 영상은 한 번만
+    try {
+      const hkM = url.match(/(?:youtube\.com\/(?:watch\?[^#]*v=|shorts\/|embed\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+      if (hkM && typeof window.__ibRunHook === "function" && window.__ibHkAuto !== hkM[1]) {
+        window.__ibHkAuto = hkM[1];
+        window.__ibRunHook(hkM[1]);
+        const hb = document.getElementById("btn-hk");
+        if (hb) hb.textContent = "🔄 후킹 다시 분석";
+      }
+    } catch (e) {}
+
     try {
       const { data } = await sb.auth.getSession();
       const token = data && data.session ? data.session.access_token : "";
@@ -364,6 +375,8 @@
       react + caution + rights +
       "<div style='margin-top:6px;font-size:11px;color:#94a3b8'>※ AI 참고 의견입니다. 최종 판단은 직접 해주세요.</div>" + dirsHtml;
     host.insertBefore(card, host.firstChild);
+    // [통합 1단계] 후킹 박스를 결론 카드 바로 아래로 이동
+    try { var hkBox = document.getElementById("hk-box"); if (hkBox) host.insertBefore(hkBox, card.nextSibling); } catch (e) {}
     [].slice.call(card.querySelectorAll(".ib-dir-btn")).forEach(function (b) {
       b.addEventListener("click", function () { runPlan(Number(b.getAttribute("data-di")) || 0, "", false); });
     });
@@ -374,7 +387,7 @@
     var dir = a.directions[di] || a.directions[0];
     var card = document.getElementById("ib-verdict-card");
     var wrap = document.getElementById("ib-plan-wrap");
-    if (!wrap) { wrap = document.createElement("div"); wrap.id = "ib-plan-wrap"; if (card && card.parentNode) card.parentNode.insertBefore(wrap, card.nextSibling); else return; }
+    if (!wrap) { wrap = document.createElement("div"); wrap.id = "ib-plan-wrap"; var planAnchor = document.getElementById("hk-box") || card; if (planAnchor && planAnchor.parentNode) planAnchor.parentNode.insertBefore(wrap, planAnchor.nextSibling); else return; }
     function planLoad(msg) { wrap.innerHTML = "<div style='background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:20px;margin-bottom:13px;text-align:center;color:#6366f1;font-weight:700;font-size:14px'>" + msg + "</div>"; }
     wrap.scrollIntoView({ behavior: "smooth", block: "start" });
     // [자동 재료 수집] 대본이 아직 없으면 기계가 먼저 자동으로 따온다 (수강생이 순서를 몰라도 됨)
@@ -833,6 +846,6 @@
     renderFooter();
   })();
 </script>
-<script src="assets/js/tools-addon.js?v=20260801h"></script>
+<script src="assets/js/tools-addon.js?v=20260801i"></script>
 </body>
 </html>
