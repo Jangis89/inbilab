@@ -1204,7 +1204,18 @@ module.exports = async (req, res) => {
         const planPrompt = PLAN_PROMPT.replace("__DIRECTION__", dirTitle + " — " + dirLine).replace("__ENDING__", endTxt)
           + "\n\n[영상 분석 결과]\n" + JSON.stringify(body.analysis).slice(0, 6000)
           + (body.transcript ? "\n\n[영상에서 추출한 대본·자막]\n" + String(body.transcript).slice(0, 6000) : "")
-          + (body.hook_notes ? "\n\n[이 영상의 후킹(첫 3초) 분석 참고]\n" + String(body.hook_notes).slice(0, 2500) : "");
+          + (body.hook_notes ? "\n\n[이 영상의 후킹(첫 3초) 분석 참고]\n" + String(body.hook_notes).slice(0, 2500) : "")
+          + durTxt;
+        let durTxt = "";
+        try {
+          const vj = await ytApi("videos", { id: vid, part: "contentDetails" });
+          const iso = (vj && vj.items && vj.items[0] && vj.items[0].contentDetails && vj.items[0].contentDetails.duration) || "";
+          const mm = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+          if (mm) {
+            const sec = (Number(mm[1]) || 0) * 3600 + (Number(mm[2]) || 0) * 60 + (Number(mm[3]) || 0);
+            if (sec > 0) durTxt = "\n\n[실제 영상 길이] " + sec + "초 — 타임라인 전체는 반드시 이 길이에 맞추고, length_sec도 " + sec + "로 쓰세요.";
+          }
+        } catch (e) {}
         const planGen = { responseMimeType: "application/json", temperature: 0.55, maxOutputTokens: 16384 };
         const pr = await callGemini(planModels, key, {
           contents: [{ parts: [{ text: planPrompt }] }],
