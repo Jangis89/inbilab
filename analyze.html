@@ -412,19 +412,26 @@
   function renderPlan(p, dir, di) {
     var wrap = document.getElementById("ib-plan-wrap"); if (!wrap) return;
     var esc = escapeHtml;
-    var scenes = (p.scenes || []).map(function (s, i) {
-      return "<div style='border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin:7px 0'>"
-        + "<div style='font-size:12px;font-weight:800;color:#6366f1'>장면 " + esc(String(s.no || (i + 1))) + (s.rehook ? " <span style='color:#b45309;font-weight:700'>· 🎣 " + esc(s.rehook) + "</span>" : "") + "</div>"
-        + "<div style='font-size:13.5px;color:#1e293b;margin-top:3px'><b>자막:</b> " + esc(s.caption || "-") + "</div>"
-        + (s.narration ? "<div style='font-size:13px;color:#475569;margin-top:2px'><b>나레이션:</b> " + esc(s.narration) + "</div>" : "")
-        + "<div style='font-size:12.5px;color:#64748b;margin-top:2px'><b>화면:</b> " + esc(s.visual || "-") + "</div></div>";
+    var tlRows = (p.timeline || []).map(function (s, i) {
+      return "<tr>"
+        + "<td style='border:1px solid #e2e8f0;padding:7px 8px;font-size:12.5px;font-weight:800;color:#312e81;white-space:nowrap;vertical-align:top'>" + esc(s.time || ("구간 " + (i + 1))) + "</td>"
+        + "<td style='border:1px solid #e2e8f0;padding:7px 8px;font-size:13px;color:#1e293b;vertical-align:top'><b>" + esc(s.caption || "-") + "</b>" + (s.narration ? "<div style='font-size:12.5px;color:#475569;margin-top:3px'>🎙 " + esc(s.narration) + "</div>" : "") + "</td>"
+        + "<td style='border:1px solid #e2e8f0;padding:7px 8px;font-size:12.5px;color:#334155;vertical-align:top'>" + esc(s.visual || "-") + (s.edit_sound ? "<div style='font-size:12px;color:#7c3aed;margin-top:3px'>✂️ " + esc(s.edit_sound) + "</div>" : "") + "</td>"
+        + "<td style='border:1px solid #e2e8f0;padding:7px 8px;font-size:12px;color:#b45309;vertical-align:top'>" + (s.hold ? "🎣 " + esc(s.hold) : "-") + "</td>"
+        + "</tr>";
     }).join("");
+    var arcHtml = Array.isArray(p.strategy_arc) && p.strategy_arc.length
+      ? "<div style='background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:10px 12px;margin-top:10px'><div style='font-size:12px;font-weight:800;color:#312e81'>🧭 전략이 흐르는 길 (처음→끝)</div>" + p.strategy_arc.map(function (x, i) { return "<div style='font-size:12.5px;color:#334155;margin-top:3px'><b>" + (["초반", "중반", "후반·엔딩"][i] || "") + ":</b> " + esc(String(x)) + "</div>"; }).join("") + "</div>"
+      : "";
+    var basisNote = String(p.timeline_basis || "").indexOf("추정") > -1
+      ? "<div style='font-size:11.5px;color:#b45309;margin-top:3px'>※ 이 영상은 대본을 뽑지 못해 예상 길이 기준으로 구간을 나눴어요.</div>"
+      : "";
     var srcRows = (p.sources || []).map(function (s) {
       var risky = String(s.risk || "").indexOf("주의") > -1;
       var badge = "<span style='font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;background:" + (risky ? "#fef3c7;color:#92400e" : "#e2e8f0;color:#475569") + "'>" + (risky ? "주의" : "사용권 확인") + "</span>";
       var q = encodeURIComponent(String(s.need || "").slice(0, 40));
       var links = "<a href='https://www.youtube.com/results?search_query=" + q + "' target='_blank' style='font-size:11.5px;color:#2563eb;text-decoration:none'>유튜브 검색</a><br><a href='https://www.pexels.com/ko-kr/search/videos/" + q + "/' target='_blank' style='font-size:11.5px;color:#2563eb;text-decoration:none'>무료소스 검색</a>";
-      return "<tr>" + [esc(String(s.scene || "")), esc(s.need || ""), esc(s.how || ""), esc(s.alt || ""), badge + "<br>" + links].map(function (c) { return "<td style='border:1px solid #e2e8f0;padding:7px 9px;font-size:12.5px;color:#334155;vertical-align:top'>" + c + "</td>"; }).join("") + "</tr>";
+      return "<tr>" + [esc(String(s.time || s.scene || "")), esc(s.need || ""), esc(s.how || ""), esc(s.alt || ""), badge + "<br>" + links].map(function (c) { return "<td style='border:1px solid #e2e8f0;padding:7px 9px;font-size:12.5px;color:#334155;vertical-align:top'>" + c + "</td>"; }).join("") + "</tr>";
     }).join("");
     var endType = String((p.ending && p.ending.type) || "");
     function endBtn(code, label) {
@@ -438,9 +445,11 @@
       + "<div style='font-size:12px;font-weight:800;color:#6366f1'>📋 영상 기획안 — " + esc(dir.title || "") + esc(trTag) + "</div>"
       + "<div style='font-size:16px;font-weight:800;color:#1e1b4b;margin-top:3px'>" + esc(p.concept || "") + "</div>"
       + (p.hook ? "<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-top:10px'><div style='font-size:12px;font-weight:800;color:#0f766e'>⚡ 첫 3초</div><div style='font-size:13.5px;color:#1e293b;margin-top:3px'><b>자막:</b> " + esc(p.hook.caption || "-") + "</div>" + (p.hook.narration ? "<div style='font-size:13px;color:#475569'><b>나레이션:</b> " + esc(p.hook.narration) + "</div>" : "") + "<div style='font-size:12.5px;color:#64748b'><b>화면:</b> " + esc(p.hook.visual || "-") + "</div></div>" : "")
-      + "<div style='font-size:13px;font-weight:800;color:#312e81;margin-top:12px'>🎬 장면 순서</div>" + scenes
+      + arcHtml
+      + "<div style='font-size:13px;font-weight:800;color:#312e81;margin-top:12px'>⏱️ 초 단위 타임라인" + (p.length_sec ? " · 전체 약 " + esc(String(p.length_sec)) + "초" : "") + "</div>" + basisNote
+      + "<div style='overflow-x:auto'><table style='border-collapse:collapse;width:100%;margin-top:6px'><tr>" + ["시간", "자막 · 나레이션", "화면 · 편집/소리", "시청 붙잡기"].map(function (hh) { return "<th style='border:1px solid #e2e8f0;background:#f8fafc;padding:6px 9px;font-size:12px;color:#475569'>" + hh + "</th>"; }).join("") + "</tr>" + tlRows + "</table></div>"
       + "<div style='font-size:13px;font-weight:800;color:#312e81;margin-top:12px'>📦 소스 준비표</div>"
-      + "<div style='overflow-x:auto'><table style='border-collapse:collapse;width:100%;margin-top:6px'><tr>" + ["장면", "필요한 소스", "구하는 방법", "대체 소스", "확인·검색"].map(function (h) { return "<th style='border:1px solid #e2e8f0;background:#f8fafc;padding:6px 9px;font-size:12px;color:#475569'>" + h + "</th>"; }).join("") + "</tr>" + srcRows + "</table></div>"
+      + "<div style='overflow-x:auto'><table style='border-collapse:collapse;width:100%;margin-top:6px'><tr>" + ["시간", "필요한 소스", "구하는 방법", "대체 소스", "확인·검색"].map(function (h) { return "<th style='border:1px solid #e2e8f0;background:#f8fafc;padding:6px 9px;font-size:12px;color:#475569'>" + h + "</th>"; }).join("") + "</tr>" + srcRows + "</table></div>"
       + (p.ending ? "<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-top:12px'><div style='font-size:12px;font-weight:800;color:#0f766e'>🏁 엔딩 — " + esc(endType) + "</div><div style='font-size:12.5px;color:#64748b;margin-top:2px'>" + esc(p.ending.why || "") + "</div><div style='font-size:13.5px;color:#1e293b;margin-top:3px'>" + esc(p.ending.content || "") + "</div><div style='margin-top:8px'>" + endBtn("loop", "루프형") + endBtn("clean", "결론형") + endBtn("tease", "예고형") + "<span style='font-size:11.5px;color:#94a3b8'>← 눌러서 다른 엔딩으로 바꿀 수 있어요</span></div></div>" : "")
       + (p.length_sec ? "<div style='font-size:12.5px;color:#64748b;margin-top:9px'>⏱️ 예상 길이: 약 " + esc(String(p.length_sec)) + "초</div>" : "")
       + (Array.isArray(p.title_ideas) && p.title_ideas.length ? "<div style='font-size:13px;font-weight:800;color:#312e81;margin-top:11px'>✏️ 제목 후보</div><div style='font-size:13px;color:#334155;line-height:1.7'>" + p.title_ideas.map(function (x) { return "· " + esc(x); }).join("<br>") + "</div>" : "")
@@ -461,10 +470,10 @@
     L.push("[영상 기획안] " + (dir.title || ""));
     L.push("콘셉트: " + (p.concept || ""));
     if (p.hook) { L.push(""); L.push("<첫 3초>"); L.push("자막: " + (p.hook.caption || "")); if (p.hook.narration) L.push("나레이션: " + p.hook.narration); L.push("화면: " + (p.hook.visual || "")); }
-    L.push(""); L.push("<장면 순서>");
-    (p.scenes || []).forEach(function (s, i) { L.push((s.no || (i + 1)) + ". 자막: " + (s.caption || "")); if (s.narration) L.push("   나레이션: " + s.narration); L.push("   화면: " + (s.visual || "")); if (s.rehook) L.push("   붙잡기: " + s.rehook); });
-    L.push(""); L.push("<소스 준비표>");
-    (p.sources || []).forEach(function (s) { L.push("- [" + (s.scene || "") + "] " + (s.need || "") + " / 구하기: " + (s.how || "") + " / 대체: " + (s.alt || "") + " / " + (String(s.risk || "").indexOf("주의") > -1 ? "주의" : "사용권 확인")); });
+    if (Array.isArray(p.strategy_arc) && p.strategy_arc.length) { L.push(""); L.push("<전략 흐름>"); p.strategy_arc.forEach(function (x, i) { L.push((["초반", "중반", "후반·엔딩"][i] || "") + ": " + String(x)); }); }
+    L.push(""); L.push("<초 단위 타임라인" + (p.length_sec ? " · 전체 약 " + p.length_sec + "초" : "") + ">");
+    (p.timeline || []).forEach(function (s, i) { L.push((s.time || ("구간" + (i + 1))) + " | 자막: " + (s.caption || "")); if (s.narration) L.push("   나레이션: " + s.narration); L.push("   화면: " + (s.visual || "")); if (s.edit_sound) L.push("   편집/소리: " + s.edit_sound); if (s.hold) L.push("   붙잡기: " + s.hold); });   L.push(""); L.push("<소스 준비표>");
+    (p.sources || []).forEach(function (s) { L.push("- [" + (s.time || s.scene || "") + "] " + (s.need || "") + " / 구하기: " + (s.how || "") + " / 대체: " + (s.alt || "") + " / " + (String(s.risk || "").indexOf("주의") > -1 ? "주의" : "사용권 확인")); });
     if (p.ending) { L.push(""); L.push("<엔딩: " + (p.ending.type || "") + ">"); L.push(p.ending.content || ""); }
     if (p.length_sec) L.push("예상 길이: 약 " + p.length_sec + "초");
     if (Array.isArray(p.title_ideas)) { L.push(""); L.push("<제목 후보>"); p.title_ideas.forEach(function (x) { L.push("- " + x); }); }
