@@ -357,19 +357,7 @@
       rights = "<div style='display:inline-block;margin-top:8px;font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;background:" + (warn ? "#fef3c7;color:#92400e" : "#e2e8f0;color:#475569") + "'>" + escapeHtml(a.rights_notice) + "</div>";
     }
     var dirsHtml = "";
-    if (Array.isArray(a.directions) && a.directions.length) {
-      dirsHtml = "<div style='margin-top:12px;border-top:1px dashed #c7d2fe;padding-top:11px'>"
-        + "<div style='font-size:13.5px;font-weight:800;color:#312e81;margin-bottom:2px'>🎬 제작 방향을 고르면 기획안을 만들어 드립니다</div>"
-        + "<div style='font-size:11.5px;color:#94a3b8;margin-bottom:5px'>누르면 대본 추출 같은 필요한 재료까지 자동으로 챙겨서 만들어 드려요.</div>"
-        + a.directions.slice(0, 3).map(function (dd, di) {
-            return "<button type='button' class='ib-dir-btn' data-di='" + di + "' style='display:block;width:100%;text-align:left;background:#fff;border:1.5px solid " + (di === 0 ? "#818cf8" : "#e2e8f0") + ";border-radius:10px;padding:9px 12px;margin:6px 0;cursor:pointer;font-family:inherit'>"
-              + "<span style='font-size:13.5px;font-weight:800;color:#1e1b4b'>" + escapeHtml(dd.title || ("방향 " + (di + 1))) + "</span>"
-              + (di === 0 ? " <span style='font-size:11px;font-weight:800;color:#fff;background:#6366f1;border-radius:999px;padding:2px 8px;margin-left:5px'>추천</span>" : "")
-              + "<span style='display:block;font-size:12.5px;color:#64748b;margin-top:2px'>" + escapeHtml(dd.oneline || "") + "</span></button>";
-          }).join("")
-        + "</div>";
-    }
-    card.innerHTML =
+        card.innerHTML =
       "<div style='font-size:12px;font-weight:800;color:#6366f1;margin-bottom:4px'>🧭 제작 결론</div>" +
       "<div style='font-size:17px;font-weight:800;color:#1e1b4b'>" + escapeHtml(String(a.verdict_label).replace(/^\s*[123]\s*[=:.)\-]*\s*/, "")) + "</div>" +
       "<ul style='margin:8px 0 0 18px;padding:0;font-size:13.5px;color:#334155;line-height:1.6'>" + reasons + "</ul>" +
@@ -378,14 +366,13 @@
     host.insertBefore(card, host.firstChild);
     // [통합 1단계] 후킹 박스를 결론 카드 바로 아래로 이동
     try { var hkBox = document.getElementById("hk-box"); if (hkBox) host.insertBefore(hkBox, card.nextSibling); } catch (e) {}
-    [].slice.call(card.querySelectorAll(".ib-dir-btn")).forEach(function (b) {
-      b.addEventListener("click", function () { runPlan(Number(b.getAttribute("data-di")) || 0, "", false); });
-    });
   }
+  window.__ibMakePlan = function (info) { runPlan(info && info.title ? { title: info.title, oneline: info.oneline || "" } : 0, "", false); };
   async function runPlan(di, ending, force, trMode) {
     var a = window.__ibAnalysis, vid = window.__ibVid;
-    if (!a || !vid || !Array.isArray(a.directions) || !a.directions.length) return;
-    var dir = a.directions[di] || a.directions[0];
+    if (!a || !vid) return;
+    var dir = (di && typeof di === "object") ? di : ((Array.isArray(a.directions) && (a.directions[di] || a.directions[0])) || null);
+    if (!dir) return;
     var card = document.getElementById("ib-verdict-card");
     var wrap = document.getElementById("ib-plan-wrap");
     if (!wrap) { wrap = document.createElement("div"); wrap.id = "ib-plan-wrap"; var planAnchor = document.getElementById("hk-box") || card; if (planAnchor && planAnchor.parentNode) planAnchor.parentNode.insertBefore(wrap, planAnchor.nextSibling); else return; }
@@ -847,6 +834,6 @@
     renderFooter();
   })();
 </script>
-<script src="assets/js/tools-addon.js?v=20260801k"></script>
+<script src="assets/js/tools-addon.js?v=20260801l"></script>
 </body>
 </html>
