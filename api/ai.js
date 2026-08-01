@@ -1202,9 +1202,10 @@ module.exports = async (req, res) => {
           + "\n\n[영상 분석 결과]\n" + JSON.stringify(body.analysis).slice(0, 6000)
           + (body.transcript ? "\n\n[영상에서 추출한 대본·자막]\n" + String(body.transcript).slice(0, 4000) : "")
           + (body.hook_notes ? "\n\n[이 영상의 후킹(첫 3초) 분석 참고]\n" + String(body.hook_notes).slice(0, 2500) : "");
+        const planGen = { responseMimeType: "application/json", temperature: 0.55, maxOutputTokens: 16384 };
         const pr = await callGemini(planModels, key, {
           contents: [{ parts: [{ text: planPrompt }] }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.55 },
+          generationConfig: planGen,
         });
         if (!pr.ok) {
           let pd = pr.detail || "";
@@ -1212,7 +1213,14 @@ module.exports = async (req, res) => {
           res.status(502).json({ error: "기획안 생성 실패", detail: pd });
           return;
         }
-        const plan = parseJsonLoose(geminiText(pr.gj));
+        let plan = parseJsonLoose(geminiText(pr.gj));
+        if (!plan || !Array.isArray(plan.scenes) || !plan.scenes.length) {
+          // 결과 해석 실패 → Flash로 1회 자동 재시도 (안정성 보강)
+          try {
+            const pr2 = await callGemini(["gemini-flash-latest"], key, { contents: [{ parts: [{ text: planPrompt }] }], generationConfig: planGen });
+            if (pr2 && pr2.ok) plan = parseJsonLoose(geminiText(pr2.gj));
+          } catch (e) {}
+        }
         if (!plan || !Array.isArray(plan.scenes) || !plan.scenes.length) {
           res.status(502).json({ error: "기획안 결과 해석에 실패했습니다. 다시 시도해 주세요." });
           return;
