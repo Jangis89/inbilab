@@ -379,11 +379,11 @@
     function planLoad(msg) { wrap.innerHTML = "<div style='background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:20px;margin-bottom:13px;text-align:center;color:#6366f1;font-weight:700;font-size:14px'>" + msg + "</div>"; }
     wrap.scrollIntoView({ behavior: "smooth", block: "start" });
     // [자동 재료 수집] 대본이 아직 없으면 기계가 먼저 자동으로 따온다 (수강생이 순서를 몰라도 됨)
-    var trSend = trMode === "off" ? "" : ((typeof trText === "function" && trText()) || "");
+    var trSend = trMode === "off" ? "" : ((typeof trTextTimed === "function" && trTextTimed()) || (typeof trText === "function" && trText()) || "");
     if (trMode !== "off" && !trSend && typeof runTranscript === "function") {
       planLoad("🥣 재료를 모으는 중.. (영상 대본을 자동으로 추출하고 있어요)");
       try { await runTranscript(); } catch (e) {}
-      trSend = (typeof trText === "function" && trText()) || "";
+      trSend = (typeof trTextTimed === "function" && trTextTimed()) || (typeof trText === "function" && trText()) || "";
     }
     window.__ibTrUsed = !!trSend;
     // [후킹 분석 연결] 이미 실행돼 있으면 그 결과도 기획 재료로 사용
@@ -424,7 +424,7 @@
       ? "<div style='background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:10px 12px;margin-top:10px'><div style='font-size:12px;font-weight:800;color:#312e81'>🧭 전략이 흐르는 길 (처음→끝)</div>" + p.strategy_arc.map(function (x, i) { return "<div style='font-size:12.5px;color:#334155;margin-top:3px'><b>" + (["초반", "중반", "후반·엔딩"][i] || "") + ":</b> " + esc(String(x)) + "</div>"; }).join("") + "</div>"
       : "";
     var basisNote = String(p.timeline_basis || "").indexOf("추정") > -1
-      ? "<div style='font-size:11.5px;color:#b45309;margin-top:3px'>※ 이 영상은 대본을 뽑지 못해 예상 길이 기준으로 구간을 나눴어요.</div>"
+      ? "<div style='font-size:11.5px;color:#b45309;margin-top:3px'>※ 대본에서 초 단위 시간을 얻지 못해 전체 길이 기준 예상 구간으로 나눴어요.</div>"
       : "";
     var srcRows = (p.sources || []).map(function (s) {
       var risky = String(s.risk || "").indexOf("주의") > -1;
@@ -657,6 +657,11 @@
   function trText() {
     if (!lastTranscript) return "";
     return (lastTranscript.lines || []).map((l) => l.text || "").join("\n");
+  }
+
+  function trTextTimed() {
+    if (!lastTranscript) return "";
+    return (lastTranscript.lines || []).map((l) => (l.t ? "[" + l.t + "] " : "") + (l.text || "")).join("\n");
   }
 
   function dlTr() {
