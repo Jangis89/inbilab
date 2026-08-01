@@ -1201,11 +1201,6 @@ module.exports = async (req, res) => {
           : endingPick === "clean" ? "결론형 — 깔끔하게 마무리"
           : endingPick === "tease" ? "예고형 — 다음 편이 궁금하게"
           : "영상 소재에 가장 잘 맞는 방식을 네가 하나 골라라 (루프형/결론형/예고형)";
-        const planPrompt = PLAN_PROMPT.replace("__DIRECTION__", dirTitle + " — " + dirLine).replace("__ENDING__", endTxt)
-          + "\n\n[영상 분석 결과]\n" + JSON.stringify(body.analysis).slice(0, 6000)
-          + (body.transcript ? "\n\n[영상에서 추출한 대본·자막]\n" + String(body.transcript).slice(0, 6000) : "")
-          + (body.hook_notes ? "\n\n[이 영상의 후킹(첫 3초) 분석 참고]\n" + String(body.hook_notes).slice(0, 2500) : "")
-          + durTxt;
         let durTxt = "";
         try {
           const vj = await ytApi("videos", { id: vid, part: "contentDetails" });
@@ -1216,6 +1211,11 @@ module.exports = async (req, res) => {
             if (sec > 0) durTxt = "\n\n[실제 영상 길이] " + sec + "초 — 타임라인 전체는 반드시 이 길이에 맞추고, length_sec도 " + sec + "로 쓰세요.";
           }
         } catch (e) {}
+        const planPrompt = PLAN_PROMPT.replace("__DIRECTION__", dirTitle + " — " + dirLine).replace("__ENDING__", endTxt)
+          + "\n\n[영상 분석 결과]\n" + JSON.stringify(body.analysis).slice(0, 6000)
+          + (body.transcript ? "\n\n[영상에서 추출한 대본·자막]\n" + String(body.transcript).slice(0, 6000) : "")
+          + (body.hook_notes ? "\n\n[이 영상의 후킹(첫 3초) 분석 참고]\n" + String(body.hook_notes).slice(0, 2500) : "")
+          + durTxt;
         const planGen = { responseMimeType: "application/json", temperature: 0.55, maxOutputTokens: 16384 };
         const pr = await callGemini(planModels, key, {
           contents: [{ parts: [{ text: planPrompt }] }],
