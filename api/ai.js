@@ -137,21 +137,26 @@ const ANALYZE_PROMPT = `당신은 유튜브 쇼츠 제작 전문 분석가입니
 }`;
 const ANALYZE_PROMPT_VER = "v4";
 
-const PLAN_PROMPT_VER = "p1";
-const PLAN_PROMPT = `당신은 유튜브 쇼츠 기획 전문가입니다. 아래 [영상 분석 결과]를 재료로, 초보 수강생이 그대로 따라 만들 수 있는 완전한 영상 기획안을 만드세요. 원본을 그대로 베끼는 방식은 금지 — 자기만의 해석·해설·구성이 들어간 2차 창작이어야 합니다. 자막에는 영상에 실제로 넣을 수 있는 사실만 쓰세요.
+const PLAN_PROMPT_VER = "p2";
+const PLAN_PROMPT = `당신은 유튜브 쇼츠 기획 전문가입니다. 아래 재료([영상 분석 결과], 있으면 [영상에서 추출한 대본·자막]과 [후킹 분석 참고])로, 초보 수강생이 그대로 따라 만들 수 있는 초 단위 타임라인 기획안을 만드세요. 원본을 그대로 베끼는 방식은 금지 — 자기만의 해석·해설·구성이 들어간 2차 창작이어야 합니다. 자막에는 영상에 실제로 넣을 수 있는 사실만 쓰세요.
 
-제작 방향: __DIRECTION__
+선택한 후킹 전략(제작 방향): __DIRECTION__
 엔딩 방식: __ENDING__
+
+핵심 규칙:
+1) 선택한 전략의 전개 원칙을 영상 처음부터 끝까지 유지하세요. 예: 호기심 갭 = 질문 제시→답 아껴두기→중간 단서→재궁금증→마지막 보상 / 결과 먼저 = 가장 강한 결과를 첫 장면에→과정 되감기→디테일 해설→결과 재음미. 다른 전략도 같은 방식으로 그 전략답게 초반-중반-후반을 설계하세요.
+2) 타임라인 구간은 [대본·자막]의 타임코드와 실제 영상 길이를 기준으로 나누세요. 구간 수는 영상에 맞게 가변(짧으면 4~6개, 길면 더 많이). 대본이 없으면 분석 결과로 전체 길이를 추정해 나누고 timeline_basis를 "추정"으로 쓰세요.
+3) 모든 구간에 hold(그 구간에서 시청자가 나가지 않게 붙잡는 장치)를 반드시 쓰세요. 첫 구간은 선택한 전략의 후킹 장면입니다.
 
 아래 JSON 형식으로만 답하세요. 다른 텍스트 없이 JSON만. 모든 값은 초등학생도 이해할 쉬운 한국어로.
 {
   "concept": "영상 한 줄 콘셉트",
-  "hook": { "caption": "첫 3초 화면 자막", "narration": "첫 3초 나레이션 (없으면 빈 문자열)", "visual": "첫 3초 화면에 보일 것" },
-  "scenes": [ { "no": 1, "caption": "자막", "narration": "나레이션 (없으면 빈 문자열)", "visual": "필요한 화면 설명", "rehook": "시청자 이탈을 막는 장치 한 줄 (없으면 빈 문자열)" } ],
-  "scenes_note": "scenes는 첫 3초 이후부터 5~7개",
-  "sources": [ { "scene": "장면 번호", "need": "필요한 소스", "how": "구하는 방법 (직접 촬영, 무료 스톡, AI 이미지, 직접 만든 도식 등)", "alt": "대체 소스", "risk": "확인 | 주의  (주의 = 중계·방송·영화·음원처럼 사용권 문제가 잦은 것)" } ],
-  "ending": { "type": "루프형 | 결론형 | 예고형", "why": "이 엔딩을 고른 이유 한 줄", "content": "마지막 장면 자막과 나레이션" },
+  "strategy_arc": ["초반(첫 3초)에 전략을 어떻게 여는지 한 줄", "중반에 어떻게 끌고 가는지 한 줄", "후반·엔딩을 어떻게 마무리하는지 한 줄"],
+  "timeline_basis": "대본 타임코드 | 추정",
   "length_sec": 30,
+  "timeline": [ { "time": "0:00~0:03", "caption": "화면 자막", "narration": "나레이션 (없으면 빈 문자열)", "visual": "화면에 보일 것", "edit_sound": "편집·소리 지시 (컷 전환, 확대, 효과음, 배속 등)", "hold": "이 구간의 시청 유지 장치 한 줄" } ],
+  "sources": [ { "time": "구간 시간", "need": "필요한 소스", "how": "구하는 방법 (직접 촬영, 무료 스톡, AI 이미지, 직접 만든 도식 등)", "alt": "대체 소스", "risk": "확인 | 주의  (주의 = 중계·방송·영화·음원처럼 사용권 문제가 잦은 것)" } ],
+  "ending": { "type": "루프형 | 결론형 | 예고형", "why": "이 엔딩을 고른 이유 한 줄", "content": "마지막 장면 자막과 나레이션" },
   "title_ideas": ["업로드용 제목 후보 3개"],
   "hashtags": ["해시태그 5개"]
 }`;
@@ -1190,7 +1195,7 @@ module.exports = async (req, res) => {
         const planKey = "plan:" + vid + ":" + PLAN_PROMPT_VER + ":" + (pref === "flash" ? "f" : "p") + ":" + encodeURIComponent(dirTitle).slice(0, 60) + ":" + (endingPick || "auto") + ":" + (body.transcript ? "t" : "n") + (body.hook_notes ? "h" : "");
         if (body.force !== true) {
           const pc = await sbGetCacheSrv(planKey, token);
-          if (pc && pc.scenes) { res.status(200).json({ ok: true, video_id: vid, plan: pc, cached: true }); return; }
+          if (pc && Array.isArray(pc.timeline) && pc.timeline.length) { res.status(200).json({ ok: true, video_id: vid, plan: pc, cached: true }); return; }
         }
         const endTxt = endingPick === "loop" ? "루프형 — 마지막 장면이 첫 장면과 자연스럽게 이어져 반복 재생을 유도"
           : endingPick === "clean" ? "결론형 — 깔끔하게 마무리"
@@ -1198,7 +1203,7 @@ module.exports = async (req, res) => {
           : "영상 소재에 가장 잘 맞는 방식을 네가 하나 골라라 (루프형/결론형/예고형)";
         const planPrompt = PLAN_PROMPT.replace("__DIRECTION__", dirTitle + " — " + dirLine).replace("__ENDING__", endTxt)
           + "\n\n[영상 분석 결과]\n" + JSON.stringify(body.analysis).slice(0, 6000)
-          + (body.transcript ? "\n\n[영상에서 추출한 대본·자막]\n" + String(body.transcript).slice(0, 4000) : "")
+          + (body.transcript ? "\n\n[영상에서 추출한 대본·자막]\n" + String(body.transcript).slice(0, 6000) : "")
           + (body.hook_notes ? "\n\n[이 영상의 후킹(첫 3초) 분석 참고]\n" + String(body.hook_notes).slice(0, 2500) : "");
         const planGen = { responseMimeType: "application/json", temperature: 0.55, maxOutputTokens: 16384 };
         const pr = await callGemini(planModels, key, {
@@ -1212,14 +1217,14 @@ module.exports = async (req, res) => {
           return;
         }
         let plan = parseJsonLoose(geminiText(pr.gj));
-        if (!plan || !Array.isArray(plan.scenes) || !plan.scenes.length) {
+        if (!plan || !Array.isArray(plan.timeline) || !plan.timeline.length) {
           // 결과 해석 실패 → Flash로 1회 자동 재시도 (안정성 보강)
           try {
             const pr2 = await callGemini(["gemini-flash-latest"], key, { contents: [{ parts: [{ text: planPrompt }] }], generationConfig: planGen });
             if (pr2 && pr2.ok) plan = parseJsonLoose(geminiText(pr2.gj));
           } catch (e) {}
         }
-        if (!plan || !Array.isArray(plan.scenes) || !plan.scenes.length) {
+        if (!plan || !Array.isArray(plan.timeline) || !plan.timeline.length) {
           res.status(502).json({ error: "기획안 결과 해석에 실패했습니다. 다시 시도해 주세요." });
           return;
         }
