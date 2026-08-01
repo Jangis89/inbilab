@@ -1394,10 +1394,22 @@
         im.addEventListener("click", function(){
           [].slice.call(row.querySelectorAll("img")).forEach(function(x){ x.style.borderColor = "transparent"; });
           im.style.borderColor = "#4338ca";
-          out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 ' + esc(f.label) + ' 장면으로 바이두에서 찾는 중…</div>';
-          baiduSearch(f.url).then(function(j){
-            if (!j || j.ok !== true){ out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">검색 실패: ' + esc((j && j.error) || "오류") + '</div>'; return; }
-            renderTotal([{ label: f.label, items: j.items || [] }], [], out, "");
+          out.innerHTML = '<div style="padding:10px;color:#888;font-size:13px">🔎 ' + esc(f.label) + ' 장면으로 찾는 중…</div>';
+          Promise.all([
+            baiduSearch(f.url).catch(function(){ return null; }),
+            visionSearch(f.url).catch(function(){ return null; })
+          ]).then(function(rs){
+            var j = rs[0], v = rs[1];
+            var bItems = (j && j.ok === true && j.items) ? j.items : [];
+            var gpages = [];
+            if (v && v.ok === true && Array.isArray(v.pages)){
+              v.pages.forEach(function(pg){ if (pg && pg.url) gpages.push({ url: pg.url, img: pg.img, __scene: f.label }); });
+            }
+            if (!bItems.length && !gpages.length){
+              out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">검색 실패: ' + esc((j && j.error) || "잠시 후 다시 시도해 주세요") + '</div>';
+              return;
+            }
+            renderTotal([{ label: f.label, items: bItems }], gpages, out, "");
           }).catch(function(e){ out.innerHTML = '<div style="padding:10px;color:#c0392b;font-size:13px">오류: ' + esc(String(e).slice(0,120)) + '</div>'; });
         });
         var lb = document.createElement("div");
