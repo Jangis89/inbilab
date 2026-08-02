@@ -904,7 +904,7 @@ module.exports = async (req, res) => {
       // [B방식] 실제 소스 영상을 찾아 AI가 직접 보고 대본 작성 — 실패하면 아래 기존 방식으로 자동 대체
       try {
         const qPrompt = "당신은 유튜브 쇼츠 기획자입니다. 아래 분석 결과의 성공 공식을 빌려 새 쇼츠를 만들려고 합니다.\n"
-          + (topic ? "사용자 지정 소재: " + topic : "소재는 당신이 정하세요 (원본과 같은 카테고리에서 한국 시청자가 궁금해할 소재).")
+          + (topic ? "사용자 지정 소재: " + topic : "소재는 당신이 정하세요. 최우선 목표: 분석한 원본 영상과 가장 유사한 실제 영상(같은 소재 유형·같은 장면 종류)이 검색되도록 소재와 검색어를 만들어라.")
           + "\n\n[분석 결과]\n" + JSON.stringify(analysis).slice(0, 3000)
           + '\n\nJSON만 출력: { "topic": "새 소재 한 줄", "queries": ["소스 영상을 찾을 유튜브 검색어(영어)", "검색어2(영어)", "검색어3(한국어)"] }'
           + "\n- 검색어는 실제 원본 소스 영상(직캠·현장·아카이브·풀버전 클립)이 걸리게 만들어라. 남이 편집한 쇼츠 말고.";
@@ -912,10 +912,15 @@ module.exports = async (req, res) => {
         const qj = qr.ok ? parseJsonLoose(geminiText(qr.gj)) : null;
         const queries = (qj && Array.isArray(qj.queries) ? qj.queries : []).slice(0, 3);
         const pickedTopic = (qj && qj.topic) ? String(qj.topic).slice(0, 120) : topic;
+        try {
+          const kws = Array.isArray(analysis.keywords) ? analysis.keywords.slice(0, 3).join(" ") : "";
+          if (kws) queries.push(kws);
+          if (analysis.topic) queries.push(String(analysis.topic).slice(0, 60));
+        } catch (e) {}
         let cands = [];
         for (const q of queries) {
-          if (cands.length >= 6) break;
-          const sr = await ytApi("search", { part: "snippet", q: String(q).slice(0, 80), type: "video", maxResults: 6 });
+          if (cands.length >= 10) break;
+          const sr = await ytApi("search", { part: "snippet", q: String(q).slice(0, 80), type: "video", maxResults: 10 });
           if (sr && Array.isArray(sr.items)) {
             for (const it of sr.items) {
               const cid = it && it.id && it.id.videoId;
@@ -925,22 +930,23 @@ module.exports = async (req, res) => {
         }
         let srcPick = null, srcAlts = [];
         if (cands.length) {
-          const dj = await ytApi("videos", { part: "contentDetails", id: cands.slice(0, 8).map(function (c) { return c.id; }).join(",") });
+          const dj = await ytApi("videos", { part: "contentDetails", id: cands.slice(0, 12).map(function (c) { return c.id; }).join(",") });
           const durs = {};
           if (dj && Array.isArray(dj.items)) dj.items.forEach(function (it) {
             const mm = String((it.contentDetails && it.contentDetails.duration) || "").match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
             durs[it.id] = mm ? (Number(mm[1]) || 0) * 3600 + (Number(mm[2]) || 0) * 60 + (Number(mm[3]) || 0) : 0;
           });
-          const good = cands.filter(function (c) { return durs[c.id] >= 10 && durs[c.id] <= 360; }).map(function (c) { return Object.assign({}, c, { sec: durs[c.id] }); });
+          const good = cands.filter(function (c) { return durs[c.id] >= 8 && durs[c.id] <= 480; }).map(function (c) { return Object.assign({}, c, { sec: durs[c.id] }); });
           if (good.length) { srcPick = good[0]; srcAlts = good.slice(1, 3); }
         }
-        if (srcPick) {
-          const srcUrl = "https://www.youtube.com/watch?v=" + srcPick.id;
+        const tries = srcPick ? [srcPick].concat(srcAlts.slice(0, 1)) : [];
+        for (const pick of tries) {
+          const srcUrl = "https://www.youtube.com/watch?v=" + pick.id;
           const wPrompt = SCRIPT_SRC_PROMPT
             .replace("__ANALYSIS__", JSON.stringify(analysis).slice(0, 3500))
             .replace("__TOPIC__", pickedTopic || "소스 영상에 맞는 소재를 정하세요")
-            .replace("__SRCTITLE__", srcPick.title.slice(0, 120))
-            .replace("__SRCSEC__", String(srcPick.sec));
+            .replace("__SRCTITLE__", String(pick.title).slice(0, 120))
+            .replace("__SRCSEC__", String(pick.sec));
           const wr = await callGemini(MODELS, key, {
             contents: [{ parts: [{ file_data: { file_uri: srcUrl } }, { text: wPrompt }] }],
             generationConfig: { responseMimeType: "application/json", mediaResolution: "MEDIA_RESOLUTION_LOW", temperature: 0.7 },
@@ -950,8 +956,8 @@ module.exports = async (req, res) => {
             if (!isAdmin) await recordUsage(user.id, feature, token);
             res.status(200).json({
               ok: true, script: sScript, model: wr.model,
-              source: { video_id: srcPick.id, title: srcPick.title, channel: srcPick.channel, duration_sec: srcPick.sec, url: srcUrl, thumb: "https://i.ytimg.com/vi/" + srcPick.id + "/mqdefault.jpg" },
-              alternates: srcAlts.map(function (a) { return { video_id: a.id, title: a.title, channel: a.channel, duration_sec: a.sec, url: "https://www.youtube.com/watch?v=" + a.id }; }),
+              source: { video_id: pick.id, title: pick.title, channel: pick.channel, duration_sec: pick.sec, url: srcUrl, thumb: "https://i.ytimg.com/vi/" + pick.id + "/mqdefault.jpg" },
+              alternates: [srcPick].concat(srcAlts).filter(function (a) { return a && a.id !== pick.id; }).slice(0, 2).map(function (a) { return { video_id: a.id, title: a.title, channel: a.channel, duration_sec: a.sec, url: "https://www.youtube.com/watch?v=" + a.id }; }),
             });
             return;
           }
@@ -984,7 +990,7 @@ module.exports = async (req, res) => {
         return;
       }
       if (!isAdmin) await recordUsage(user.id, feature, token);
-      res.status(200).json({ ok: true, script: script, model: r.model });
+      res.status(200).json({ ok: true, script: script, model: r.model, source_missing: true });
       return;
     }
 
