@@ -36,6 +36,10 @@ async function recordUsage(userId, feature, token) {
 }
 
 // KST(한국시간) 기준 오늘 0시를 UTC ISO로
+function deEnt(s) {
+  return String(s || "").replace(/&quot;/g, '"').replace(/&#34;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
 function kstDayStartIso() {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 3600 * 1000);
@@ -700,7 +704,7 @@ module.exports = async (req, res) => {
         const tj = await ytApi("videos", { part: "snippet", id: vid });
         if (tj && tj.__error) ytError = friendlyYt(tj.__error);
         else if (tj && tj.items && tj.items[0]) {
-          target.title = tj.items[0].snippet.title;
+          target.title = deEnt(tj.items[0].snippet.title);
           target.published_at = tj.items[0].snippet.publishedAt;
         }
       }
@@ -722,8 +726,8 @@ module.exports = async (req, res) => {
             seen[id2] = true;
             candidates.push({
               video_id: id2,
-              title: it.snippet.title,
-              channel: it.snippet.channelTitle,
+              title: deEnt(it.snippet.title),
+              channel: deEnt(it.snippet.channelTitle),
               published_at: it.snippet.publishedAt,
               found_by: queries[i].q,
             });
@@ -924,7 +928,7 @@ module.exports = async (req, res) => {
           if (sr && Array.isArray(sr.items)) {
             for (const it of sr.items) {
               const cid = it && it.id && it.id.videoId;
-              if (cid && !cands.some(function (c) { return c.id === cid; })) cands.push({ id: cid, title: (it.snippet && it.snippet.title) || "", channel: (it.snippet && it.snippet.channelTitle) || "" });
+              if (cid && !cands.some(function (c) { return c.id === cid; })) cands.push({ id: cid, title: deEnt((it.snippet && it.snippet.title) || ""), channel: deEnt((it.snippet && it.snippet.channelTitle) || "") });
             }
           }
         }
@@ -1179,8 +1183,8 @@ module.exports = async (req, res) => {
       }
       const items = ((sj && sj.items) || []).map((it) => ({
         video_id: it.id && it.id.videoId,
-        title: it.snippet.title,
-        channel: it.snippet.channelTitle,
+        title: deEnt(it.snippet.title),
+        channel: deEnt(it.snippet.channelTitle),
         published_at: it.snippet.publishedAt,
       })).filter((x) => x.video_id);
       try {
