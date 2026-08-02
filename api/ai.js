@@ -137,6 +137,8 @@ const ANALYZE_PROMPT = `당신은 유튜브 쇼츠 제작 전문 분석가입니
 }`;
 const ANALYZE_PROMPT_VER = "v5";
 
+const SCRIPT_SRC_PROMPT = `당신은 유튜브 쇼츠 전문 작가입니다. 첨부된 유튜브 영상(제목: __SRCTITLE__, 길이 __SRCSEC__초)이 이번 쇼츠의 실제 소스 영상입니다. 이 영상을 직접 보고, 아래 성공 공식을 빌려 이 소스 영상으로 만드는 쇼츠 대본을 쓰세요.\n\n[성공한 원본 영상의 분석 결과 — 이 공식(훅 방식·구성·전개 원리)을 따르되 베끼지는 말 것]\n__ANALYSIS__\n\n새 소재: __TOPIC__\n\n규칙:\n- 대본의 각 줄은 소스 영상의 실제 장면과 맞아야 한다. 각 줄에 src_time("0:12~0:18" 형식)으로 소스 영상에서 쓸 구간을 명시하라.\n- 문장은 짧고 명확하게 (TTS 프로그램에 바로 붙여넣기 좋게), 전체 낭독 30~60초.\n- 첫 문장은 2초 안에 궁금증을 만드는 강한 훅.\n- 마지막은 다음 영상 시청이나 구독을 자연스럽게 유도.\n- 모든 값은 한국어 (kw_en만 영어).\n\nJSON만 출력하세요:\n{\n  "topic": "소재 한 줄",\n  "title": "업로드용 제목",\n  "target_length_sec": 45,\n  "lines": [ { "text": "나레이션 문장", "visual": "이 구간에 보일 소스 영상의 실제 장면 설명", "src_time": "0:12~0:18", "kw_en": "보조 스톡 검색어 (영어)" } ],\n  "hashtags": ["해시태그 5개"],\n  "tip": "편집 팁 한 줄"\n}`;
+
 const PLAN_PROMPT_VER = "p3";
 const PLAN_PROMPT = `당신은 유튜브 쇼츠 기획 전문가입니다. 아래 재료([영상 분석 결과], 있으면 [영상에서 추출한 대본·자막]과 [후킹 분석 참고])로, 초보 수강생이 그대로 따라 만들 수 있는 초 단위 타임라인 기획안을 만드세요. 원본을 그대로 베끼는 방식은 금지 — 자기만의 해석·해설·구성이 들어간 2차 창작이어야 합니다. 자막에는 영상에 실제로 넣을 수 있는 사실만 쓰세요.
 
@@ -898,6 +900,64 @@ module.exports = async (req, res) => {
         return;
       }
       const topic = String(body.topic || "").trim().slice(0, 200);
+
+      // [B방식] 실제 소스 영상을 찾아 AI가 직접 보고 대본 작성 — 실패하면 아래 기존 방식으로 자동 대체
+      try {
+        const qPrompt = "당신은 유튜브 쇼츠 기획자입니다. 아래 분석 결과의 성공 공식을 빌려 새 쇼츠를 만들려고 합니다.\n"
+          + (topic ? "사용자 지정 소재: " + topic : "소재는 당신이 정하세요 (원본과 같은 카테고리에서 한국 시청자가 궁금해할 소재).")
+          + "\n\n[분석 결과]\n" + JSON.stringify(analysis).slice(0, 3000)
+          + '\n\nJSON만 출력: { "topic": "새 소재 한 줄", "queries": ["소스 영상을 찾을 유튜브 검색어(영어)", "검색어2(영어)", "검색어3(한국어)"] }'
+          + "\n- 검색어는 실제 원본 소스 영상(직캠·현장·아카이브·풀버전 클립)이 걸리게 만들어라. 남이 편집한 쇼츠 말고.";
+        const qr = await callGemini(["gemini-flash-latest"], key, { contents: [{ parts: [{ text: qPrompt }] }], generationConfig: { responseMimeType: "application/json", temperature: 0.7 } });
+        const qj = qr.ok ? parseJsonLoose(geminiText(qr.gj)) : null;
+        const queries = (qj && Array.isArray(qj.queries) ? qj.queries : []).slice(0, 3);
+        const pickedTopic = (qj && qj.topic) ? String(qj.topic).slice(0, 120) : topic;
+        let cands = [];
+        for (const q of queries) {
+          if (cands.length >= 6) break;
+          const sr = await ytApi("search", { part: "snippet", q: String(q).slice(0, 80), type: "video", maxResults: 6 });
+          if (sr && Array.isArray(sr.items)) {
+            for (const it of sr.items) {
+              const cid = it && it.id && it.id.videoId;
+              if (cid && !cands.some(function (c) { return c.id === cid; })) cands.push({ id: cid, title: (it.snippet && it.snippet.title) || "", channel: (it.snippet && it.snippet.channelTitle) || "" });
+            }
+          }
+        }
+        let srcPick = null, srcAlts = [];
+        if (cands.length) {
+          const dj = await ytApi("videos", { part: "contentDetails", id: cands.slice(0, 8).map(function (c) { return c.id; }).join(",") });
+          const durs = {};
+          if (dj && Array.isArray(dj.items)) dj.items.forEach(function (it) {
+            const mm = String((it.contentDetails && it.contentDetails.duration) || "").match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+            durs[it.id] = mm ? (Number(mm[1]) || 0) * 3600 + (Number(mm[2]) || 0) * 60 + (Number(mm[3]) || 0) : 0;
+          });
+          const good = cands.filter(function (c) { return durs[c.id] >= 10 && durs[c.id] <= 360; }).map(function (c) { return Object.assign({}, c, { sec: durs[c.id] }); });
+          if (good.length) { srcPick = good[0]; srcAlts = good.slice(1, 3); }
+        }
+        if (srcPick) {
+          const srcUrl = "https://www.youtube.com/watch?v=" + srcPick.id;
+          const wPrompt = SCRIPT_SRC_PROMPT
+            .replace("__ANALYSIS__", JSON.stringify(analysis).slice(0, 3500))
+            .replace("__TOPIC__", pickedTopic || "소스 영상에 맞는 소재를 정하세요")
+            .replace("__SRCTITLE__", srcPick.title.slice(0, 120))
+            .replace("__SRCSEC__", String(srcPick.sec));
+          const wr = await callGemini(MODELS, key, {
+            contents: [{ parts: [{ file_data: { file_uri: srcUrl } }, { text: wPrompt }] }],
+            generationConfig: { responseMimeType: "application/json", mediaResolution: "MEDIA_RESOLUTION_LOW", temperature: 0.7 },
+          });
+          const sScript = wr.ok ? parseJsonLoose(geminiText(wr.gj)) : null;
+          if (sScript && Array.isArray(sScript.lines) && sScript.lines.length) {
+            if (!isAdmin) await recordUsage(user.id, feature, token);
+            res.status(200).json({
+              ok: true, script: sScript, model: wr.model,
+              source: { video_id: srcPick.id, title: srcPick.title, channel: srcPick.channel, duration_sec: srcPick.sec, url: srcUrl, thumb: "https://i.ytimg.com/vi/" + srcPick.id + "/mqdefault.jpg" },
+              alternates: srcAlts.map(function (a) { return { video_id: a.id, title: a.title, channel: a.channel, duration_sec: a.sec, url: "https://www.youtube.com/watch?v=" + a.id }; }),
+            });
+            return;
+          }
+        }
+      } catch (e) {}
+
       const prompt = SCRIPT_PROMPT
         .replace("__ANALYSIS__", JSON.stringify(analysis).slice(0, 4000))
         .replace(
