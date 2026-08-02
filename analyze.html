@@ -233,7 +233,7 @@
 
       <div class="sc-box" id="sc-box" style="display:none;">
         <h3>응용 · ✍️ 벤치마킹 대본 만들기</h3>
-        <div class="sc-desc">분석한 영상의 성공 공식을 빌려서, 내가 정한 다른 주제로 새 대본을 만들어 드립니다.</div>
+        <div class="sc-desc">분석한 영상의 성공 공식을 빌려서, 내가 정한 다른 주제로 새 대본을 만들어 드립니다. 아래 영상의 링크 주소를 새로 복사해서 영상 분석을 하시면 더 많은 아이디어와 참고자료를 얻으실 수 있습니다.</div>
         <div class="sc-input">
           <input id="sc-topic" style="display:none" placeholder="원하는 새 소재 (비워두면 AI가 제안합니다)" onkeydown="if(event.key==='Enter')runScript()">
           <button id="btn-sc" onclick="runScript()">인비랩 AI 벤치마킹 대본 생성하기</button>
@@ -773,6 +773,7 @@
         lastScript = j.script;
         window.__ibScSrc = j.source || null;
         window.__ibScAlts = j.alternates || [];
+        window.__ibScMiss = !!j.source_missing;
         renderScript(j.script);
         $id("sc-meta").textContent += " · " + modelLabel(j.model, "작성");
         $id("sc-res").className = "sc-res show";
@@ -800,6 +801,8 @@
         + '<div style="font-size:13.5px;font-weight:700;color:#1e293b;margin:2px 0">' + escapeHtml(ss.title || "") + '</div>'
         + '<a href="' + ss.url + '" target="_blank" rel="noopener" style="font-size:12.5px;color:#2563eb;font-weight:700;text-decoration:none">▶ 유튜브에서 이 영상 열기</a>'
         + (altHtml ? '<div style="margin-top:3px">' + altHtml + '</div>' : "") + '</div></div>';
+    } else if (window.__ibScMiss) {
+      srcHost.innerHTML = '<div style="background:#fef9c3;border:1.5px solid #fde047;border-radius:12px;padding:12px 14px;margin:10px 0;font-size:13px;color:#854d0e;line-height:1.6">⚠️ 이번에는 딱 맞는 소스 영상을 찾지 못해 분석 자료만으로 대본을 만들었어요. 버튼을 한 번 더 누르면 소스 영상을 다시 찾아봅니다.</div>';
     } else { srcHost.innerHTML = ""; }
     
     
