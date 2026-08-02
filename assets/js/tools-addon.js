@@ -57,7 +57,7 @@
     .hk-lowwarn{margin-top:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:8px 12px;font-size:12.5px;color:#92400e;line-height:1.55;}
     .hk-txt{font-size:14px;line-height:1.7;color:#334155;}
     .hk-var{background:var(--bg-soft);border:1px solid var(--line);border-radius:11px;padding:11px 14px;margin-bottom:8px;}
-    .hk-var .hv-k{font-size:11.5px;font-weight:800;color:#e11d48;margin-bottom:6px;}
+    .hk-var .hv-k{display:inline-block;background:#e11d48;color:#fff;font-size:13.5px;font-weight:800;padding:6px 14px;border-radius:999px;margin-bottom:8px;}
     .hk-var .hv-cap{background:#111;border-radius:9px;padding:11px 10px;text-align:center;line-height:1.35;}
     .hk-var .hv-cap span{display:block;font-size:16.5px;font-weight:900;color:#fff;letter-spacing:-0.3px;text-shadow:1.5px 1.5px 0 #000;}
     .hk-var .hv-cap span.y{color:#ffd400;}
@@ -83,7 +83,7 @@
     box.id = "hk-box";
     box.style.display = "none";
     box.innerHTML = `
-      <h3>1단계 · 🪝 원본영상 후킹 분석</h3>
+      <h3>2단계 · 🪝 원본영상 후킹 분석</h3>
       <div class="hk-desc">붙여넣은 원본 영상의 첫 3초가 왜 통했는지 분석하고, 응용 3가지를 제안합니다.</div>
       <button class="hkbtn" id="btn-hk" style="display:none">후킹 분석하기</button>
       <div class="an-load" id="hk-load"><div class="spin"></div><span id="hk-load-txt">AI가 첫 3초를 해부하고 있습니다…</span></div>
@@ -110,7 +110,7 @@
           <div class="hk-txt" id="hk-ret"></div>
         </div>
         <div class="hk-sec">
-          <div class="hs-t">6️⃣ 이 영상을 다르게 벤치마킹하기 — 3가지 버전</div>
+          <div class="hs-t">6️⃣ 인비랩 AI가 추천하는 벤치마킹 3가지 버전</div>
           <div id="hk-vars"></div>
         </div>
         <div class="hk-sec">
@@ -274,8 +274,8 @@
       const conf = ["높음", "중간", "낮음"].indexOf(m.confidence) >= 0 ? m.confidence : "중간";
       const subs = Array.isArray(h.sub) ? h.sub.filter(function (s) { return s && (s.name || s.type_id); }) : [];
       let sh = "<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:11px 13px;font-size:14px;font-weight:700;color:#1e293b;line-height:1.7'>"
-        + "주전략: " + (isNew ? "🆕 새 유형 · " : "") + escapeHtml(stratName(m)) + " (확신도 " + conf + ")"
-        + (subs.length ? "<br>보조전략: " + subs.map(function (s) { return escapeHtml(stratName(s)); }).join(", ") : "")
+        + "주전략: " + (isNew ? "🆕 새 유형 · " : "") + escapeHtml(String(stratName(m)).replace(/^유형\s*\d+\s*·\s*/, "")) + " (확신도 " + conf + ")"
+        + (subs.length ? "<br>보조전략: " + subs.map(function (s) { return escapeHtml(String(stratName(s)).replace(/^유형\s*\d+\s*·\s*/, "")); }).join(", ") : "")
         + "</div>";
       if (conf === "낮음" || isNew) {
         sh += "<div class='hk-lowwarn'>⚠️ " + (isNew
