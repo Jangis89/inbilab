@@ -28,7 +28,7 @@
     })();
     return __ibAdminP;
   }
-  (function(){ var ms = document.getElementById("model-sel"); if (ms) ibIsAdmin().then(function(a){ if (a) ms.style.display = ""; }); })();
+  
   function initHook() {
     const anRes = document.getElementById("an-res");
     if (!anRes) return; // 분석 페이지가 아니면 통과
@@ -83,14 +83,14 @@
     box.id = "hk-box";
     box.style.display = "none";
     box.innerHTML = `
-      <h3>1단계 · 🪝 후킹 분석 <span style="font-size:12px;color:#94a3b8;font-weight:600;">첫 3~5초 해부</span></h3>
-      <div class="hk-desc">첫 3초가 왜 통했는지 분석하고, 응용 3가지를 제안합니다.</div>
-      <button class="hkbtn" id="btn-hk">후킹 분석하기</button>
+      <h3>1단계 · 🪝 원본영상 후킹 분석</h3>
+      <div class="hk-desc">붙여넣은 원본 영상의 첫 3초가 왜 통했는지 분석하고, 응용 3가지를 제안합니다.</div>
+      <button class="hkbtn" id="btn-hk" style="display:none">후킹 분석하기</button>
       <div class="an-load" id="hk-load"><div class="spin"></div><span id="hk-load-txt">AI가 첫 3초를 해부하고 있습니다…</span></div>
       <div class="an-err" id="hk-err"></div>
       <div class="hk-res" id="hk-res">
         <div class="hk-sec" style="border-top:none;">
-          <div class="hs-t">1️⃣ 첫 3~5초에 실제로 나온 것 (사실)</div>
+          <div class="hs-t">1️⃣ 첫 후킹 장면</div>
           <div class="hk-facts" id="hk-facts"></div>
         </div>
         <div class="hk-sec">
@@ -110,7 +110,7 @@
           <div class="hk-txt" id="hk-ret"></div>
         </div>
         <div class="hk-sec">
-          <div class="hs-t">6️⃣ 이 영상을 다르게 열어보기 — 3가지 버전</div>
+          <div class="hs-t">6️⃣ 이 영상을 다르게 벤치마킹하기 — 3가지 버전</div>
           <div id="hk-vars"></div>
         </div>
         <div class="hk-sec">
@@ -244,6 +244,11 @@
       clearInterval(hkTimer);
       load.className = "an-load";
       btn.disabled = false;
+      try {
+        var hkOk = document.getElementById("hk-res").className.indexOf("show") > -1;
+        btn.style.display = hkOk ? "none" : "";
+        if (!hkOk) btn.textContent = "🔄 다시 시도";
+      } catch (e) {}
     }
 
     function stratName(s) {
@@ -267,11 +272,11 @@
       const m = h.main || {};
       const isNew = Number(m.type_id) === 0 || m.is_new === true;
       const conf = ["높음", "중간", "낮음"].indexOf(m.confidence) >= 0 ? m.confidence : "중간";
-      let sh = "<span class='hk-strat-main" + (isNew ? " hk-strat-new" : "") + "'>" +
-        (isNew ? "🆕 새 유형: " : "") + escapeHtml(stratName(m)) + "</span>";
-      sh += "<span class='hk-conf hc-" + conf + "'>확신도 " + conf + "</span>";
       const subs = Array.isArray(h.sub) ? h.sub.filter(function (s) { return s && (s.name || s.type_id); }) : [];
-      if (subs.length) sh += "<div style='margin-top:8px;'>보조: " + subs.map(function (s) { return "<span class='hk-strat-sub'>" + escapeHtml(stratName(s)) + "</span>"; }).join("") + "</div>";
+      let sh = "<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:11px 13px;font-size:14px;font-weight:700;color:#1e293b;line-height:1.7'>"
+        + "주전략: " + (isNew ? "🆕 새 유형 · " : "") + escapeHtml(stratName(m)) + " (확신도 " + conf + ")"
+        + (subs.length ? "<br>보조전략: " + subs.map(function (s) { return escapeHtml(stratName(s)); }).join(", ") : "")
+        + "</div>";
       if (conf === "낮음" || isNew) {
         sh += "<div class='hk-lowwarn'>⚠️ " + (isNew
           ? "교과서 10유형에 없는 새로운 방식입니다. AI가 관찰한 내용을 그대로 보여드리니 1️⃣의 실제 장면과 함께 판단해 보세요. (이 사례는 자동으로 수집되어 분류표 개선에 사용됩니다)"
