@@ -200,7 +200,7 @@ body.has-sidebar { padding-left: 244px; }
 @media(max-width:860px){
   img,video,iframe{max-width:100%;}
   table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;}
-  body{overflow-wrap:anywhere;}
+  body{overflow-wrap:break-word;word-break:keep-all;}
   .list-head{display:none !important;}
   .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
   .ch-row .h-stats{width:auto !important;text-align:left !important;}
@@ -209,4 +209,34 @@ body.has-sidebar { padding-left: 244px; }
   .an-input button,.search-row button{flex:1 1 auto;}
   .ch-row{flex-wrap:wrap;row-gap:6px;}
   .page,.wrap,.container{padding-left:14px;padding-right:14px;}
+
+  /* 글자·아이콘 크기: 영상 분석 결과 화면 기준으로 통일 */
+  body{font-size:15.5px;}
+  h1{font-size:24px;}
+  h2{font-size:20px;}
+  h3{font-size:17.5px;}
+  .hero h1{font-size:27px !important;}
+  .hero p{font-size:16px;}
+  .hero .badge{font-size:13.5px;}
+  .section h2{font-size:21px;}
+  .section .desc{font-size:15px;}
+  .card{padding:20px 14px;}
+  .card .icon{font-size:34px;margin-bottom:8px;}
+  .card h3{font-size:17px;}
+  .card p{font-size:14.5px;}
+  .talk .icon{font-size:30px;}
+  .talk h3{font-size:18px;}
+  .stat b{font-size:24px;}
+  .btn-big{font-size:17px;padding:14px 28px;}
+  .logo{font-size:24px;}
+
+  /* 채널 분석: 결과 머리 재배치(세로 글씨·넘침 방지) */
+  .ch-head{flex-wrap:wrap !important;gap:12px !important;}
+  .ch-head img{width:56px !important;height:56px !important;}
+  .ch-head h2{font-size:19px !important;}
+  .ch-head .handle{font-size:13.5px !important;}
+  .ch-head > div{min-width:0;}
+  .stat-grid{grid-template-columns:repeat(2,1fr) !important;}
+  .stat-box b{font-size:19px !important;}
+  .stat-box span{font-size:13.5px !important;}
 }
