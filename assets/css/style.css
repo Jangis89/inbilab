@@ -241,4 +241,29 @@ body.has-sidebar { padding-left: 244px; }
   .stat-grid{grid-template-columns:repeat(2,1fr) !important;}
   .stat-box b{font-size:19px !important;}
   .stat-box span{font-size:13.5px !important;}
+
+  /* 입력칸이 화면 밖으로 나가지 않게 */
+  input,select,textarea{max-width:100%;min-width:0;}
+  .an-input input,.search-row input{flex:1 1 140px;min-width:0;}
+
+  /* 오늘 뜨는 채널: 탭·필터 버튼 축소 */
+  .tabs button,.tab{font-size:14px !important;padding:8px 14px !important;}
+  .fbtn{font-size:13px !important;padding:6px 12px !important;}
+  .flabel{font-size:12.5px !important;}
+
+  /* 순위 목록(인기 영상·쇼츠): 제목이 세로로 깨지지 않게 재배치 */
+  .rank-item{flex-wrap:wrap;gap:10px !important;padding:14px 4px !important;}
+  .rank-no{width:24px !important;font-size:16px !important;}
+  .rank-thumb{width:44px !important;height:44px !important;}
+  .rank-thumb.video{width:96px !important;height:54px !important;}
+  .rank-main{flex:1 1 160px !important;min-width:160px !important;}
+  .rank-main .name{font-size:15.5px !important;}
+  .rank-main .sub{font-size:12.5px !important;}
+  .rank-right{margin-left:auto;}
+  .rank-right b{font-size:16px !important;}
+  .rank-right .lbl{font-size:12px !important;}
+
+  /* 뜨는 채널: 빈 공간 대신 미리보기 영상 노출(옆으로 쓸어넘기기) */
+  .ch-videos{display:flex !important;width:100% !important;flex-basis:100%;overflow-x:auto;gap:6px;-webkit-overflow-scrolling:touch;padding-bottom:4px;}
+  .ch-videos a{width:76px !important;height:135px !important;}
 }
