@@ -342,7 +342,7 @@
   function renderVerdictCard(vid, a) {
     var host = document.getElementById("an-res") || document.body;
     var old = document.getElementById("ib-verdict-card"); if (old) old.remove();
-    var oldP = document.getElementById("ib-plan-wrap"); if (oldP) oldP.remove();
+    [].slice.call(document.querySelectorAll('[id^="ib-plan-wrap"]')).forEach(function (x) { try { x.remove(); } catch (e) {} });
     if (!a || !a.verdict_label) return;
     window.__ibAnalysis = a; window.__ibVid = vid; window.__ibPlan = null;
     var card = document.createElement("div");
@@ -367,22 +367,48 @@
     // [통합 1단계] 후킹 박스를 결론 카드 바로 아래로 이동
     try { var hkBox = document.getElementById("hk-box"); if (hkBox) host.insertBefore(hkBox, card.nextSibling); } catch (e) {}
   }
-  window.__ibMakePlan = function (info) { runPlan(info && info.title ? { title: info.title, oneline: info.oneline || "" } : 0, "", false); };
+  function planWrapId(dir) { return "ib-plan-wrap-" + String((dir && dir.title) || "").replace(/[^0-9A-Za-z가-힣]/g, "").slice(0, 40); }
+  async function fetchTranscriptSilent() {
+    if (!lastVideoId || lastTranscript) return;
+    try {
+      const { data } = await sb.auth.getSession();
+      const token = data && data.session ? data.session.access_token : "";
+      const r = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ feature: "transcript", action: "transcript", video_url: "https://www.youtube.com/watch?v=" + lastVideoId, model_pref: modelPref() }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j.ok && j.transcript) {
+        lastTranscript = j.transcript;
+        try { renderTranscript(j.transcript, j.model); $id("tr-res").className = "tr-res show"; } catch (e) {}
+      }
+    } catch (e) {}
+  }
+  window.__ibMakePlan = function (info) { runPlan(info && info.title ? { title: info.title, oneline: info.oneline || "", anchor: info.anchor || null } : 0, "", false); };
   async function runPlan(di, ending, force, trMode) {
     var a = window.__ibAnalysis, vid = window.__ibVid;
     if (!a || !vid) return;
     var dir = (di && typeof di === "object") ? di : ((Array.isArray(a.directions) && (a.directions[di] || a.directions[0])) || null);
     if (!dir) return;
     var card = document.getElementById("ib-verdict-card");
-    var wrap = document.getElementById("ib-plan-wrap");
-    if (!wrap) { wrap = document.createElement("div"); wrap.id = "ib-plan-wrap"; var planAnchor = document.getElementById("hk-box") || card; if (planAnchor && planAnchor.parentNode) planAnchor.parentNode.insertBefore(wrap, planAnchor.nextSibling); else return; }
+    var wid = planWrapId(dir);
+    var wrap = document.getElementById(wid);
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.id = wid;
+      wrap.style.margin = "10px 0";
+      var anchorEl = (di && typeof di === "object" && di.anchor && di.anchor.parentNode) ? di.anchor : null;
+      if (anchorEl) anchorEl.parentNode.insertBefore(wrap, anchorEl.nextSibling);
+      else { var planAnchor = document.getElementById("hk-box") || card; if (planAnchor && planAnchor.parentNode) planAnchor.parentNode.insertBefore(wrap, planAnchor.nextSibling); else return; }
+    }
     function planLoad(msg) { wrap.innerHTML = "<div style='background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:70px 20px;margin-bottom:13px;min-height:300px;text-align:center;color:#6366f1;font-weight:700;font-size:14.5px'>" + msg + "<div style='font-size:12px;color:#94a3b8;font-weight:600;margin-top:10px'>여기 이 자리에 기획안이 만들어집니다 — 화면을 움직이지 않으셔도 돼요</div></div>"; }
     wrap.scrollIntoView({ behavior: "smooth", block: "start" });
     // [자동 재료 수집] 대본이 아직 없으면 기계가 먼저 자동으로 따온다 (수강생이 순서를 몰라도 됨)
     var trSend = trMode === "off" ? "" : ((typeof trTextTimed === "function" && trTextTimed()) || (typeof trText === "function" && trText()) || "");
     if (trMode !== "off" && !trSend && typeof runTranscript === "function") {
       planLoad("🥣 재료를 모으는 중.. (영상 대본을 자동으로 추출하고 있어요)");
-      try { await runTranscript(); } catch (e) {}
+      try { await fetchTranscriptSilent(); } catch (e) {}
       trSend = (typeof trTextTimed === "function" && trTextTimed()) || (typeof trText === "function" && trText()) || "";
     }
     window.__ibTrUsed = !!trSend;
@@ -411,7 +437,7 @@
     }
   }
   function renderPlan(p, dir, di) {
-    var wrap = document.getElementById("ib-plan-wrap"); if (!wrap) return;
+    var wrap = document.getElementById(planWrapId(dir)); if (!wrap) return;
     var esc = escapeHtml;
     var tlRows = (p.timeline || []).map(function (s, i) {
       return "<tr>"
@@ -459,15 +485,15 @@
       + (p.length_sec ? "<div style='font-size:12.5px;color:#64748b;margin-top:9px'>⏱️ 예상 길이: 약 " + esc(String(p.length_sec)) + "초</div>" : "")
       + (Array.isArray(p.title_ideas) && p.title_ideas.length ? "<div style='font-size:13px;font-weight:800;color:#312e81;margin-top:11px'>✏️ 제목 후보</div><div style='font-size:13px;color:#334155;line-height:1.7'>" + p.title_ideas.map(function (x) { return "· " + esc(x); }).join("<br>") + "</div>" : "")
       + (Array.isArray(p.hashtags) && p.hashtags.length ? "<div style='font-size:12.5px;color:#2563eb;margin-top:7px'>" + p.hashtags.map(function (x) { x = String(x); return esc(x.indexOf("#") === 0 ? x : "#" + x); }).join(" ") + "</div>" : "")
-      + "<div style='margin-top:13px'><button type='button' id='ib-plan-copy' style='" + btnS + "background:#6366f1;color:#fff'>📋 전체 복사</button><button type='button' id='ib-plan-dl' style='" + btnS + "background:#eef2ff;color:#312e81'>📄 기획안.txt 저장</button><button type='button' id='ib-plan-redo' style='" + btnS + "background:#f1f5f9;color:#475569'>🔄 다시 만들기</button></div>" + (isAdm ? "<div style='margin-top:8px'><span style='font-size:11px;color:#94a3b8'>비교(관리자): </span><button type='button' id='ib-plan-tron' style='font-family:inherit;font-size:12px;font-weight:700;border:1.5px solid #e2e8f0;background:#fff;color:#475569;border-radius:999px;padding:4px 11px;margin-right:6px;cursor:pointer'>대본 포함 버전</button><button type='button' id='ib-plan-troff' style='font-family:inherit;font-size:12px;font-weight:700;border:1.5px solid #e2e8f0;background:#fff;color:#475569;border-radius:999px;padding:4px 11px;cursor:pointer'>대본 제외 버전</button>" + ((typeof trText === "function" && trText()) ? "" : " <span style='font-size:11px;color:#b45309'>※ 대본 포함 버전은 먼저 대본 따기를 실행해야 합니다</span>") + "</div>" : "")
+      + "<div style='margin-top:13px'><button type='button' class='ib-plan-copy' style='" + btnS + "background:#6366f1;color:#fff'>📋 전체 복사</button><button type='button' class='ib-plan-dl' style='" + btnS + "background:#eef2ff;color:#312e81'>📄 기획안.txt 저장</button><button type='button' class='ib-plan-redo' style='" + btnS + "background:#f1f5f9;color:#475569'>🔄 다시 만들기</button></div>" + (isAdm ? "<div style='margin-top:8px'><span style='font-size:11px;color:#94a3b8'>비교(관리자): </span><button type='button' class='ib-plan-tron' style='font-family:inherit;font-size:12px;font-weight:700;border:1.5px solid #e2e8f0;background:#fff;color:#475569;border-radius:999px;padding:4px 11px;margin-right:6px;cursor:pointer'>대본 포함 버전</button><button type='button' class='ib-plan-troff' style='font-family:inherit;font-size:12px;font-weight:700;border:1.5px solid #e2e8f0;background:#fff;color:#475569;border-radius:999px;padding:4px 11px;cursor:pointer'>대본 제외 버전</button>" + ((typeof trText === "function" && trText()) ? "" : " <span style='font-size:11px;color:#b45309'>※ 대본 포함 버전은 먼저 대본 따기를 실행해야 합니다</span>") + "</div>" : "")
       + "<div style='margin-top:6px;font-size:11px;color:#94a3b8'>※ AI 참고 의견입니다. 소스는 사용권을 꼭 확인하세요.</div>"
       + "</div>";
     [].slice.call(wrap.querySelectorAll(".ib-end-btn")).forEach(function (b) { b.addEventListener("click", function () { runPlan(di, b.getAttribute("data-end"), false); }); });
-    var cp = document.getElementById("ib-plan-copy"); if (cp) cp.addEventListener("click", function () { try { navigator.clipboard.writeText(planText(p, dir)); cp.textContent = "✅ 복사됨"; setTimeout(function () { cp.textContent = "📋 전체 복사"; }, 1500); } catch (e) {} });
-    var dl = document.getElementById("ib-plan-dl"); if (dl) dl.addEventListener("click", function () { var blob = new Blob([planText(p, dir)], { type: "text/plain;charset=utf-8" }); var u = URL.createObjectURL(blob); var aa = document.createElement("a"); aa.href = u; aa.download = "기획안_" + (window.__ibVid || "video") + ".txt"; aa.click(); setTimeout(function () { URL.revokeObjectURL(u); }, 3000); });
-    var rd = document.getElementById("ib-plan-redo"); if (rd) rd.addEventListener("click", function () { runPlan(di, "", true); });
-    var tOn = document.getElementById("ib-plan-tron"); if (tOn) tOn.addEventListener("click", function () { runPlan(di, "", false, "on"); });
-    var tOff = document.getElementById("ib-plan-troff"); if (tOff) tOff.addEventListener("click", function () { runPlan(di, "", false, "off"); });
+    var cp = wrap.querySelector(".ib-plan-copy"); if (cp) cp.addEventListener("click", function () { try { navigator.clipboard.writeText(planText(p, dir)); cp.textContent = "✅ 복사됨"; setTimeout(function () { cp.textContent = "📋 전체 복사"; }, 1500); } catch (e) {} });
+    var dl = wrap.querySelector(".ib-plan-dl"); if (dl) dl.addEventListener("click", function () { var blob = new Blob([planText(p, dir)], { type: "text/plain;charset=utf-8" }); var u = URL.createObjectURL(blob); var aa = document.createElement("a"); aa.href = u; aa.download = "기획안_" + (window.__ibVid || "video") + ".txt"; aa.click(); setTimeout(function () { URL.revokeObjectURL(u); }, 3000); });
+    var rd = wrap.querySelector(".ib-plan-redo"); if (rd) rd.addEventListener("click", function () { runPlan(di, "", true); });
+    var tOn = wrap.querySelector(".ib-plan-tron"); if (tOn) tOn.addEventListener("click", function () { runPlan(di, "", false, "on"); });
+    var tOff = wrap.querySelector(".ib-plan-troff"); if (tOff) tOff.addEventListener("click", function () { runPlan(di, "", false, "off"); });
     try { wrap.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) {}
   }
 
@@ -857,6 +883,6 @@
     renderFooter();
   })();
 </script>
-<script src="assets/js/tools-addon.js?v=20260801m"></script>
+<script src="assets/js/tools-addon.js?v=20260802a"></script>
 </body>
 </html>
