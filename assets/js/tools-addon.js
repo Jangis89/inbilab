@@ -155,7 +155,7 @@
       var orig = t.textContent;
       t.textContent = "⏳ 기획안 만드는 중… 화면 아래로 이동합니다";
       setTimeout(function () { t.textContent = orig; }, 4000);
-      window.__ibMakePlan({ title: reg.strategy || reg.kind || "선택 전략", oneline: parts.join(" · ") });
+      window.__ibMakePlan({ title: reg.strategy || reg.kind || "선택 전략", oneline: parts.join(" · "), anchor: t.parentNode });
     });
     window.__ibRunHook = runHook;
     document.getElementById("btn-hk").addEventListener("click", runHook);
