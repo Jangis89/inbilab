@@ -235,10 +235,10 @@
         <h3>응용 · ✍️ 벤치마킹 대본 만들기</h3>
         <div class="sc-desc">분석한 영상의 성공 공식을 빌려서, 내가 정한 다른 주제로 새 대본을 만들어 드립니다.</div>
         <div class="sc-input">
-          <input id="sc-topic" placeholder="원하는 새 소재 (비워두면 AI가 제안합니다)" onkeydown="if(event.key==='Enter')runScript()">
-          <button id="btn-sc" onclick="runScript()">대본 만들기</button>
+          <input id="sc-topic" style="display:none" placeholder="원하는 새 소재 (비워두면 AI가 제안합니다)" onkeydown="if(event.key==='Enter')runScript()">
+          <button id="btn-sc" onclick="runScript()">인비랩 AI 벤치마킹 대본 생성하기</button>
         </div>
-        <div class="an-load" id="sc-load" style="margin-top:12px;"><div class="spin"></div><span id="sc-load-txt">AI가 대본을 쓰고 있습니다…</span></div>
+        <div class="an-load" id="sc-load" style="margin-top:12px;"><div class="spin"></div><span id="sc-load-txt">소스 영상을 찾아 AI가 직접 보고 대본을 쓰고 있습니다…</span></div>
         <div class="an-err" id="sc-err" style="margin-top:12px;"></div>
         <div class="sc-res" id="sc-res">
           <div class="sc-title">
@@ -755,8 +755,8 @@
     btn.disabled = true;
     load.className = "an-load show";
     let sec = 0;
-    $id("sc-load-txt").textContent = "AI가 대본을 쓰고 있습니다… (0초)";
-    scTimer = setInterval(() => { sec++; $id("sc-load-txt").textContent = "AI가 대본을 쓰고 있습니다… (" + sec + "초)"; }, 1000);
+    $id("sc-load-txt").textContent = "소스 영상을 찾아 AI가 직접 보고 대본을 쓰고 있습니다… (0초)";
+    scTimer = setInterval(() => { sec++; $id("sc-load-txt").textContent = "소스 영상을 찾아 AI가 직접 보고 대본을 쓰고 있습니다… (" + sec + "초)"; }, 1000);
     try {
       const { data } = await sb.auth.getSession();
       const token = data && data.session ? data.session.access_token : "";
@@ -771,6 +771,8 @@
         err.className = "an-err show";
       } else {
         lastScript = j.script;
+        window.__ibScSrc = j.source || null;
+        window.__ibScAlts = j.alternates || [];
         renderScript(j.script);
         $id("sc-meta").textContent += " · " + modelLabel(j.model, "작성");
         $id("sc-res").className = "sc-res show";
@@ -787,6 +789,22 @@
   function renderScript(s) {
     $id("sc-title").textContent = s.title || s.topic || "제목 없음";
     $id("sc-meta").textContent = "소재: " + (s.topic || "-") + " · 예상 길이 약 " + (s.target_length_sec || "?") + "초";
+    var srcHost = document.getElementById("sc-source");
+    if (!srcHost) { srcHost = document.createElement("div"); srcHost.id = "sc-source"; var stEl = $id("sc-title"); if (stEl && stEl.parentNode) stEl.parentNode.insertBefore(srcHost, stEl); }
+    var ss = window.__ibScSrc;
+    if (ss) {
+      var altHtml = (window.__ibScAlts || []).map(function (a) { return '<a href="' + a.url + '" target="_blank" rel="noopener" style="font-size:12px;color:#2563eb;text-decoration:none;margin-right:10px">예비 후보: ' + escapeHtml(String(a.title || "").slice(0, 40)) + '</a>'; }).join("");
+      srcHost.innerHTML = '<div style="display:flex;gap:12px;align-items:center;background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:12px;padding:11px 13px;margin-bottom:12px;flex-wrap:wrap">'
+        + '<img src="' + ss.thumb + '" style="width:104px;border-radius:8px" onerror="this.style.display=&quot;none&quot;">'
+        + '<div style="flex:1;min-width:220px"><div style="font-size:12px;font-weight:800;color:#6d28d9">🎬 AI가 직접 보고 대본을 쓴 소스 영상 · ' + (ss.duration_sec || "?") + '초</div>'
+        + '<div style="font-size:13.5px;font-weight:700;color:#1e293b;margin:2px 0">' + escapeHtml(ss.title || "") + '</div>'
+        + '<a href="' + ss.url + '" target="_blank" rel="noopener" style="font-size:12.5px;color:#2563eb;font-weight:700;text-decoration:none">▶ 유튜브에서 이 영상 열기</a>'
+        + (altHtml ? '<div style="margin-top:3px">' + altHtml + '</div>' : "") + '</div></div>';
+    } else { srcHost.innerHTML = ""; }
+    
+    
+    
+    
     const lines = (s.lines || []).slice();
     $id("sc-lines").innerHTML = lines.map((l, i) => {
       let mat = "";
@@ -803,6 +821,7 @@
         <div class="lt">
           <div class="tx">${escapeHtml(l.text || "")}</div>
           ${l.scene ? `<div class="sc">${escapeHtml(l.scene)}</div>` : ""}
+          ${l.src_time ? `<div class="sc" style="color:#6d28d9;font-weight:700">🎬 소스 영상 ${escapeHtml(l.src_time)} 구간 사용</div>` : ""}
           ${mat}
         </div>
       </div>`;
