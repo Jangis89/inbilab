@@ -201,8 +201,9 @@ body.has-sidebar { padding-left: 244px; }
   img,video,iframe{max-width:100%;}
   table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;}
   body{overflow-wrap:anywhere;}
-  .list-head .h-ch{min-width:0;}
-  .list-head .h-stats,.ch-row .h-stats{width:auto;}
+  .list-head{display:none !important;}
+  .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .ch-row .h-stats{width:auto !important;text-align:left !important;}
   .ch-row{flex-wrap:wrap;row-gap:6px;}
   .page,.wrap,.container{padding-left:14px;padding-right:14px;}
 }
