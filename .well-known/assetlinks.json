@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "kr.ai.inbilab.twa",
+        "sha256_cert_fingerprints": ["6D:42:8D:3A:26:0C:67:10:CA:ED:98:B7:CE:7F:CD:50:F3:FD:DA:46:42:7E:4F:D2:57:E3:60:35:55:AD:51:3E"]
+      }
+    }]
