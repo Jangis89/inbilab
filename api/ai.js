@@ -904,6 +904,8 @@ module.exports = async (req, res) => {
         return;
       }
       const topic = String(body.topic || "").trim().slice(0, 200);
+      const excl = {};
+      try { (Array.isArray(body.exclude) ? body.exclude : []).slice(0, 30).forEach(function (id) { excl[String(id)] = true; }); } catch (e) {}
 
       // [B방식] 실제 소스 영상을 찾아 AI가 직접 보고 대본 작성 — 실패하면 아래 기존 방식으로 자동 대체
       try {
@@ -928,7 +930,7 @@ module.exports = async (req, res) => {
           if (sr && Array.isArray(sr.items)) {
             for (const it of sr.items) {
               const cid = it && it.id && it.id.videoId;
-              if (cid && !cands.some(function (c) { return c.id === cid; })) cands.push({ id: cid, title: deEnt((it.snippet && it.snippet.title) || ""), channel: deEnt((it.snippet && it.snippet.channelTitle) || "") });
+              if (cid && !excl[cid] && !cands.some(function (c) { return c.id === cid; })) cands.push({ id: cid, title: deEnt((it.snippet && it.snippet.title) || ""), channel: deEnt((it.snippet && it.snippet.channelTitle) || "") });
             }
           }
         }
