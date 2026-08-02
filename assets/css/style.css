@@ -237,6 +237,7 @@ body.has-sidebar { padding-left: 244px; }
   .ch-head .handle{font-size:13.5px !important;}
   .ch-head > div{min-width:0;flex-wrap:wrap;}
   .ch-head .btn{flex:0 1 auto;}
+  .ch-head > div:last-child{flex-basis:100% !important;justify-content:flex-start;}
   .stat-grid{grid-template-columns:repeat(2,1fr) !important;}
   .stat-box b{font-size:19px !important;}
   .stat-box span{font-size:13.5px !important;}
