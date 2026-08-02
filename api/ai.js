@@ -570,6 +570,7 @@ module.exports = async (req, res) => {
       // [시청자 반응] 상위 댓글을 분석 재료로 (유튜브 무료 한도 1점, 실패해도 분석은 진행)
       let cmTxt = "";
       let cmCnt = 0;
+      let cmTop = null;
       try {
         const cj = await ytApi("commentThreads", { part: "snippet", videoId: vid, maxResults: 100, order: "relevance", textFormat: "plainText" });
         if (cj && Array.isArray(cj.items)) {
@@ -577,7 +578,7 @@ module.exports = async (req, res) => {
             const s = it && it.snippet && it.snippet.topLevelComment && it.snippet.topLevelComment.snippet;
             return s ? { t: String(s.textDisplay || "").replace(/\s+/g, " ").slice(0, 120), l: Number(s.likeCount || 0) } : null;
           }).filter(Boolean).sort(function (a, b) { return b.l - a.l; }).slice(0, 30);
-          if (cs.length) cmCnt = cs.length;
+          if (cs.length) { cmCnt = cs.length; cmTop = cs[0]; }
           if (cs.length) cmTxt = "\n\n[참고: 이 영상의 시청자 댓글 상위 " + cs.length + "개 (좋아요순)]\n" + cs.map(function (c) { return "- (좋아요 " + c.l + ") " + c.t; }).join("\n");
         }
       } catch (e) {}
@@ -621,6 +622,7 @@ module.exports = async (req, res) => {
           : "사용권 확인이 필요합니다";
       } catch (e) {}
       analysis.comment_source_count = cmCnt;
+      analysis.top_comment = cmTop ? { text: cmTop.t, likes: cmTop.l } : null;
       analysis.prompt_ver = ANALYZE_PROMPT_VER;
       if (!isAdmin) await recordUsage(user.id, feature, token);
       res.status(200).json({ ok: true, video_id: vid, analysis: analysis, model: r.model });
