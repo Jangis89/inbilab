@@ -350,10 +350,12 @@
     card.style.cssText = "background:#eef2ff;border:1.5px solid #c7d2fe;border-radius:14px;padding:16px 18px;margin-bottom:13px";
     var reasons = (a.verdict_reasons || []).slice(0, 2).map(function (x) { return "<li style='margin:2px 0'>" + escapeHtml(x) + "</li>"; }).join("");
     var caution = a.verdict_caution ? "<div style='margin-top:7px;font-size:13.5px;color:#b45309'>⚠️ " + escapeHtml(a.verdict_caution) + "</div>" : "";
-    var react = a.audience_reaction ? "<div style='margin-top:7px;font-size:13.5px;color:#0f766e'>💬 댓글에서 많이 나온 반응: " + escapeHtml(a.audience_reaction) + "</div>" : "";
+    var cmN = Number(a.comment_source_count || 0);
+    var cmLabel = cmN > 0 ? "💬 인기댓글 " + cmN + "개 반응 요약: " : "💬 댓글 반응 요약: ";
+    var react = a.audience_reaction ? "<div style='margin-top:7px;font-size:13.5px;color:#0f766e'>" + cmLabel + escapeHtml(a.audience_reaction) + "</div>" : "";
     var rights = "";
-    if (a.rights_notice) {
-      var warn = a.rights_notice.indexOf("주의") === 0;
+    if (a.rights_notice && a.rights_notice.indexOf("주의") === 0) {
+      var warn = true;
       rights = "<div style='display:inline-block;margin-top:8px;font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;background:" + (warn ? "#fef3c7;color:#92400e" : "#e2e8f0;color:#475569") + "'>" + escapeHtml(a.rights_notice) + "</div>";
     }
     var dirsHtml = "";
@@ -883,6 +885,6 @@
     renderFooter();
   })();
 </script>
-<script src="assets/js/tools-addon.js?v=20260802a"></script>
+<script src="assets/js/tools-addon.js?v=20260802b"></script>
 </body>
 </html>
