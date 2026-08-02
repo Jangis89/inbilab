@@ -135,14 +135,14 @@
   .sc-dl button.main{background:#7c3aed;color:#fff;border-color:#7c3aed;}
 
     /* [1단계 한 상자 + 시각 위계 정리] */
-    #ib-stage1{background:#fff;border:1.5px solid #c7d2fe;border-radius:16px;padding:16px 17px 8px;margin-bottom:14px;}
-    #ib-stage1 .res-top{border:none;padding:0 0 12px;margin-bottom:10px;border-bottom:1px solid #eef2ff;background:transparent;}
-    #ib-stage1 .res-card{padding:9px 12px;background:#fafbfc;}
-    #ib-stage1 .res-card h3{font-size:11.5px;color:#94a3b8;margin:0 0 3px;}
-    #ib-stage1 .res-card .v{font-size:12.5px;font-weight:600;color:#64748b;line-height:1.55;}
+    #ib-stage1{background:#fff;border:1.5px solid #c7d2fe;border-radius:16px;padding:16px 17px 13px;margin-bottom:14px;}
+    #ib-stage1 .res-top{border:none;background:transparent;padding:0 0 12px;margin-bottom:12px;border-bottom:1px solid #e8edf7;}
+    #ib-stage1 .res-card{padding:9px 12px;background:#f8fafc;border:1px solid #eef1f6;}
+    #ib-stage1 .res-card h3{font-size:11.5px;color:#8b96a5;margin:0 0 3px;}
+    #ib-stage1 .res-card .v{font-size:12.5px;font-weight:600;color:#5b6a7c;line-height:1.55;}
     #ib-stage1 .kw{font-size:11.5px;padding:3px 10px;color:#64748b;}
-    #ib-stage1 .tipbox{font-size:13px;}
-    #ib-stage1 #ib-verdict-card{margin-bottom:4px !important;}
+    #ib-stage1 .tipbox{font-size:13px;padding:12px 15px;margin:12px 0;}
+    #ib-stage1 #ib-verdict-card{margin:0 !important;}
     </style>
 </head>
 <body>
@@ -193,7 +193,7 @@
         <div class="res-card"><h3>🎬 콘텐츠 형식</h3><div class="v" id="r-format"></div></div>
         <div class="res-card"><h3>🎙️ 음성 종류</h3><div class="v" id="r-voice"></div></div>
         <div class="res-card"><h3>✂️ 편집 난이도</h3><div class="v"><span class="stars" id="r-diff"></span> <span id="r-diffnum"></span></div></div>
-        <div class="res-card"><h3>🙈 무출연 재현 가능성</h3><div class="v" id="r-freason"></div></div>
+        <div class="res-card"><h3>🛠️ 이렇게 만들면 돼요</h3><div class="v" id="r-freason"></div></div>
         <div class="res-card"><h3>📦 필요한 소스</h3><div class="v" id="r-src"></div></div>
       </div>
 
@@ -552,8 +552,8 @@
     $id("r-cat").textContent = a.category || "분류 없음";
     const fg = String(a.faceless_grade || "").replace(/\s/g, "");
     const faceEl = $id("r-face");
-    faceEl.textContent = fg ? "무출연 재현 " + fg : "";
-    faceEl.className = "t-face f-" + (["가능", "부분가능", "어려움"].includes(fg) ? fg : "부분가능");
+    faceEl.textContent = "";
+    faceEl.style.display = "none";
     $id("r-topic").textContent = a.topic || "";
     $id("r-sum").textContent = a.summary || "";
     $id("r-kw").innerHTML = (a.keywords || []).map((k) => `<span class="kw">${escapeHtml(k)}</span>`).join("") || "-";
