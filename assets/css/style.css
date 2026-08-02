@@ -266,4 +266,10 @@ body.has-sidebar { padding-left: 244px; }
   /* 뜨는 채널: 빈 공간 대신 미리보기 영상 노출(옆으로 쓸어넘기기) */
   .ch-videos{display:flex !important;width:100% !important;flex-basis:100%;overflow-x:auto;gap:6px;-webkit-overflow-scrolling:touch;padding-bottom:4px;}
   .ch-videos a{width:76px !important;height:135px !important;}
+
+  /* 전 페이지 공통: 페이지 제목·아이콘·가격 크기 정돈 */
+  h1{font-size:23px !important;}
+  .page-desc{font-size:14.5px !important;}
+  .icon,.qicon{font-size:26px !important;}
+  .price{font-size:26px !important;}
 }
