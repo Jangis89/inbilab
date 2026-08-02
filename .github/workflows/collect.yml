@@ -40,4 +40,12 @@ jobs:
 
       - name: 생존 신고 (healthchecks.io)
         if: success()
-        run: curl -fsS -m 10 --retry 3 "${{ secrets.HEALTHCHECK_URL }}" > /dev/null
+        continue-on-error: true   # 생존 신고가 실패해도 수집 자체는 성공으로 표시
+        env:
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+        run: |
+          if [ -n "$HEALTHCHECK_URL" ]; then
+            curl -fsS -m 10 --retry 3 "$HEALTHCHECK_URL" > /dev/null
+          else
+            echo "HEALTHCHECK_URL 미설정 - 생존 신고 건너뜀"
+          fi
