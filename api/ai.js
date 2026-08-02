@@ -133,9 +133,9 @@ const ANALYZE_PROMPT = `당신은 유튜브 쇼츠 제작 전문 분석가입니
   "verdict": "1 | 2 | 3 중 숫자 하나 (초보 수강생의 벤치마킹 기준: 1=구조를 참고해도 좋습니다, 2=많이 바꿔서 활용해야 합니다, 3=아이디어만 참고하는 편이 좋습니다)",
   "verdict_label": "위 세 문구 중 해당하는 문구를 토씨 하나 바꾸지 말고 그대로",
   "verdict_reasons": ["그렇게 판단한 이유 2개 (각각 한 문장, 초등학생도 이해할 쉬운 말)"],
-  "verdict_caution": "가장 큰 주의점 한 문장 (저작권, 소재 구하기, 난이도 중 실제로 가장 걸리는 것)"
+  "verdict_caution": "가장 신경 쓸 점 한 문장 — 겁주는 경고 말투 금지, 부드러운 안내 말투로 (예: 다른 사람 영상을 쓸 때는 출처를 한 번 확인하면 더 안전해요)"
 }`;
-const ANALYZE_PROMPT_VER = "v4";
+const ANALYZE_PROMPT_VER = "v5";
 
 const PLAN_PROMPT_VER = "p3";
 const PLAN_PROMPT = `당신은 유튜브 쇼츠 기획 전문가입니다. 아래 재료([영상 분석 결과], 있으면 [영상에서 추출한 대본·자막]과 [후킹 분석 참고])로, 초보 수강생이 그대로 따라 만들 수 있는 초 단위 타임라인 기획안을 만드세요. 원본을 그대로 베끼는 방식은 금지 — 자기만의 해석·해설·구성이 들어간 2차 창작이어야 합니다. 자막에는 영상에 실제로 넣을 수 있는 사실만 쓰세요.
@@ -569,6 +569,7 @@ module.exports = async (req, res) => {
 
       // [시청자 반응] 상위 댓글을 분석 재료로 (유튜브 무료 한도 1점, 실패해도 분석은 진행)
       let cmTxt = "";
+      let cmCnt = 0;
       try {
         const cj = await ytApi("commentThreads", { part: "snippet", videoId: vid, maxResults: 100, order: "relevance", textFormat: "plainText" });
         if (cj && Array.isArray(cj.items)) {
@@ -576,6 +577,7 @@ module.exports = async (req, res) => {
             const s = it && it.snippet && it.snippet.topLevelComment && it.snippet.topLevelComment.snippet;
             return s ? { t: String(s.textDisplay || "").replace(/\s+/g, " ").slice(0, 120), l: Number(s.likeCount || 0) } : null;
           }).filter(Boolean).sort(function (a, b) { return b.l - a.l; }).slice(0, 30);
+          if (cs.length) cmCnt = cs.length;
           if (cs.length) cmTxt = "\n\n[참고: 이 영상의 시청자 댓글 상위 " + cs.length + "개 (좋아요순)]\n" + cs.map(function (c) { return "- (좋아요 " + c.l + ") " + c.t; }).join("\n");
         }
       } catch (e) {}
@@ -618,6 +620,7 @@ module.exports = async (req, res) => {
           ? "주의가 필요한 소재입니다 (중계·방송·영화·음원은 사용권 문제가 잦습니다)"
           : "사용권 확인이 필요합니다";
       } catch (e) {}
+      analysis.comment_source_count = cmCnt;
       analysis.prompt_ver = ANALYZE_PROMPT_VER;
       if (!isAdmin) await recordUsage(user.id, feature, token);
       res.status(200).json({ ok: true, video_id: vid, analysis: analysis, model: r.model });
