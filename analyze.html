@@ -237,6 +237,7 @@
         <div class="sc-input">
           <input id="sc-topic" style="display:none" placeholder="원하는 새 소재 (비워두면 AI가 제안합니다)" onkeydown="if(event.key==='Enter')runScript()">
           <button id="btn-sc" onclick="runScript()">인비랩 AI 벤치마킹 대본 생성하기</button>
+          <button id="btn-sc-retry" onclick="runScript(true)" style="display:none;background:#fff;color:#6d28d9;border:2px solid #a78bfa;border-radius:12px;padding:12px 18px;font-weight:800;cursor:pointer;font-size:14px;margin-left:8px">🔄 다른 영상 찾기</button>
         </div>
         <div class="an-load" id="sc-load" style="margin-top:12px;"><div class="spin"></div><span id="sc-load-txt">소스 영상을 찾아 AI가 직접 보고 대본을 쓰고 있습니다…</span></div>
         <div class="an-err" id="sc-err" style="margin-top:12px;"></div>
@@ -745,8 +746,11 @@
   // ---------- 대본 만들기 ----------
   let scTimer = null;
 
-  async function runScript() {
+  async function runScript(retry) {
     if (!lastAnalysis) return;
+    if (!retry) window.__ibScUsed = [];
+    window.__ibScUsed = window.__ibScUsed || [];
+    var rb0 = $id("btn-sc-retry"); if (rb0) rb0.disabled = true;
     const btn = $id("btn-sc");
     const load = $id("sc-load");
     const err = $id("sc-err");
@@ -763,7 +767,7 @@
       const r = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
-        body: JSON.stringify({ feature: "script_gen", action: "script", analysis: lastAnalysis, topic: $id("sc-topic").value.trim(), model_pref: modelPref() }),
+        body: JSON.stringify({ feature: "script_gen", action: "script", analysis: lastAnalysis, topic: $id("sc-topic").value.trim(), model_pref: modelPref(), exclude: window.__ibScUsed }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) {
@@ -774,6 +778,8 @@
         window.__ibScSrc = j.source || null;
         window.__ibScAlts = j.alternates || [];
         window.__ibScMiss = !!j.source_missing;
+        if (j.source && j.source.video_id && window.__ibScUsed.indexOf(j.source.video_id) < 0) window.__ibScUsed.push(j.source.video_id);
+        var rbtn = $id("btn-sc-retry"); if (rbtn && j.source) rbtn.style.display = "";
         renderScript(j.script);
         $id("sc-meta").textContent += " · " + modelLabel(j.model, "작성");
         $id("sc-res").className = "sc-res show";
@@ -785,6 +791,7 @@
     clearInterval(scTimer);
     load.className = "an-load";
     btn.disabled = false;
+    if (rb0) rb0.disabled = false;
   }
 
   function renderScript(s) {
