@@ -376,7 +376,7 @@
     var card = document.getElementById("ib-verdict-card");
     var wrap = document.getElementById("ib-plan-wrap");
     if (!wrap) { wrap = document.createElement("div"); wrap.id = "ib-plan-wrap"; var planAnchor = document.getElementById("hk-box") || card; if (planAnchor && planAnchor.parentNode) planAnchor.parentNode.insertBefore(wrap, planAnchor.nextSibling); else return; }
-    function planLoad(msg) { wrap.innerHTML = "<div style='background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:20px;margin-bottom:13px;text-align:center;color:#6366f1;font-weight:700;font-size:14px'>" + msg + "</div>"; }
+    function planLoad(msg) { wrap.innerHTML = "<div style='background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:70px 20px;margin-bottom:13px;min-height:300px;text-align:center;color:#6366f1;font-weight:700;font-size:14.5px'>" + msg + "<div style='font-size:12px;color:#94a3b8;font-weight:600;margin-top:10px'>여기 이 자리에 기획안이 만들어집니다 — 화면을 움직이지 않으셔도 돼요</div></div>"; }
     wrap.scrollIntoView({ behavior: "smooth", block: "start" });
     // [자동 재료 수집] 대본이 아직 없으면 기계가 먼저 자동으로 따온다 (수강생이 순서를 몰라도 됨)
     var trSend = trMode === "off" ? "" : ((typeof trTextTimed === "function" && trTextTimed()) || (typeof trText === "function" && trText()) || "");
@@ -386,6 +386,7 @@
       trSend = (typeof trTextTimed === "function" && trTextTimed()) || (typeof trText === "function" && trText()) || "";
     }
     window.__ibTrUsed = !!trSend;
+    try { wrap.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) {}
     // [후킹 분석 연결] 이미 실행돼 있으면 그 결과도 기획 재료로 사용
     var hookSend = "";
     try { var hkR = document.querySelector("#hk-box .hk-res.show"); if (hkR && hkR.innerText && hkR.innerText.length > 120) hookSend = hkR.innerText.replace(/\s+/g, " ").slice(0, 2500); } catch (e) {}
@@ -426,6 +427,10 @@
     var basisNote = String(p.timeline_basis || "").indexOf("추정") > -1
       ? "<div style='font-size:11.5px;color:#b45309;margin-top:3px'>※ 대본에서 초 단위 시간을 얻지 못해 전체 길이 기준 예상 구간으로 나눴어요.</div>"
       : "";
+    var psyHtml = "";
+    if (p.psychology) psyHtml += "<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-top:8px'><div style='font-size:12px;font-weight:800;color:#0f766e'>🧠 심리 해설 — 시청자 머릿속에서 일어나는 일</div><div style='font-size:13px;color:#334155;margin-top:3px;line-height:1.6'>" + esc(String(p.psychology)) + "</div></div>";
+    if (p.intent) psyHtml += "<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-top:8px'><div style='font-size:12px;font-weight:800;color:#0f766e'>🎯 제작자의 의도 — 이 구성의 노림수</div><div style='font-size:13px;color:#334155;margin-top:3px;line-height:1.6'>" + esc(String(p.intent)) + "</div></div>";
+    if (Array.isArray(p.retention_devices) && p.retention_devices.length) psyHtml += "<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-top:8px'><div style='font-size:12px;font-weight:800;color:#0f766e'>🧲 3초 이후에도 붙잡아두는 장치</div>" + p.retention_devices.map(function (x) { return "<div style='font-size:13px;color:#334155;margin-top:3px'>✓ " + esc(String(x)) + "</div>"; }).join("") + "</div>";
     var srcRows = (p.sources || []).map(function (s) {
       var risky = String(s.risk || "").indexOf("주의") > -1;
       var badge = "<span style='font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;background:" + (risky ? "#fef3c7;color:#92400e" : "#e2e8f0;color:#475569") + "'>" + (risky ? "주의" : "사용권 확인") + "</span>";
@@ -445,7 +450,7 @@
       + "<div style='font-size:12px;font-weight:800;color:#6366f1'>📋 영상 기획안 — " + esc(dir.title || "") + esc(trTag) + "</div>"
       + "<div style='font-size:16px;font-weight:800;color:#1e1b4b;margin-top:3px'>" + esc(p.concept || "") + "</div>"
       + (p.hook ? "<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin-top:10px'><div style='font-size:12px;font-weight:800;color:#0f766e'>⚡ 첫 3초</div><div style='font-size:13.5px;color:#1e293b;margin-top:3px'><b>자막:</b> " + esc(p.hook.caption || "-") + "</div>" + (p.hook.narration ? "<div style='font-size:13px;color:#475569'><b>나레이션:</b> " + esc(p.hook.narration) + "</div>" : "") + "<div style='font-size:12.5px;color:#64748b'><b>화면:</b> " + esc(p.hook.visual || "-") + "</div></div>" : "")
-      + arcHtml
+      + arcHtml + psyHtml
       + "<div style='font-size:13px;font-weight:800;color:#312e81;margin-top:12px'>⏱️ 초 단위 타임라인" + (p.length_sec ? " · 전체 약 " + esc(String(p.length_sec)) + "초" : "") + "</div>" + basisNote
       + "<div style='overflow-x:auto'><table style='border-collapse:collapse;width:100%;margin-top:6px'><tr>" + ["시간", "자막 · 나레이션", "화면 · 편집/소리", "시청 붙잡기"].map(function (hh) { return "<th style='border:1px solid #e2e8f0;background:#f8fafc;padding:6px 9px;font-size:12px;color:#475569'>" + hh + "</th>"; }).join("") + "</tr>" + tlRows + "</table></div>"
       + "<div style='font-size:13px;font-weight:800;color:#312e81;margin-top:12px'>📦 소스 준비표</div>"
@@ -463,6 +468,7 @@
     var rd = document.getElementById("ib-plan-redo"); if (rd) rd.addEventListener("click", function () { runPlan(di, "", true); });
     var tOn = document.getElementById("ib-plan-tron"); if (tOn) tOn.addEventListener("click", function () { runPlan(di, "", false, "on"); });
     var tOff = document.getElementById("ib-plan-troff"); if (tOff) tOff.addEventListener("click", function () { runPlan(di, "", false, "off"); });
+    try { wrap.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) {}
   }
 
   function planText(p, dir) {
@@ -471,6 +477,9 @@
     L.push("콘셉트: " + (p.concept || ""));
     if (p.hook) { L.push(""); L.push("<첫 3초>"); L.push("자막: " + (p.hook.caption || "")); if (p.hook.narration) L.push("나레이션: " + p.hook.narration); L.push("화면: " + (p.hook.visual || "")); }
     if (Array.isArray(p.strategy_arc) && p.strategy_arc.length) { L.push(""); L.push("<전략 흐름>"); p.strategy_arc.forEach(function (x, i) { L.push((["초반", "중반", "후반·엔딩"][i] || "") + ": " + String(x)); }); }
+    if (p.psychology) { L.push(""); L.push("<심리 해설> " + String(p.psychology)); }
+    if (p.intent) { L.push("<제작자의 의도> " + String(p.intent)); }
+    if (Array.isArray(p.retention_devices) && p.retention_devices.length) { L.push("<붙잡아두는 장치>"); p.retention_devices.forEach(function (x) { L.push("- " + String(x)); }); }
     L.push(""); L.push("<초 단위 타임라인" + (p.length_sec ? " · 전체 약 " + p.length_sec + "초" : "") + ">");
     (p.timeline || []).forEach(function (s, i) { L.push((s.time || ("구간" + (i + 1))) + " | 자막: " + (s.caption || "")); if (s.narration) L.push("   나레이션: " + s.narration); L.push("   화면: " + (s.visual || "")); if (s.edit_sound) L.push("   편집/소리: " + s.edit_sound); if (s.hold) L.push("   붙잡기: " + s.hold); });   L.push(""); L.push("<소스 준비표>");
     (p.sources || []).forEach(function (s) { L.push("- [" + (s.time || s.scene || "") + "] " + (s.need || "") + " / 구하기: " + (s.how || "") + " / 대체: " + (s.alt || "") + " / " + (String(s.risk || "").indexOf("주의") > -1 ? "주의" : "사용권 확인")); });
