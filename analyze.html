@@ -133,7 +133,17 @@
   .sc-dl{display:flex;gap:9px;margin-top:14px;flex-wrap:wrap;}
   .sc-dl button{padding:10px 16px;border-radius:10px;border:1.5px solid #ddd6fe;background:#fff;color:#7c3aed;font-size:13.5px;font-weight:800;cursor:pointer;font-family:inherit;}
   .sc-dl button.main{background:#7c3aed;color:#fff;border-color:#7c3aed;}
-</style>
+
+    /* [1단계 한 상자 + 시각 위계 정리] */
+    #ib-stage1{background:#fff;border:1.5px solid #c7d2fe;border-radius:16px;padding:16px 17px 8px;margin-bottom:14px;}
+    #ib-stage1 .res-top{border:none;padding:0 0 12px;margin-bottom:10px;border-bottom:1px solid #eef2ff;background:transparent;}
+    #ib-stage1 .res-card{padding:9px 12px;background:#fafbfc;}
+    #ib-stage1 .res-card h3{font-size:11.5px;color:#94a3b8;margin:0 0 3px;}
+    #ib-stage1 .res-card .v{font-size:12.5px;font-weight:600;color:#64748b;line-height:1.55;}
+    #ib-stage1 .kw{font-size:11.5px;padding:3px 10px;color:#64748b;}
+    #ib-stage1 .tipbox{font-size:13px;}
+    #ib-stage1 #ib-verdict-card{margin-bottom:4px !important;}
+    </style>
 </head>
 <body>
 <div id="site-header"></div>
@@ -161,7 +171,7 @@
     <div class="an-err" id="an-err"></div>
 
     <div class="an-res" id="an-res">
-      <div style="font-size:12px;font-weight:800;color:#94a3b8;margin:2px 0 6px">1단계 · 📊 기본 분석 자료</div>
+      <div style="font-size:16px;font-weight:800;color:#312e81;margin:0 0 11px">1단계 · 📊 기본 분석 자료</div>
       <div class="res-top">
         <img id="r-thumb" src="" alt="">
         <div style="flex:1;min-width:0;">
@@ -222,8 +232,8 @@
       </div>
 
       <div class="sc-box" id="sc-box" style="display:none;">
-        <h3>4단계 · ✍️ 이 포맷으로 대본 만들기</h3>
-        <div class="sc-desc">이 영상의 성공 공식으로 새 대본을 만들어 드립니다.</div>
+        <h3>응용 · ✍️ 벤치마킹 대본 만들기</h3>
+        <div class="sc-desc">분석한 영상의 성공 공식을 빌려서, 내가 정한 다른 주제로 새 대본을 만들어 드립니다.</div>
         <div class="sc-input">
           <input id="sc-topic" placeholder="원하는 새 소재 (비워두면 AI가 제안합니다)" onkeydown="if(event.key==='Enter')runScript()">
           <button id="btn-sc" onclick="runScript()">대본 만들기</button>
@@ -370,6 +380,19 @@
     else host.appendChild(card);
     // [통합 1단계] 후킹 박스를 결론 카드 바로 아래로 이동
     try { var hkBox = document.getElementById("hk-box"); if (hkBox) host.insertBefore(hkBox, card.nextSibling); } catch (e) {}
+    // [1단계 한 상자 묶기] 기본 분석 자료 + 제작 결론을 하나의 상자로
+    try {
+      var wrap1 = document.getElementById("ib-stage1");
+      if (!wrap1) { wrap1 = document.createElement("div"); wrap1.id = "ib-stage1"; host.insertBefore(wrap1, host.firstChild); }
+      var n = wrap1.nextSibling;
+      while (n) {
+        var nx = n.nextSibling;
+        if (n.id === "hk-box" || n.id === "src-box") break;
+        wrap1.appendChild(n);
+        if (n === card) break;
+        n = nx;
+      }
+    } catch (e) {}
   }
   function planWrapId(dir) { return "ib-plan-wrap-" + String((dir && dir.title) || "").replace(/[^0-9A-Za-z가-힣]/g, "").slice(0, 40); }
   async function fetchTranscriptSilent() {
@@ -886,7 +909,7 @@
     await renderHeader("analyze");
     renderFooter();
   })();
-  try { var __tb = document.getElementById("tr-box"), __sc = document.getElementById("sc-box"); if (__tb && __sc && __sc.parentNode) __sc.parentNode.insertBefore(__tb, __sc.nextSibling); } catch (e) {}
+  
 </script>
 <script src="assets/js/tools-addon.js?v=20260802d"></script>
 </body>
