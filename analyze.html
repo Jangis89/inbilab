@@ -365,7 +365,9 @@
       "<ul style='margin:8px 0 0 18px;padding:0;font-size:13.5px;color:#334155;line-height:1.6'>" + reasons + "</ul>" +
       react + topC + caution + rights +
       "<div style='margin-top:6px;font-size:11px;color:#94a3b8'>※ AI 참고 의견입니다. 최종 판단은 직접 해주세요.</div>" + dirsHtml;
-    host.appendChild(card);
+    var __srcB = document.getElementById("src-box");
+    if (__srcB && host.contains(__srcB)) host.insertBefore(card, __srcB);
+    else host.appendChild(card);
     // [통합 1단계] 후킹 박스를 결론 카드 바로 아래로 이동
     try { var hkBox = document.getElementById("hk-box"); if (hkBox) host.insertBefore(hkBox, card.nextSibling); } catch (e) {}
   }
@@ -886,6 +888,6 @@
   })();
   try { var __tb = document.getElementById("tr-box"), __sc = document.getElementById("sc-box"); if (__tb && __sc && __sc.parentNode) __sc.parentNode.insertBefore(__tb, __sc.nextSibling); } catch (e) {}
 </script>
-<script src="assets/js/tools-addon.js?v=20260802c"></script>
+<script src="assets/js/tools-addon.js?v=20260802d"></script>
 </body>
 </html>
