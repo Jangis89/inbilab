@@ -205,10 +205,10 @@ async function geminiUploadAudio(buf, mime) {
   const file = j.file;
   if (!file?.name) throw new Error("Gemini 파일 정보 없음");
 
-  // 3) 처리 완료(ACTIVE) 대기 — 최대 2분
-  for (let i = 0; i < 24; i++) {
+  // 3) 처리 완료(ACTIVE) 대기 — 최대 2분 (1.5초 간격으로 빠르게 확인)
+  for (let i = 0; i < 80; i++) {
     if (file.state === "ACTIVE") return file;
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise(r => setTimeout(r, 1500));
     const g = await fetch(GEMINI_BASE + file.name + "?key=" + GEMINI_KEY, { signal: AbortSignal.timeout(30000) });
     const gj = await g.json().catch(() => null);
     if (gj?.state === "ACTIVE") return gj;
@@ -577,9 +577,10 @@ async function runAnalyze(job) {
           "-c:v", "libx264", "-preset", "ultrafast", "-crf", "34", "-an", clipPath, "-y"], { timeout: 120000 });
         files.push(clipPath);
       }
-      const gFiles = [];
+      let gFiles = [];
       try {
-        for (const f of files) gFiles.push(await geminiUploadAudio(await readFile(f), "video/mp4"));
+        // 12개 조각을 동시에 업로드 (속도 개선)
+        gFiles = await Promise.all(files.map(f => readFile(f).then(b => geminiUploadAudio(b, "video/mp4"))));
         const r = await callGemini({
           contents: [{ parts: [
             ...gFiles.map(g => ({ file_data: { file_uri: g.uri, mime_type: "video/mp4" } })),
