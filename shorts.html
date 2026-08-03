@@ -55,6 +55,10 @@
   .sc-cand .segs{margin-top:10px;border-left:3px solid #a78bfa;padding-left:12px;}
   .sc-cand .seg{font-size:13.5px;color:#334155;padding:4px 0;line-height:1.5;}
   .sc-cand .seg b{color:#7c3aed;}
+  .sc-make{margin-top:12px;font-size:15px;font-weight:800;padding:12px 18px;border-radius:12px;border:0;background:var(--blue);color:#fff;cursor:pointer;}
+  .sc-make:disabled{background:#cbd5e1;cursor:not-allowed;}
+  .sc-make-status{margin-top:8px;font-size:14px;color:var(--sub);}
+  .sc-dl{display:inline-block;margin-top:10px;font-size:15px;font-weight:800;padding:12px 18px;border-radius:12px;background:#16a34a;color:#fff;text-decoration:none;}
   .sc-hidden{display:none;}
 </style>
 </head>
@@ -286,7 +290,10 @@
     $("sc-cands-title").textContent = title ? "— " + title : "";
     // 스토리형 먼저, 그 다음 명장면 — 각각 점수 높은 순
     data.sort((a, b) => (a.kind === "story" ? 0 : 1) - (b.kind === "story" ? 0 : 1) || b.total_score - a.total_score);
+    window.__scCands = {};
+    data.forEach((c) => { window.__scCands[c.id] = c; });
     const fmtS = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
+    const makeBtn = (c) => `<button class="sc-make" data-cid="${c.id}" data-pid="${c.project_id}">🎬 이 후보로 숏츠 만들기</button><div class="sc-make-status" id="mk-${c.id}"></div>`;
     let momentRank = 0;
     const medal = (i) => i === 0 ? "🥇 1위" : i === 1 ? "🥈 2위" : i === 2 ? "🥉 3위" : (i + 1) + "위";
     wrap.innerHTML = data.map((c) => {
@@ -306,6 +313,7 @@
           <div class="segs">${segHtml}</div>
           <div class="why">💡 ${escapeHtml((c.hook_reason || "").replace("[스토리 짜집기] ", ""))}</div>
           <div class="chips">${chips}${flags}</div>
+          ${makeBtn(c)}
         </div>`;
       }
       const durS = Math.round((c.end_ms - c.start_ms) / 1000);
@@ -315,11 +323,51 @@
         <div class="why">💡 ${escapeHtml(c.hook_reason || "").replace(/\n/g, "<br>")}</div>
         <div class="sum">${escapeHtml(c.summary || "")}</div>
         <div class="chips">${chips}${flags}</div>
+        ${makeBtn(c)}
       </div>`;
     }).join("");
     card.classList.remove("sc-hidden");
     card.scrollIntoView({ behavior: "smooth" });
   }
+
+  // "숏츠 만들기" 버튼: 레시피 등록 → 서버가 자동 렌더링 → 완성되면 내려받기 버튼 표시
+  document.getElementById("sc-cands").addEventListener("click", async (e) => {
+    const btn = e.target.closest(".sc-make");
+    if (!btn) return;
+    const c = (window.__scCands || {})[btn.dataset.cid];
+    if (!c) return;
+    btn.disabled = true;
+    const st = document.getElementById("mk-" + c.id);
+    st.textContent = "⏳ 만들기 예약 중…";
+    // 장면 목록: 스토리형은 segments 그대로, 명장면형은 그 구간 하나
+    const segments = (c.kind === "story" && Array.isArray(c.segments) && c.segments.length)
+      ? c.segments
+      : [{ in_s: c.start_ms / 1000, out_s: c.end_ms / 1000, caption: c.title || "" }];
+    const { data: rec, error } = await sb.from("sc_recipes").insert({
+      project_id: c.project_id, candidate_id: c.id,
+      manifest: { segments, output: { w: 1080, h: 1920, fps: 30 } },
+    }).select("id").single();
+    if (error) { st.textContent = "⚠️ 예약 실패: " + error.message; btn.disabled = false; return; }
+    st.textContent = "🎬 영상을 만들고 있어요… (몇 분 걸립니다. 이 창을 닫아도 계속 진행됩니다)";
+    // 완성될 때까지 지켜보기 (최대 20분)
+    for (let i = 0; i < 240; i++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      const { data: rr } = await sb.from("sc_recipes").select("render_path").eq("id", rec.id).single();
+      if (rr && rr.render_path) {
+        const { data: su } = await sb.storage.from("videos-clips").createSignedUrl(rr.render_path, 3600);
+        if (su && su.signedUrl) {
+          st.innerHTML = `✅ 완성! <a class="sc-dl" href="${su.signedUrl}" download="shorts.mp4">⬇️ 숏츠 내려받기</a>`;
+        } else {
+          st.textContent = "✅ 완성됐지만 내려받기 주소 생성에 실패했어요. 새로고침 후 다시 시도해 주세요.";
+        }
+        return;
+      }
+      const { data: pj } = await sb.from("sc_projects").select("status,status_detail").eq("id", c.project_id).single();
+      if (pj && pj.status === "failed_render") { st.textContent = "❌ 만들기 실패: " + (pj.status_detail || ""); btn.disabled = false; return; }
+      if (pj && pj.status === "rendering") st.textContent = "🎬 " + (pj.status_detail || "만드는 중…");
+    }
+    st.textContent = "시간이 오래 걸리고 있어요. 잠시 후 새로고침해 주세요.";
+  });
 
   // 내 프로젝트 목록
   const badge = (s) => {
