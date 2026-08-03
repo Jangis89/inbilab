@@ -32,6 +32,7 @@ const GEMINI_MODELS = ["gemini-flash-latest", "gemini-pro-latest"];
 const WORKER_ID = "worker-" + Math.random().toString(36).slice(2, 8);
 const POLL_MS = 5000;
 const CHUNK_SEC = 600; // 전사용 오디오를 10분 단위로 잘라 처리 (안정성·재시도 용이)
+const PROMPT_VER = "a1"; // 후보 발굴 프롬프트 버전 (결과 비교용)
 
 // ---------- 상태 확인용 웹 응답 (Railway 헬스체크) ----------
 const PORT = process.env.PORT || 8080;
@@ -59,7 +60,7 @@ if (!GEMINI_KEY) console.warn("[준비] GEMINI_API_KEY 미설정 — 전사(tran
 // ---------- 대기열 처리 루프 ----------
 async function claimJob() {
   // queued 상태의 가장 오래된 작업 1개를 원자적으로 가져온다 (경쟁 방지: status 조건부 업데이트)
-  const allowedTypes = GEMINI_KEY ? ["probe", "transcribe"] : ["probe"];
+  const allowedTypes = GEMINI_KEY ? ["probe", "transcribe", "analyze"] : ["probe"];
   const { data: jobs, error } = await sb
     .from("sc_render_jobs")
     .select("id, project_id, recipe_id, job_type, attempts")
@@ -249,7 +250,8 @@ async function callGemini(requestBody) {
     if (g.ok) return { gj, model: m };
     const msg = gj?.error?.message || ("HTTP " + g.status);
     last = new Error("Gemini 호출 실패(" + m + "): " + msg);
-    if (!(g.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(msg))) break;
+    // 한도(429)나 일시 혼잡(503/overloaded)이면 다음 모델로 넘어가고, 다른 에러면 중단
+    if (!(g.status === 429 || g.status === 503 || /quota|RESOURCE_EXHAUSTED|overloaded|unavailable/i.test(msg))) break;
   }
   throw last || new Error("Gemini 호출 실패");
 }
@@ -320,13 +322,17 @@ async function runTranscribe(job) {
       }
       if (!out || !Array.isArray(out.sentences)) throw new Error((ci + 1) + "번째 구간 전사 결과 해석 실패");
 
+      // 이 조각의 실제 길이 (마지막 조각은 10분보다 짧음) — AI가 과장한 시각을 여기에 맞춰 눌러준다
+      const chunkDur = Math.min(CHUNK_SEC, Math.max(1, durationSec - offset));
       for (const s of out.sentences) {
-        const s0 = Number(s.s), e0 = Number(s.e);
+        let s0 = Number(s.s), e0 = Number(s.e);
         const text = String(s.text || "").trim();
         if (!text || !isFinite(s0)) continue;
+        s0 = Math.max(0, Math.min(s0, chunkDur));
+        e0 = Math.max(s0, Math.min(isFinite(e0) ? e0 : s0 + 3, chunkDur));
         allSentences.push({
           s: Math.round((s0 + offset) * 1000),
-          e: Math.round(((isFinite(e0) ? e0 : s0 + 3) + offset) * 1000),
+          e: Math.round((e0 + offset) * 1000),
           text,
         });
       }
@@ -359,6 +365,137 @@ async function runTranscribe(job) {
     meta: { sentences: allSentences.length, chunks: chunkCount, model: usedModel },
   });
   console.log(`[transcribe] 완료 p=${proj.id} 문장=${allSentences.length} 모델=${usedModel}`);
+
+  // 말이 충분히 있으면 다음 단계(후보 발굴)를 자동 예약
+  if (allSentences.length >= 10) await enqueueJob(proj.id, "analyze");
+  else console.log(`[transcribe] p=${proj.id} 문장이 너무 적어 후보 발굴 건너뜀`);
+}
+
+// ---------- 작업: analyze (숏츠 후보 발굴) ----------
+// 목적별 점수 가중치 (합계 1.0) — context_dep(맥락 의존)은 낮을수록 좋아서 뒤집어 계산
+const OBJECTIVE_WEIGHTS = {
+  views: { hook: 0.30, novelty: 0.20, emotion: 0.15, density: 0.10, standalone: 0.10, proof: 0.05, duration_fit: 0.05, context_indep: 0.05 },
+  sales: { hook: 0.15, proof: 0.25, standalone: 0.15, density: 0.15, emotion: 0.10, novelty: 0.05, duration_fit: 0.05, context_indep: 0.10 },
+  edu:   { hook: 0.15, density: 0.25, proof: 0.20, standalone: 0.15, novelty: 0.10, duration_fit: 0.05, context_indep: 0.10 },
+};
+
+function fmtTime(ms) {
+  const t = Math.round(ms / 1000);
+  return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0");
+}
+
+function buildAnalyzePrompt(objective, durationSec, lines) {
+  const objText = {
+    views: "조회수(널리 퍼지는 것)가 목표입니다. 강한 훅, 놀라움, 감정 반응을 최우선으로 평가하세요.",
+    sales: "판매·상담 문의로 이어지는 것이 목표입니다. 신뢰(근거·증거)와 문제 해결 약속이 뚜렷한 구간을 최우선으로 평가하세요.",
+    edu: "핵심이 잘 전달되는 교육용이 목표입니다. 정보 밀도와 완결성(그 구간만 봐도 이해됨)을 최우선으로 평가하세요.",
+  }[objective] || "조회수가 목표입니다.";
+
+  return `당신은 유튜브 숏츠 편집 전문가입니다. 아래는 ${Math.round(durationSec / 60)}분짜리 긴 영상의 전체 대본(문장별 시작~끝 시각 포함)입니다. 이 중에서 "숏츠(세로 짧은 영상)로 잘라내면 터질 수 있는 구간"을 골라내세요.
+
+[목표] ${objText}
+
+[규칙 — 반드시 지키세요]
+1. 후보는 6~10개. 각 후보는 20~75초 사이.
+2. start_s와 end_s는 반드시 대본에 실제로 있는 문장의 시작·끝 시각을 사용하세요 (문장 중간에서 자르지 말 것).
+3. 후보 구간만 따로 봐도 무슨 말인지 이해돼야 합니다 (완결성). 앞뒤 맥락이 꼭 필요한 구간은 뽑지 마세요.
+4. 대본에 실제로 있는 내용만 근거로 쓰세요. 창작·과장 금지.
+5. title은 그 구간으로 만든 숏츠의 추천 제목(호기심 유발형, 30자 이내).
+6. 각 점수는 0~10 정수. scores 항목: hook(첫 3초 훅 강도), standalone(완결성), density(정보 밀도), emotion(감정 반응), novelty(새로움·의외성), proof(근거·증거), duration_fit(길이 적합), context_dep(앞뒤 맥락 의존도 — 낮을수록 좋음), safety(안전성 — 저작권·선정성 문제 없으면 10).
+7. risk_flags: 주의할 점 배열 (예: "배경음악 저작권 확인 필요", "인물 얼굴 노출"). 없으면 빈 배열.
+
+JSON만 출력하세요:
+{"candidates":[{"start_s":123.4,"end_s":168.0,"title":"...","hook_reason":"이 구간이 터질 수 있는 이유 한 줄","summary":"구간 내용 요약 한 줄","scores":{"hook":8,"standalone":7,"density":6,"emotion":7,"novelty":9,"proof":5,"duration_fit":8,"context_dep":2,"safety":9},"risk_flags":[]}]}
+
+[전체 대본]
+${lines}`;
+}
+
+async function runAnalyze(job) {
+  const { data: proj, error } = await sb.from("sc_projects")
+    .select("id, objective, source_duration_sec").eq("id", job.project_id).single();
+  if (error || !proj) throw new Error("프로젝트 없음");
+  const { data: tr, error: te } = await sb.from("sc_transcripts")
+    .select("sentences").eq("project_id", proj.id).order("created_at", { ascending: false }).limit(1).single();
+  if (te || !tr || !Array.isArray(tr.sentences) || tr.sentences.length < 10) {
+    throw new Error("전사록이 없거나 문장이 너무 적습니다");
+  }
+  await setProjectStatus(proj.id, "analyzing", "AI가 숏츠감 구간을 찾는 중…");
+
+  const durationSec = Number(proj.source_duration_sec || 0);
+  const objective = proj.objective || "views";
+  const lines = tr.sentences.map(x =>
+    `[${(x.s / 1000).toFixed(1)}~${(x.e / 1000).toFixed(1)}] ${x.text}`).join("\n");
+
+  const r = await callGemini({
+    contents: [{ parts: [{ text: buildAnalyzePrompt(objective, durationSec, lines) }] }],
+    generationConfig: { responseMimeType: "application/json", temperature: 0.3, maxOutputTokens: 16384 },
+  });
+  const out = parseJsonLoose(geminiText(r.gj));
+  if (!out || !Array.isArray(out.candidates)) throw new Error("후보 발굴 결과 해석 실패");
+
+  // ---- 코드 검증 (AI를 믿지 않고 전부 다시 확인) ----
+  const W = OBJECTIVE_WEIGHTS[objective] || OBJECTIVE_WEIGHTS.views;
+  const clamp10 = v => Math.max(0, Math.min(10, Math.round(Number(v) || 0)));
+  let cands = [];
+  for (const c of out.candidates) {
+    const s0 = Number(c.start_s), e0 = Number(c.end_s);
+    if (!isFinite(s0) || !isFinite(e0)) continue;
+    const dur = e0 - s0;
+    if (dur < 15 || dur > 90) continue;                       // 길이 규칙 위반 제외
+    if (s0 < 0 || (durationSec > 0 && e0 > durationSec + 5)) continue; // 영상 밖 구간 제외
+    const sc = c.scores || {};
+    const scores = {
+      hook: clamp10(sc.hook), standalone: clamp10(sc.standalone), density: clamp10(sc.density),
+      emotion: clamp10(sc.emotion), novelty: clamp10(sc.novelty), proof: clamp10(sc.proof),
+      duration_fit: clamp10(sc.duration_fit), context_dep: clamp10(sc.context_dep), safety: clamp10(sc.safety),
+    };
+    const parts = {
+      hook: scores.hook, novelty: scores.novelty, emotion: scores.emotion, density: scores.density,
+      standalone: scores.standalone, proof: scores.proof, duration_fit: scores.duration_fit,
+      context_indep: 10 - scores.context_dep,
+    };
+    let total = 0;
+    for (const k of Object.keys(W)) total += W[k] * (parts[k] ?? 0);
+    cands.push({
+      start_ms: Math.round(s0 * 1000), end_ms: Math.round(e0 * 1000),
+      title: String(c.title || "").slice(0, 80),
+      hook_reason: String(c.hook_reason || "").slice(0, 300),
+      summary: String(c.summary || "").slice(0, 300),
+      scores, total_score: Math.round(total * 100) / 100,
+      risk_flags: Array.isArray(c.risk_flags) ? c.risk_flags.slice(0, 5).map(x => String(x).slice(0, 100)) : [],
+    });
+  }
+  // 겹침 제거: 점수 높은 순으로 훑으며 이미 뽑힌 후보와 절반 이상 겹치면 버림
+  cands.sort((a, b) => b.total_score - a.total_score);
+  const kept = [];
+  for (const c of cands) {
+    const overlaps = kept.some(k => {
+      const ov = Math.min(c.end_ms, k.end_ms) - Math.max(c.start_ms, k.start_ms);
+      return ov > 0.5 * Math.min(c.end_ms - c.start_ms, k.end_ms - k.start_ms);
+    });
+    if (!overlaps) kept.push(c);
+    if (kept.length >= 10) break;
+  }
+  if (kept.length === 0) throw new Error("규칙을 통과한 후보가 없습니다 (영상에 숏츠감 구간이 부족할 수 있음)");
+
+  // 다시 실행해도 겹치지 않게: 이전 후보 삭제 후 저장 (멱등성)
+  await sb.from("sc_candidates").delete().eq("project_id", proj.id);
+  const rows = kept.map(c => ({
+    project_id: proj.id, start_ms: c.start_ms, end_ms: c.end_ms, title: c.title,
+    hook_reason: c.hook_reason, summary: c.summary, scores: c.scores,
+    total_score: c.total_score, risk_flags: c.risk_flags,
+    model_info: { model: r.model, prompt_ver: PROMPT_VER, objective },
+  }));
+  const { error: ie } = await sb.from("sc_candidates").insert(rows);
+  if (ie) throw new Error("후보 저장 실패: " + ie.message);
+
+  await setProjectStatus(proj.id, "candidates_ready", "후보 " + kept.length + "개 발굴 완료");
+  await sb.from("sc_usage_log").insert({
+    project_id: proj.id, kind: "analyze", duration_sec: durationSec,
+    meta: { candidates: kept.length, model: r.model, objective, prompt_ver: PROMPT_VER },
+  });
+  console.log(`[analyze] 완료 p=${proj.id} 후보=${kept.length} (${kept.map(c => fmtTime(c.start_ms) + "~" + fmtTime(c.end_ms)).join(", ")})`);
 }
 
 // ---------- 메인 루프 ----------
@@ -372,6 +509,7 @@ async function loop() {
       try {
         if (job.job_type === "probe") await runProbe(job);
         else if (job.job_type === "transcribe") await runTranscribe(job);
+        else if (job.job_type === "analyze") await runAnalyze(job);
         else throw new Error("아직 지원하지 않는 작업 유형: " + job.job_type);
         await finishJob(job.id, true);
         processedCount++;
@@ -382,7 +520,8 @@ async function loop() {
           await sb.from("sc_render_jobs").update({ status: "queued", error: "재시도 예정: " + err.message.slice(0, 300) }).eq("id", job.id);
         } else {
           await finishJob(job.id, false, err.message);
-          const failStatus = job.job_type === "transcribe" ? "failed_transcribe" : "failed_probe";
+          const failStatus = job.job_type === "transcribe" ? "failed_transcribe"
+            : job.job_type === "analyze" ? "failed_analyze" : "failed_probe";
           await setProjectStatus(job.project_id, failStatus, err.message.slice(0, 200));
         }
       }
