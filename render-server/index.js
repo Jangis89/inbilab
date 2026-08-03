@@ -32,7 +32,8 @@ const GEMINI_MODELS = ["gemini-flash-latest", "gemini-pro-latest"];
 const WORKER_ID = "worker-" + Math.random().toString(36).slice(2, 8);
 const POLL_MS = 5000;
 const CHUNK_SEC = 600; // 전사용 오디오를 10분 단위로 잘라 처리 (안정성·재시도 용이)
-const PROMPT_VER = "a1"; // 후보 발굴 프롬프트 버전 (결과 비교용)
+const PROMPT_VER = "a2-video"; // 후보 발굴 프롬프트 버전 (a1=대본만, a2=영상 직접 시청)
+const VIDEO_CHUNK_SEC = 1200;   // 후보 발굴용 영상을 20분 단위로 잘라 AI에게 보여줌
 
 // ---------- 상태 확인용 웹 응답 (Railway 헬스체크) ----------
 const PORT = process.env.PORT || 8080;
@@ -384,55 +385,131 @@ function fmtTime(ms) {
   return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0");
 }
 
-function buildAnalyzePrompt(objective, durationSec, lines) {
+function buildAnalyzePrompt(objective, chunkStartMin, chunkEndMin, lines) {
   const objText = {
-    views: "조회수(널리 퍼지는 것)가 목표입니다. 강한 훅, 놀라움, 감정 반응을 최우선으로 평가하세요.",
-    sales: "판매·상담 문의로 이어지는 것이 목표입니다. 신뢰(근거·증거)와 문제 해결 약속이 뚜렷한 구간을 최우선으로 평가하세요.",
-    edu: "핵심이 잘 전달되는 교육용이 목표입니다. 정보 밀도와 완결성(그 구간만 봐도 이해됨)을 최우선으로 평가하세요.",
+    views: "조회수(널리 퍼지는 것)가 목표입니다. 시선을 강탈하는 화면과 강한 후킹을 최우선으로 평가하세요.",
+    sales: "판매·상담 문의로 이어지는 것이 목표입니다. 신뢰(근거·증거)와 문제 해결 약속이 뚜렷하면서도 시선을 붙잡는 구간을 최우선으로 평가하세요.",
+    edu: "핵심이 잘 전달되는 교육용이 목표입니다. 정보 밀도가 높으면서도 지루하지 않은(화면·전개에 힘이 있는) 구간을 최우선으로 평가하세요.",
   }[objective] || "조회수가 목표입니다.";
 
-  return `당신은 유튜브 숏츠 편집 전문가입니다. 아래는 ${Math.round(durationSec / 60)}분짜리 긴 영상의 전체 대본(문장별 시작~끝 시각 포함)입니다. 이 중에서 "숏츠(세로 짧은 영상)로 잘라내면 터질 수 있는 구간"을 골라내세요.
+  return `당신은 조회수에 목숨 건 유튜브 숏츠 편집장입니다. 첨부된 영상(원본의 ${chunkStartMin}분~${chunkEndMin}분 구간)을 화면과 소리 모두 직접 보고 들으면서, "숏츠로 잘라내면 터질 구간"을 찾으세요.
 
 [목표] ${objText}
 
-[규칙 — 반드시 지키세요]
-1. 후보는 6~10개. 각 후보는 20~75초 사이.
-2. start_s와 end_s는 반드시 대본에 실제로 있는 문장의 시작·끝 시각을 사용하세요 (문장 중간에서 자르지 말 것).
-3. 후보 구간만 따로 봐도 무슨 말인지 이해돼야 합니다 (완결성). 앞뒤 맥락이 꼭 필요한 구간은 뽑지 마세요.
-4. 대본에 실제로 있는 내용만 근거로 쓰세요. 창작·과장 금지.
-5. title은 그 구간으로 만든 숏츠의 추천 제목(호기심 유발형, 30자 이내).
-6. 각 점수는 0~10 정수. scores 항목: hook(첫 3초 훅 강도), standalone(완결성), density(정보 밀도), emotion(감정 반응), novelty(새로움·의외성), proof(근거·증거), duration_fit(길이 적합), context_dep(앞뒤 맥락 의존도 — 낮을수록 좋음), safety(안전성 — 저작권·선정성 문제 없으면 10).
-7. risk_flags: 주의할 점 배열 (예: "배경음악 저작권 확인 필요", "인물 얼굴 노출"). 없으면 빈 배열.
+[후킹 유형표 — 후보는 반드시 이 중 하나 이상에 해당해야 합니다]
+1 호기심 갭: 답을 숨겨서 궁금하게 만듦
+2 결과 먼저: 가장 놀라운 결과·장면을 첫 컷에
+3 충격 비주얼: 이상하거나 놀라운 화면으로 시선 강탈
+4 질문 던지기: 시청자에게 직접 질문
+5 공감 저격: "이런 적 있으시죠?" 내 얘기처럼
+6 손실 회피: "모르면 손해" 경고형
+7 숫자·랭킹: 순위나 구체적 숫자
+8 반전 예고: 뒤에 반전이 있음을 예고
+9 권위·증거: 전문가·실험·데이터 먼저
+10 패턴 파괴: 예상 밖의 화면·소리·연출
+
+[탈락 기준 — 가장 중요. 어기면 실패입니다]
+- 그냥 잔잔한 설명, 평범한 풍경, 밋밋한 대화 구간은 내용이 좋아도 절대 뽑지 마세요.
+- 숏츠의 첫 3초에 보여줄 "시선을 붙잡는 실제 화면"이 그 구간 안에 없으면 탈락입니다.
+- first_scene에는 그 화면에 실제로 보이는 것을 구체적으로 쓰세요 (창작 금지). 화면과 시각이 안 맞으면 실패입니다.
+- 이 클립에 그런 구간이 없으면 후보 0개로 답하세요. 억지로 채우는 것이 가장 나쁜 답입니다.
+
+[규칙]
+1. 후보 0~4개. 각 20~75초. start_s / end_s는 "이 클립 기준" 초 단위입니다.
+2. start_s는 가장 강한 화면·발화가 나오는 순간 직전(0~1초 전)으로 잡으세요. 숏츠 첫 3초가 훅이 되게.
+3. 후보 구간만 따로 봐도 이해돼야 합니다 (완결성).
+4. title은 그 숏츠의 추천 제목 — 후킹 유형에 맞는 어그로형, 30자 이내.
+5. 점수는 0~10 정수. hook 7점 미만이면 후보에서 빼세요.
+6. scores 항목: hook(첫 3초 훅 강도), standalone(완결성), density(정보 밀도), emotion(감정 반응), novelty(새로움·의외성), proof(근거·증거), duration_fit(길이 적합), context_dep(맥락 의존 — 낮을수록 좋음), safety(안전성).
+7. risk_flags: 주의할 점 배열 (예: "동물 부상 장면", "밀렵 언급"). 없으면 빈 배열.
+
+[참고용 대본 — 시각은 이 클립 기준 초]
+${lines}
 
 JSON만 출력하세요:
-{"candidates":[{"start_s":123.4,"end_s":168.0,"title":"...","hook_reason":"이 구간이 터질 수 있는 이유 한 줄","summary":"구간 내용 요약 한 줄","scores":{"hook":8,"standalone":7,"density":6,"emotion":7,"novelty":9,"proof":5,"duration_fit":8,"context_dep":2,"safety":9},"risk_flags":[]}]}
-
-[전체 대본]
-${lines}`;
+{"candidates":[{"start_s":123.4,"end_s":168.0,"hook_type":3,"hook_type_name":"충격 비주얼","first_scene":"첫 3초에 실제로 보이는 화면 묘사","title":"...","hook_reason":"왜 터질 수 있는지 한 줄","summary":"구간 내용 요약 한 줄","scores":{"hook":8,"standalone":7,"density":6,"emotion":7,"novelty":9,"proof":5,"duration_fit":8,"context_dep":2,"safety":9},"risk_flags":[]}]}`;
 }
 
 async function runAnalyze(job) {
   const { data: proj, error } = await sb.from("sc_projects")
-    .select("id, objective, source_duration_sec").eq("id", job.project_id).single();
-  if (error || !proj) throw new Error("프로젝트 없음");
-  const { data: tr, error: te } = await sb.from("sc_transcripts")
-    .select("sentences").eq("project_id", proj.id).order("created_at", { ascending: false }).limit(1).single();
-  if (te || !tr || !Array.isArray(tr.sentences) || tr.sentences.length < 10) {
-    throw new Error("전사록이 없거나 문장이 너무 적습니다");
-  }
-  await setProjectStatus(proj.id, "analyzing", "AI가 숏츠감 구간을 찾는 중…");
+    .select("id, source_path, objective, source_duration_sec").eq("id", job.project_id).single();
+  if (error || !proj?.source_path) throw new Error("프로젝트/원본 경로 없음");
+  const { data: tr } = await sb.from("sc_transcripts")
+    .select("sentences").eq("project_id", proj.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const sentences = (tr && Array.isArray(tr.sentences)) ? tr.sentences : [];
 
   const durationSec = Number(proj.source_duration_sec || 0);
+  if (!durationSec) throw new Error("영상 길이 정보 없음 (검사부터 다시 필요)");
   const objective = proj.objective || "views";
-  const lines = tr.sentences.map(x =>
-    `[${(x.s / 1000).toFixed(1)}~${(x.e / 1000).toFixed(1)}] ${x.text}`).join("\n");
+  const chunkCount = Math.max(1, Math.ceil(durationSec / VIDEO_CHUNK_SEC));
+  await setProjectStatus(proj.id, "analyzing", "AI가 영상을 직접 보며 숏츠감을 찾는 중… (0/" + chunkCount + ")");
 
-  const r = await callGemini({
-    contents: [{ parts: [{ text: buildAnalyzePrompt(objective, durationSec, lines) }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.3, maxOutputTokens: 16384 },
-  });
-  const out = parseJsonLoose(geminiText(r.gj));
-  if (!out || !Array.isArray(out.candidates)) throw new Error("후보 발굴 결과 해석 실패");
+  const tmpDir = await mkdtemp(join(tmpdir(), "ib-an-"));
+  const rawCands = [];
+  let usedModel = "";
+  try {
+    for (let ci = 0; ci < chunkCount; ci++) {
+      const offset = ci * VIDEO_CHUNK_SEC;
+      const chunkDur = Math.min(VIDEO_CHUNK_SEC, Math.max(1, durationSec - offset));
+      const { data: signed, error: se } = await sb.storage
+        .from("videos-source").createSignedUrl(proj.source_path, 3600);
+      if (se) throw new Error("서명 URL 실패: " + se.message);
+
+      // 1) AI 시청용 저화질 축소판 만들기 (360p, 5fps — 내용 파악에 충분, 전송량 최소)
+      const proxyPath = join(tmpDir, "proxy-" + ci + ".mp4");
+      const args = [];
+      if (offset > 0) args.push("-ss", String(offset));
+      args.push("-t", String(VIDEO_CHUNK_SEC), "-i", signed.signedUrl,
+        "-vf", "scale=-2:360", "-r", "5",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "32",
+        "-c:a", "aac", "-b:a", "48k", "-ac", "1",
+        "-movflags", "+faststart", proxyPath, "-y");
+      await exec("ffmpeg", args, { timeout: 1800000 });
+
+      // 2) Gemini에 업로드 → 3) 영상 직접 시청 분석
+      const buf = await readFile(proxyPath);
+      const gFile = await geminiUploadAudio(buf, "video/mp4"); // (오디오/영상 공용 업로드 도우미)
+      let out;
+      try {
+        // 이 클립 구간에 해당하는 대본만 클립 기준 시각으로 첨부
+        const localLines = sentences
+          .filter(x => x.s / 1000 >= offset && x.s / 1000 < offset + chunkDur)
+          .map(x => `[${(x.s / 1000 - offset).toFixed(1)}~${(x.e / 1000 - offset).toFixed(1)}] ${x.text}`)
+          .join("\n") || "(이 구간에는 받아적은 문장이 없습니다 — 화면 위주로 판단하세요)";
+        const r = await callGemini({
+          contents: [{ parts: [
+            { file_data: { file_uri: gFile.uri, mime_type: "video/mp4" } },
+            { text: buildAnalyzePrompt(objective, Math.round(offset / 60), Math.round((offset + chunkDur) / 60), localLines) },
+          ] }],
+          generationConfig: {
+            responseMimeType: "application/json", temperature: 0.4,
+            mediaResolution: "MEDIA_RESOLUTION_LOW", maxOutputTokens: 16384,
+          },
+        });
+        usedModel = r.model;
+        out = parseJsonLoose(geminiText(r.gj));
+      } finally {
+        await geminiDeleteFile(gFile.name);
+        await unlink(proxyPath).catch(() => {});
+      }
+      if (!out || !Array.isArray(out.candidates)) throw new Error((ci + 1) + "번째 구간 분석 결과 해석 실패");
+      for (const c of out.candidates) {
+        const s0 = Number(c.start_s), e0 = Number(c.end_s);
+        if (!isFinite(s0) || !isFinite(e0)) continue;
+        // 클립 기준 → 원본 기준 시각으로 변환 (클립 길이 밖이면 눌러줌)
+        const cs = Math.max(0, Math.min(s0, chunkDur)) + offset;
+        const ce = Math.max(0, Math.min(e0, chunkDur)) + offset;
+        rawCands.push({ ...c, start_s: cs, end_s: ce });
+      }
+      await setJobProgress(job.id, ((ci + 1) / chunkCount) * 100);
+      await setProjectStatus(proj.id, "analyzing", "AI가 영상을 직접 보며 숏츠감을 찾는 중… (" + (ci + 1) + "/" + chunkCount + ")");
+      console.log(`[analyze] p=${proj.id} 구간 ${ci + 1}/${chunkCount} 완료 (누적 후보 ${rawCands.length})`);
+    }
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+  const out = { candidates: rawCands };
+  const r = { model: usedModel };
 
   // ---- 코드 검증 (AI를 믿지 않고 전부 다시 확인) ----
   const W = OBJECTIVE_WEIGHTS[objective] || OBJECTIVE_WEIGHTS.views;
@@ -457,10 +534,14 @@ async function runAnalyze(job) {
     };
     let total = 0;
     for (const k of Object.keys(W)) total += W[k] * (parts[k] ?? 0);
+    if (scores.hook < 7) continue; // 후킹이 약한 후보는 탈락 (사장님 판정 반영)
+    const hookName = String(c.hook_type_name || "").slice(0, 20);
+    const firstScene = String(c.first_scene || "").slice(0, 200);
     cands.push({
       start_ms: Math.round(s0 * 1000), end_ms: Math.round(e0 * 1000),
       title: String(c.title || "").slice(0, 80),
-      hook_reason: String(c.hook_reason || "").slice(0, 300),
+      hook_reason: ((hookName ? "[" + hookName + "] " : "") + String(c.hook_reason || "")).slice(0, 250)
+        + (firstScene ? "\n🎬 첫 화면: " + firstScene : ""),
       summary: String(c.summary || "").slice(0, 300),
       scores, total_score: Math.round(total * 100) / 100,
       risk_flags: Array.isArray(c.risk_flags) ? c.risk_flags.slice(0, 5).map(x => String(x).slice(0, 100)) : [],
