@@ -61,7 +61,7 @@ if (!GEMINI_KEY) console.warn("[준비] GEMINI_API_KEY 미설정 — 전사(tran
 // ---------- 대기열 처리 루프 ----------
 async function claimJob() {
   // queued 상태의 가장 오래된 작업 1개를 원자적으로 가져온다 (경쟁 방지: status 조건부 업데이트)
-  const allowedTypes = GEMINI_KEY ? ["probe", "transcribe", "analyze"] : ["probe"];
+  const allowedTypes = GEMINI_KEY ? ["probe", "transcribe", "analyze", "render"] : ["probe", "render"];
   const { data: jobs, error } = await sb
     .from("sc_render_jobs")
     .select("id, project_id, recipe_id, job_type, attempts")
@@ -676,6 +676,104 @@ async function runAnalyze(job) {
   console.log(`[analyze] 완료 p=${proj.id} 스토리=${stories.length} 명장면=${kept.length}`);
 }
 
+// ---------- 작업: render (숏츠 영상 만들기 — 자르고 붙이고 자막) ----------
+import { writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+
+function pickFont() {
+  const fonts = [
+    "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+  ];
+  return fonts.find(f => existsSync(f)) || "";
+}
+
+// 자막 줄바꿈: 공백 기준으로 한 줄 최대 12자 안팎
+function wrapCaption(text, maxLen = 12) {
+  const words = String(text || "").trim().split(/\s+/);
+  const lines = [];
+  let cur = "";
+  for (const w of words) {
+    if ((cur + " " + w).trim().length > maxLen && cur) { lines.push(cur); cur = w; }
+    else cur = (cur + " " + w).trim();
+  }
+  if (cur) lines.push(cur);
+  return lines.slice(0, 3).join("\n");
+}
+
+async function runRender(job) {
+  const { data: rec, error: re } = await sb.from("sc_recipes")
+    .select("id, project_id, manifest").eq("id", job.recipe_id).single();
+  if (re || !rec) throw new Error("레시피 없음");
+  const { data: proj, error: pe } = await sb.from("sc_projects")
+    .select("id, user_id, source_path").eq("id", rec.project_id).single();
+  if (pe || !proj?.source_path) throw new Error("프로젝트/원본 없음");
+  const segs = (rec.manifest && Array.isArray(rec.manifest.segments)) ? rec.manifest.segments : [];
+  if (!segs.length) throw new Error("레시피에 장면이 없습니다");
+  if (segs.length > 8) throw new Error("장면이 너무 많습니다 (최대 8개)");
+
+  await setProjectStatus(proj.id, "rendering", "숏츠 영상을 만드는 중… (0/" + segs.length + ")");
+  const font = pickFont();
+  const tmpDir = await mkdtemp(join(tmpdir(), "ib-rd-"));
+  try {
+    const partFiles = [];
+    for (let i = 0; i < segs.length; i++) {
+      const g = segs[i];
+      const inS = Math.max(0, Number(g.in_s) || 0);
+      const outS = Number(g.out_s) || 0;
+      const dur = outS - inS;
+      if (dur < 1 || dur > 60) throw new Error((i + 1) + "번째 장면 길이가 비정상입니다");
+      const { data: signed, error: se } = await sb.storage
+        .from("videos-source").createSignedUrl(proj.source_path, 3600);
+      if (se) throw new Error("서명 URL 실패: " + se.message);
+
+      // 세로 1080x1920 변환(가운데 잘라내기) + 자막 얹기
+      let vf = "crop='min(iw,ih*9/16)':ih,scale=1080:1920,setsar=1";
+      const capText = wrapCaption(g.caption);
+      const capPath = join(tmpDir, "cap-" + i + ".txt");
+      if (capText && font) {
+        await writeFile(capPath, capText, "utf8");
+        vf += `,drawtext=fontfile=${font}:textfile=${capPath}:fontcolor=white:fontsize=62:borderw=5:bordercolor=black@0.85:x=(w-text_w)/2:y=210:line_spacing=14`;
+      }
+      const partPath = join(tmpDir, "part-" + i + ".mp4");
+      await exec("ffmpeg", [
+        "-ss", String(inS), "-t", String(dur), "-i", signed.signedUrl,
+        "-vf", vf, "-r", "30",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+        partPath, "-y",
+      ], { timeout: 900000 });
+      partFiles.push(partPath);
+      await setJobProgress(job.id, ((i + 1) / (segs.length + 1)) * 100);
+      await setProjectStatus(proj.id, "rendering", "숏츠 영상을 만드는 중… (" + (i + 1) + "/" + segs.length + ")");
+    }
+
+    // 장면 이어붙이기 (모두 같은 규격으로 인코딩했으므로 무손실 이어붙임)
+    const listPath = join(tmpDir, "list.txt");
+    await writeFile(listPath, partFiles.map(p => `file '${p}'`).join("\n"), "utf8");
+    const outPath = join(tmpDir, "final.mp4");
+    await exec("ffmpeg", ["-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", "-movflags", "+faststart", outPath, "-y"], { timeout: 300000 });
+
+    // 완성본 업로드 (본인 폴더)
+    const clipPath = proj.user_id + "/" + rec.id + ".mp4";
+    const buf = await readFile(outPath);
+    const { error: ue } = await sb.storage.from("videos-clips")
+      .upload(clipPath, buf, { contentType: "video/mp4", upsert: true });
+    if (ue) throw new Error("완성본 업로드 실패: " + ue.message);
+
+    await sb.from("sc_recipes").update({ render_path: clipPath }).eq("id", rec.id);
+    await setProjectStatus(proj.id, "done", "숏츠 완성! 후보 화면에서 내려받을 수 있어요.");
+    await sb.from("sc_usage_log").insert({
+      project_id: proj.id, kind: "render",
+      duration_sec: segs.reduce((a, g) => a + ((Number(g.out_s) || 0) - (Number(g.in_s) || 0)), 0),
+      meta: { segments: segs.length, bytes: buf.length, recipe_id: rec.id },
+    });
+    console.log(`[render] 완료 r=${rec.id} 장면=${segs.length} 크기=${Math.round(buf.length / 1e6)}MB`);
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 // ---------- 메인 루프 ----------
 console.log(`[시작] 렌더 서버 ${WORKER_ID} — ${POLL_MS / 1000}초 간격 대기열 감시`);
 async function loop() {
@@ -688,6 +786,7 @@ async function loop() {
         if (job.job_type === "probe") await runProbe(job);
         else if (job.job_type === "transcribe") await runTranscribe(job);
         else if (job.job_type === "analyze") await runAnalyze(job);
+        else if (job.job_type === "render") await runRender(job);
         else throw new Error("아직 지원하지 않는 작업 유형: " + job.job_type);
         await finishJob(job.id, true);
         processedCount++;
@@ -699,7 +798,8 @@ async function loop() {
         } else {
           await finishJob(job.id, false, err.message);
           const failStatus = job.job_type === "transcribe" ? "failed_transcribe"
-            : job.job_type === "analyze" ? "failed_analyze" : "failed_probe";
+            : job.job_type === "analyze" ? "failed_analyze"
+            : job.job_type === "render" ? "failed_render" : "failed_probe";
           await setProjectStatus(job.project_id, failStatus, err.message.slice(0, 200));
         }
       }
