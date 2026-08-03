@@ -50,6 +50,11 @@
   .sc-cand .flag{font-size:12px;background:#fffbeb;color:#b45309;border-radius:999px;padding:2px 9px;}
   .sc-list-item.clickable{cursor:pointer;}
   .sc-list-item.clickable:hover{background:#f8fafc;}
+  .sc-cand.story{border:2px solid #a78bfa;background:#faf5ff;}
+  .sc-cand .storybadge{font-size:12.5px;font-weight:800;background:#7c3aed;color:#fff;border-radius:999px;padding:3px 10px;}
+  .sc-cand .segs{margin-top:10px;border-left:3px solid #a78bfa;padding-left:12px;}
+  .sc-cand .seg{font-size:13.5px;color:#334155;padding:4px 0;line-height:1.5;}
+  .sc-cand .seg b{color:#7c3aed;}
   .sc-hidden{display:none;}
 </style>
 </head>
@@ -279,15 +284,33 @@
       .eq("excluded", false).order("total_score", { ascending: false }).limit(10);
     if (!data || !data.length) return;
     $("sc-cands-title").textContent = title ? "— " + title : "";
+    // 스토리형 먼저, 그 다음 명장면 — 각각 점수 높은 순
+    data.sort((a, b) => (a.kind === "story" ? 0 : 1) - (b.kind === "story" ? 0 : 1) || b.total_score - a.total_score);
+    const fmtS = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
+    let momentRank = 0;
     const medal = (i) => i === 0 ? "🥇 1위" : i === 1 ? "🥈 2위" : i === 2 ? "🥉 3위" : (i + 1) + "위";
-    wrap.innerHTML = data.map((c, i) => {
-      const durS = Math.round((c.end_ms - c.start_ms) / 1000);
+    wrap.innerHTML = data.map((c) => {
       const sc = c.scores || {};
       const chips = [["훅", sc.hook], ["완결성", sc.standalone], ["밀도", sc.density], ["감정", sc.emotion], ["새로움", sc.novelty], ["근거", sc.proof]]
         .map(([k, v]) => `<span class="chip">${k} ${v ?? "?"}</span>`).join("");
       const flags = (c.risk_flags || []).map((f) => `<span class="flag">⚠️ ${escapeHtml(f)}</span>`).join("");
+      const isStory = c.kind === "story" && Array.isArray(c.segments) && c.segments.length;
+      if (isStory) {
+        const tot = Math.round(c.segments.reduce((a, g) => a + (g.out_s - g.in_s), 0));
+        const segHtml = c.segments.map((g, gi) =>
+          `<div class="seg"><b>장면${gi + 1}</b> ⏱️ ${fmtS(g.in_s)}~${fmtS(g.out_s)} — "${escapeHtml(g.caption || "")}"</div>`).join("");
+        return `<div class="sc-cand story">
+          <div class="top"><span class="storybadge">📖 스토리 짜집기</span><span class="time">장면 ${c.segments.length}개 · 총 ${tot}초</span><span class="score">AI 점수 ${Number(c.total_score).toFixed(1)}/10</span></div>
+          <div class="ttl">${escapeHtml(c.title || "제목 없음")}</div>
+          <div class="sum"><b>줄거리:</b> ${escapeHtml(c.summary || "")}</div>
+          <div class="segs">${segHtml}</div>
+          <div class="why">💡 ${escapeHtml((c.hook_reason || "").replace("[스토리 짜집기] ", ""))}</div>
+          <div class="chips">${chips}${flags}</div>
+        </div>`;
+      }
+      const durS = Math.round((c.end_ms - c.start_ms) / 1000);
       return `<div class="sc-cand">
-        <div class="top"><span class="rank">${medal(i)}</span><span class="time">⏱️ ${fmtT(c.start_ms)} ~ ${fmtT(c.end_ms)} (${durS}초)</span><span class="score">AI 점수 ${Number(c.total_score).toFixed(1)}/10</span></div>
+        <div class="top"><span class="rank">${medal(momentRank++)}</span><span class="time">⏱️ ${fmtT(c.start_ms)} ~ ${fmtT(c.end_ms)} (${durS}초)</span><span class="score">AI 점수 ${Number(c.total_score).toFixed(1)}/10</span></div>
         <div class="ttl">${escapeHtml(c.title || "제목 없음")}</div>
         <div class="why">💡 ${escapeHtml(c.hook_reason || "").replace(/\n/g, "<br>")}</div>
         <div class="sum">${escapeHtml(c.summary || "")}</div>
