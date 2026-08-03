@@ -1,6 +1,6 @@
 # Railway 빌드 설정 — ffmpeg/ffprobe 포함
 [phases.setup]
-nixPkgs = ["nodejs_20", "ffmpeg"]
+nixPkgs = ["nodejs_22", "ffmpeg"]
 
 [start]
 cmd = "npm start"
