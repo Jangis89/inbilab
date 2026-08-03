@@ -37,6 +37,19 @@
   .sc-badge.ok{background:#dcfce7;color:#166534;}
   .sc-badge.run{background:#dbeafe;color:#1d4ed8;}
   .sc-badge.err{background:#fee2e2;color:#b91c1c;}
+  .sc-cand{border:1px solid var(--line);border-radius:14px;padding:16px;margin-top:12px;background:#fff;}
+  .sc-cand .top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;}
+  .sc-cand .rank{font-weight:800;font-size:15px;}
+  .sc-cand .time{font-size:13.5px;color:var(--sub);background:#f1f5f9;border-radius:999px;padding:3px 10px;}
+  .sc-cand .score{font-weight:800;color:var(--blue);font-size:15px;}
+  .sc-cand .ttl{font-size:16.5px;font-weight:800;margin:8px 0 4px;}
+  .sc-cand .why{font-size:14px;color:#166534;background:#f0fdf4;border-radius:8px;padding:8px 12px;margin-top:8px;line-height:1.6;}
+  .sc-cand .sum{font-size:14px;color:var(--sub);margin-top:6px;line-height:1.6;}
+  .sc-cand .chips{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;}
+  .sc-cand .chip{font-size:12px;background:#eef2ff;color:#3730a3;border-radius:999px;padding:2px 9px;}
+  .sc-cand .flag{font-size:12px;background:#fffbeb;color:#b45309;border-radius:999px;padding:2px 9px;}
+  .sc-list-item.clickable{cursor:pointer;}
+  .sc-list-item.clickable:hover{background:#f8fafc;}
   .sc-hidden{display:none;}
 </style>
 </head>
@@ -91,9 +104,17 @@
         <div id="sc-probe" class="sc-probe sc-hidden"></div>
       </div>
 
+      <!-- AI가 찾은 숏츠 후보 -->
+      <div class="sc-card sc-hidden" id="sc-cands-card">
+        <div class="sc-h">🎯 AI가 찾은 숏츠 후보 <small id="sc-cands-title" style="font-weight:400;color:var(--sub);"></small></div>
+        <div class="sc-desc">점수가 높은 순서입니다. 시간을 보고 원본 영상에서 그 구간을 확인해 보세요. (다음 단계: 자동 편집은 곧 열립니다)</div>
+        <div id="sc-cands"></div>
+      </div>
+
       <!-- 내 프로젝트 -->
       <div class="sc-card">
         <div class="sc-h">내 영상 목록</div>
+        <div class="sc-desc" style="margin-bottom:0;">"후보 완료" 표시가 붙은 영상을 누르면 후보를 볼 수 있어요.</div>
         <div id="sc-list" class="sc-desc">불러오는 중…</div>
       </div>
     </div>
@@ -211,33 +232,70 @@
     upload.start();
   });
 
-  // 검사 결과 지켜보기
+  // 진행 상황 지켜보기: 검사 → 받아적기 → 후보 발굴까지 끝까지 따라간다 (최대 1시간)
   async function watchProbe(projectId) {
     const box = $("sc-probe");
-    for (let i = 0; i < 60; i++) {
+    let probeShown = false;
+    for (let i = 0; i < 720; i++) {
       await new Promise((r) => setTimeout(r, 5000));
-      const { data: p } = await sb.from("sc_projects").select("status,status_detail,probe,source_duration_sec").eq("id", projectId).single();
+      const { data: p } = await sb.from("sc_projects").select("status,status_detail,probe").eq("id", projectId).single();
       if (!p) continue;
-      if (p.status === "failed_probe") {
+      if (p.status && p.status.startsWith("failed")) {
         box.classList.remove("sc-hidden");
-        box.innerHTML = "❌ 영상 검사에 실패했어요: " + escapeHtml(p.status_detail || "") + "<br>파일이 손상되지 않았는지 확인 후 다시 올려주세요.";
+        box.innerHTML = "❌ 처리 중 문제가 생겼어요: " + escapeHtml(p.status_detail || "") + "<br>같은 파일을 다시 올리면 처음부터 다시 시도합니다.";
+        loadList();
         return;
       }
-      if (p.probe) {
+      if (p.probe && !probeShown) {
+        probeShown = true;
         const pr = p.probe;
         const min = Math.floor((pr.duration_sec || 0) / 60), sec = Math.round((pr.duration_sec || 0) % 60);
         box.classList.remove("sc-hidden");
         box.innerHTML =
           "✅ <b>영상 검사 통과!</b><br>길이 " + min + "분 " + sec + "초 · 화질 " + (pr.width || "?") + "×" + (pr.height || "?") +
           (pr.warnings && pr.warnings.length ? pr.warnings.map((w) => `<div class="warn">⚠️ ${escapeHtml(w)}</div>`).join("") : "") +
-          "<div style='margin-top:10px;color:var(--sub);'>다음 단계(AI가 숏츠감 찾기)는 곧 열립니다. 영상은 안전하게 보관 중입니다.</div>";
-        $("sc-ptext").textContent = "1단계 완료!";
+          "<div style='margin-top:10px;color:var(--sub);'>이어서 AI가 자동으로 <b>받아적기 → 숏츠감 찾기</b>를 진행합니다. 영상 길이에 따라 수십 분 걸릴 수 있어요. 이 창을 닫아도 계속 진행됩니다.</div>";
         loadList();
+      }
+      if (p.status === "transcribing") $("sc-ptext").textContent = "2단계: 음성을 글로 옮기는 중… (" + escapeHtml(p.status_detail || "") + ")";
+      else if (p.status === "analyzing") $("sc-ptext").textContent = "3단계: AI가 숏츠감 구간을 찾는 중…";
+      else if (p.status === "candidates_ready") {
+        $("sc-ptext").textContent = "🎉 완료! 아래에서 AI가 찾은 후보를 확인하세요.";
+        loadList();
+        loadCandidates(projectId);
         return;
       }
+      else if (p.probe) $("sc-ptext").textContent = "1단계 완료!";
     }
     box.classList.remove("sc-hidden");
-    box.textContent = "검사가 오래 걸리고 있어요. 아래 목록에서 상태를 확인해 주세요.";
+    box.textContent = "처리가 오래 걸리고 있어요. 아래 목록에서 상태를 확인해 주세요.";
+  }
+
+  // 후보 카드 보여주기
+  const fmtT = (ms) => { const t = Math.round(ms / 1000); return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
+  async function loadCandidates(projectId, title) {
+    const card = $("sc-cands-card"), wrap = $("sc-cands");
+    const { data } = await sb.from("sc_candidates").select("*").eq("project_id", projectId)
+      .eq("excluded", false).order("total_score", { ascending: false }).limit(10);
+    if (!data || !data.length) return;
+    $("sc-cands-title").textContent = title ? "— " + title : "";
+    const medal = (i) => i === 0 ? "🥇 1위" : i === 1 ? "🥈 2위" : i === 2 ? "🥉 3위" : (i + 1) + "위";
+    wrap.innerHTML = data.map((c, i) => {
+      const durS = Math.round((c.end_ms - c.start_ms) / 1000);
+      const sc = c.scores || {};
+      const chips = [["훅", sc.hook], ["완결성", sc.standalone], ["밀도", sc.density], ["감정", sc.emotion], ["새로움", sc.novelty], ["근거", sc.proof]]
+        .map(([k, v]) => `<span class="chip">${k} ${v ?? "?"}</span>`).join("");
+      const flags = (c.risk_flags || []).map((f) => `<span class="flag">⚠️ ${escapeHtml(f)}</span>`).join("");
+      return `<div class="sc-cand">
+        <div class="top"><span class="rank">${medal(i)}</span><span class="time">⏱️ ${fmtT(c.start_ms)} ~ ${fmtT(c.end_ms)} (${durS}초)</span><span class="score">AI 점수 ${Number(c.total_score).toFixed(1)}/10</span></div>
+        <div class="ttl">${escapeHtml(c.title || "제목 없음")}</div>
+        <div class="why">💡 ${escapeHtml(c.hook_reason || "")}</div>
+        <div class="sum">${escapeHtml(c.summary || "")}</div>
+        <div class="chips">${chips}${flags}</div>
+      </div>`;
+    }).join("");
+    card.classList.remove("sc-hidden");
+    card.scrollIntoView({ behavior: "smooth" });
   }
 
   // 내 프로젝트 목록
@@ -255,10 +313,19 @@
     el.innerHTML = data.map((p) => {
       const d = new Date(p.created_at);
       const dur = p.source_duration_sec ? Math.round(p.source_duration_sec / 60) + "분" : "";
-      return `<div class="sc-list-item"><span>🎞️ ${escapeHtml(p.title || "영상")} <small style="color:#94a3b8">${dur}</small></span>
-        <span>${badge(p.status)} <small style="color:#94a3b8">${d.getMonth() + 1}/${d.getDate()}</small></span></div>`;
+      const canClick = p.status === "candidates_ready";
+      return `<div class="sc-list-item${canClick ? " clickable" : ""}" ${canClick ? `data-pid="${p.id}" data-ptitle="${escapeHtml(p.title || "영상")}"` : ""}>
+        <span>🎞️ ${escapeHtml(p.title || "영상")} <small style="color:#94a3b8">${dur}</small></span>
+        <span>${badge(p.status)}${canClick ? " <b style='color:var(--blue);font-size:13px;'>후보 보기 ▸</b>" : ""} <small style="color:#94a3b8">${d.getMonth() + 1}/${d.getDate()}</small></span></div>`;
     }).join("");
+    // 완료된 영상이 있고 후보 창이 아직 안 열려 있으면 가장 최근 것을 자동으로 보여준다
+    const ready = data.find((p) => p.status === "candidates_ready");
+    if (ready && $("sc-cands-card").classList.contains("sc-hidden")) loadCandidates(ready.id, ready.title);
   }
+  $("sc-list").addEventListener("click", (e) => {
+    const row = e.target.closest(".sc-list-item.clickable");
+    if (row) loadCandidates(row.dataset.pid, row.dataset.ptitle);
+  });
   loadList();
 })();
 </script>
