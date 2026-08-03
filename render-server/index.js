@@ -418,7 +418,7 @@ function buildAnalyzePrompt(objective, chunkStartMin, chunkEndMin, lines) {
 1. 후보 0~4개. 각 20~75초. start_s / end_s는 "이 클립 기준" 초 단위입니다.
 2. start_s는 가장 강한 화면·발화가 나오는 순간 직전(0~1초 전)으로 잡으세요. 숏츠 첫 3초가 훅이 되게.
 3. 후보 구간만 따로 봐도 이해돼야 합니다 (완결성).
-4. title은 그 숏츠의 추천 제목 — 후킹 유형에 맞는 어그로형, 30자 이내.
+4. title은 그 숏츠의 추천 제목 — 후킹 유형에 맞는 어그로형, 30자 이내. 단, 그 구간에 실제로 나오는 내용만 약속하세요 (구간에 없는 이유·설명을 제목으로 약속하면 실패).
 5. 점수는 0~10 정수. hook 7점 미만이면 후보에서 빼세요.
 6. scores 항목: hook(첫 3초 훅 강도), standalone(완결성), density(정보 밀도), emotion(감정 반응), novelty(새로움·의외성), proof(근거·증거), duration_fit(길이 적합), context_dep(맥락 의존 — 낮을수록 좋음), safety(안전성).
 7. risk_flags: 주의할 점 배열 (예: "동물 부상 장면", "밀렵 언급"). 없으면 빈 배열.
@@ -428,6 +428,29 @@ ${lines}
 
 JSON만 출력하세요:
 {"candidates":[{"start_s":123.4,"end_s":168.0,"hook_type":3,"hook_type_name":"충격 비주얼","first_scene":"첫 3초에 실제로 보이는 화면 묘사","title":"...","hook_reason":"왜 터질 수 있는지 한 줄","summary":"구간 내용 요약 한 줄","scores":{"hook":8,"standalone":7,"density":6,"emotion":7,"novelty":9,"proof":5,"duration_fit":8,"context_dep":2,"safety":9},"risk_flags":[]}]}`;
+}
+
+// 스토리 짜집기 지시문: 명장면들을 재료로 새 이야기를 창작 (오락용 각색 허용)
+function buildStoryPrompt(objective, matList) {
+  return `당신은 유튜브 숏츠 스토리텔링 작가입니다. 아래는 한 긴 영상에서 발굴한 명장면 목록입니다. 원본은 잔잔한 다큐일 수 있지만, 시청자는 아무 생각 없이 쉬려고 숏츠를 봅니다. 장면들을 오려 순서를 바꿔 이어붙여, 원본에 없던 "새 이야기"를 창작하세요. 오락용 각색·과장·의인화·스토리 지어내기 전부 허용입니다 (단, 실존 인물 비방·의학/투자 허위정보는 금지).
+
+예시: "엉덩이 비비는 장면(발정)" + "짝짓기 장면" + "새끼 탄생 장면"을 이어붙여 → "발정난 사슴이 눈이 맞아 1년 뒤 가족을 이뤘다"는 이야기로 재구성.
+
+[명장면 재료]
+${matList}
+
+[규칙]
+1. 스토리 1~3개. 각 스토리는 장면 2~5개를 이어붙임 (장면 합계 20~90초).
+2. 장면 순서는 재미가 우선 — 원본 시간 순서를 무시해도 됩니다 (결과를 먼저 보여주고 되감기 등).
+3. 첫 장면 = 훅. 가장 강한 장면으로 시작하세요.
+4. 각 장면의 start_s/end_s는 재료 목록의 구간 안에서 고르되, 더 짧게 잘라 써도 됩니다 (원본 기준 초).
+5. caption은 그 장면 위에 얹을 자막 한 줄 — 짧고 강한 구어체(띄어쓰기 포함 20자 이내), 앞뒤 자막이 이야기로 이어지게.
+6. title은 어그로형 제목 30자 이내. 스토리형은 창작이 허용되므로 과장 가능.
+7. storyline은 이 스토리의 줄거리 1~2문장.
+8. 점수는 0~10 정수: hook, standalone, density, emotion, novelty, proof, duration_fit, context_dep, safety.
+
+JSON만 출력하세요:
+{"stories":[{"title":"...","storyline":"...","hook_reason":"왜 터질 수 있는지 한 줄","segments":[{"start_s":800,"end_s":812,"caption":"장면 위 자막"}],"scores":{"hook":9,"standalone":8,"density":6,"emotion":8,"novelty":9,"proof":4,"duration_fit":8,"context_dep":1,"safety":9},"risk_flags":[]}]}`;
 }
 
 async function runAnalyze(job) {
@@ -566,23 +589,91 @@ async function runAnalyze(job) {
   }
   if (kept.length === 0) throw new Error("규칙을 통과한 후보가 없습니다 (영상에 숏츠감 구간이 부족할 수 있음)");
 
+  // ---- 스토리 짜집기: 명장면들을 재료로 새 이야기 창작 ----
+  await setProjectStatus(proj.id, "analyzing", "AI가 장면들을 엮어 이야기를 짜는 중…");
+  const clampSc = sc => ({
+    hook: clamp10(sc.hook), standalone: clamp10(sc.standalone), density: clamp10(sc.density),
+    emotion: clamp10(sc.emotion), novelty: clamp10(sc.novelty), proof: clamp10(sc.proof),
+    duration_fit: clamp10(sc.duration_fit), context_dep: clamp10(sc.context_dep), safety: clamp10(sc.safety),
+  });
+  const weighted = scores => {
+    const parts = {
+      hook: scores.hook, novelty: scores.novelty, emotion: scores.emotion, density: scores.density,
+      standalone: scores.standalone, proof: scores.proof, duration_fit: scores.duration_fit,
+      context_indep: 10 - scores.context_dep,
+    };
+    let t = 0;
+    for (const k of Object.keys(W)) t += W[k] * (parts[k] ?? 0);
+    return Math.round(t * 100) / 100;
+  };
+  let stories = [];
+  if (kept.length >= 2) {
+    try {
+      const matList = kept.map((c, i) =>
+        `${i + 1}. [${Math.round(c.start_ms / 1000)}초~${Math.round(c.end_ms / 1000)}초] ${c.title}\n   내용: ${c.summary}\n   훅: ${c.hook_reason.replace(/\n/g, " · ")}`).join("\n");
+      const r2 = await callGemini({
+        contents: [{ parts: [{ text: buildStoryPrompt(objective, matList) }] }],
+        generationConfig: { responseMimeType: "application/json", temperature: 0.8, maxOutputTokens: 32768 },
+      });
+      let so = parseJsonLoose(geminiText(r2.gj));
+      if (Array.isArray(so)) so = { stories: so };
+      for (const s of (so && Array.isArray(so.stories) ? so.stories : [])) {
+        const segs = (Array.isArray(s.segments) ? s.segments : []).map(g => ({
+          in_s: Math.max(0, Math.round((Number(g.start_s) || 0) * 10) / 10),
+          out_s: Math.min(durationSec, Math.round((Number(g.end_s) || 0) * 10) / 10),
+          caption: String(g.caption || "").slice(0, 60),
+        })).filter(g => g.out_s - g.in_s >= 2 && g.out_s - g.in_s <= 50);
+        if (segs.length < 2 || segs.length > 6) continue;
+        const totalSec = segs.reduce((a, g) => a + (g.out_s - g.in_s), 0);
+        if (totalSec < 15 || totalSec > 95) continue;
+        const scores = clampSc(s.scores || {});
+        stories.push({
+          kind: "story", segments: segs,
+          start_ms: Math.round(segs[0].in_s * 1000),
+          end_ms: Math.round(segs[0].in_s * 1000 + totalSec * 1000),
+          title: String(s.title || "").slice(0, 80),
+          hook_reason: "[스토리 짜집기] " + String(s.hook_reason || "").slice(0, 240),
+          summary: String(s.storyline || s.summary || "").slice(0, 300),
+          scores, total_score: weighted(scores),
+          risk_flags: Array.isArray(s.risk_flags) ? s.risk_flags.slice(0, 5).map(x => String(x).slice(0, 100)) : [],
+        });
+      }
+      stories.sort((a, b) => b.total_score - a.total_score);
+      stories = stories.slice(0, 3);
+      console.log(`[analyze] p=${proj.id} 스토리 ${stories.length}개 구성됨`);
+    } catch (e) {
+      console.error("[analyze] 스토리 구성 실패 (명장면 후보는 그대로 저장):", e.message);
+    }
+  }
+
   // 다시 실행해도 겹치지 않게: 이전 후보 삭제 후 저장 (멱등성)
   await sb.from("sc_candidates").delete().eq("project_id", proj.id);
-  const rows = kept.map(c => ({
-    project_id: proj.id, start_ms: c.start_ms, end_ms: c.end_ms, title: c.title,
-    hook_reason: c.hook_reason, summary: c.summary, scores: c.scores,
-    total_score: c.total_score, risk_flags: c.risk_flags,
-    model_info: { model: r.model, prompt_ver: PROMPT_VER, objective },
-  }));
+  const rows = [
+    ...stories.map(c => ({
+      project_id: proj.id, kind: "story", segments: c.segments,
+      start_ms: c.start_ms, end_ms: c.end_ms, title: c.title,
+      hook_reason: c.hook_reason, summary: c.summary, scores: c.scores,
+      total_score: c.total_score, risk_flags: c.risk_flags,
+      model_info: { model: r.model, prompt_ver: PROMPT_VER, objective },
+    })),
+    ...kept.map(c => ({
+      project_id: proj.id, kind: "moment", segments: null,
+      start_ms: c.start_ms, end_ms: c.end_ms, title: c.title,
+      hook_reason: c.hook_reason, summary: c.summary, scores: c.scores,
+      total_score: c.total_score, risk_flags: c.risk_flags,
+      model_info: { model: r.model, prompt_ver: PROMPT_VER, objective },
+    })),
+  ];
   const { error: ie } = await sb.from("sc_candidates").insert(rows);
   if (ie) throw new Error("후보 저장 실패: " + ie.message);
 
-  await setProjectStatus(proj.id, "candidates_ready", "후보 " + kept.length + "개 발굴 완료");
+  await setProjectStatus(proj.id, "candidates_ready",
+    "후보 발굴 완료 — 스토리 " + stories.length + "개 · 명장면 " + kept.length + "개");
   await sb.from("sc_usage_log").insert({
     project_id: proj.id, kind: "analyze", duration_sec: durationSec,
-    meta: { candidates: kept.length, model: r.model, objective, prompt_ver: PROMPT_VER },
+    meta: { candidates: kept.length, stories: stories.length, model: r.model, objective, prompt_ver: PROMPT_VER },
   });
-  console.log(`[analyze] 완료 p=${proj.id} 후보=${kept.length} (${kept.map(c => fmtTime(c.start_ms) + "~" + fmtTime(c.end_ms)).join(", ")})`);
+  console.log(`[analyze] 완료 p=${proj.id} 스토리=${stories.length} 명장면=${kept.length}`);
 }
 
 // ---------- 메인 루프 ----------
