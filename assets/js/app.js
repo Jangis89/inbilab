@@ -125,6 +125,7 @@
     const aiPages = {
       video_analyze: ["analyze.html", "analyze", "🎬", "영상 분석"],
       blueprint: ["blueprint.html", "blueprint", "🧩", "제작 설계도"],
+      shorts_maker: ["shorts.html", "shorts", "✂️", "숏츠 제작기"],
     };
     try {
       const { data: ff } = await sb.from("feature_flags").select("key,is_public");
