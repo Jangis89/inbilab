@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#2563eb">
+<link rel="icon" type="image/png" sizes="48x48" href="/assets/icons/favicon-48.png">
+<link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
+<title>숏츠 제작기 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  .sc-wrap{max-width:860px;margin:0 auto;padding:24px 16px 60px;}
+  .sc-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px;margin-bottom:18px;}
+  .sc-h{font-size:22px;font-weight:800;margin:0 0 6px;}
+  .sc-desc{color:var(--sub);font-size:15px;margin:0 0 16px;line-height:1.6;}
+  .sc-drop{border:2px dashed #cbd5e1;border-radius:16px;padding:38px 16px;text-align:center;cursor:pointer;transition:.15s;}
+  .sc-drop:hover,.sc-drop.on{border-color:var(--blue);background:#eff6ff;}
+  .sc-drop .big{font-size:40px;}
+  .sc-drop p{margin:8px 0 0;color:var(--sub);font-size:15px;}
+  .sc-file{display:flex;align-items:center;gap:10px;background:var(--bg-soft);border-radius:12px;padding:12px 14px;margin-top:12px;font-size:15px;}
+  .sc-obj{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:8px;}
+  .sc-obj button{border:2px solid var(--line);background:#fff;border-radius:14px;padding:14px 8px;font-size:15.5px;font-weight:700;cursor:pointer;min-height:64px;}
+  .sc-obj button.on{border-color:var(--blue);background:#eff6ff;color:var(--blue);}
+  .sc-obj small{display:block;font-weight:500;color:var(--sub);font-size:12.5px;margin-top:4px;}
+  .sc-agree{display:flex;gap:10px;align-items:flex-start;background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:14px;margin-top:16px;font-size:14.5px;line-height:1.55;}
+  .sc-agree input{width:22px;height:22px;margin-top:2px;flex-shrink:0;}
+  .sc-go{width:100%;margin-top:16px;font-size:18px;padding:16px;border-radius:14px;border:0;background:var(--blue);color:#fff;font-weight:800;cursor:pointer;min-height:56px;}
+  .sc-go:disabled{background:#cbd5e1;cursor:not-allowed;}
+  .sc-bar{height:18px;background:#e2e8f0;border-radius:9px;overflow:hidden;margin-top:14px;}
+  .sc-bar i{display:block;height:100%;background:var(--blue);width:0%;transition:width .3s;}
+  .sc-status{font-size:15px;color:var(--sub);margin-top:8px;text-align:center;}
+  .sc-probe{margin-top:14px;font-size:15px;line-height:1.7;}
+  .sc-probe .warn{color:#b45309;background:#fffbeb;border-radius:8px;padding:8px 12px;margin-top:6px;}
+  .sc-list-item{display:flex;justify-content:space-between;gap:8px;padding:12px 4px;border-bottom:1px solid var(--line);font-size:14.5px;flex-wrap:wrap;}
+  .sc-badge{font-size:12.5px;border-radius:999px;padding:3px 10px;background:#e2e8f0;white-space:nowrap;}
+  .sc-badge.ok{background:#dcfce7;color:#166534;}
+  .sc-badge.run{background:#dbeafe;color:#1d4ed8;}
+  .sc-badge.err{background:#fee2e2;color:#b91c1c;}
+  .sc-hidden{display:none;}
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+
+<main class="page">
+  <div class="sc-wrap">
+    <h1 style="font-size:26px;">숏츠 제작기 ✂️ <span style="font-size:13px;color:#94a3b8;font-weight:600;">1단계(업로드) 개발판</span></h1>
+    <p class="sc-desc">긴 영상(라이브 녹화·강의)을 올리면 AI가 숏츠감 구간을 찾아드립니다.<br>지금은 <b>1단계: 영상 올리기와 자동 검사</b>까지 작동합니다.</p>
+
+    <div id="sc-locked" class="sc-card sc-hidden">
+      <div class="sc-h">🔒 준비 중입니다</div>
+      <p class="sc-desc">이 기능은 아직 관리자 전용입니다. 완성되면 공개됩니다.</p>
+    </div>
+
+    <div id="sc-main" class="sc-hidden">
+      <!-- 1. 파일 선택 -->
+      <div class="sc-card">
+        <div class="sc-h">① 영상 올리기</div>
+        <p class="sc-desc">내 컴퓨터(또는 폰)에 있는 영상 파일을 선택하세요. 3분~2시간 영상을 권장합니다.</p>
+        <div id="sc-drop" class="sc-drop">
+          <div class="big">📹</div>
+          <b style="font-size:17px;">여기를 눌러 영상 선택</b>
+          <p>또는 파일을 이 상자로 끌어다 놓으세요 (MP4, MOV, WEBM, MKV)</p>
+        </div>
+        <input type="file" id="sc-input" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.webm,.mkv" style="display:none">
+        <div id="sc-fileinfo" class="sc-file sc-hidden"></div>
+
+        <div style="margin-top:18px;">
+          <b style="font-size:16px;">② 무엇을 원하시나요?</b>
+          <div class="sc-obj" id="sc-obj">
+            <button data-v="views" class="on">🔥 조회수<small>많이 퍼지는 숏츠</small></button>
+            <button data-v="sales">💰 판매·상담<small>문의로 이어지는 숏츠</small></button>
+            <button data-v="edu">📘 교육<small>핵심이 잘 전달되는 숏츠</small></button>
+          </div>
+        </div>
+
+        <label class="sc-agree">
+          <input type="checkbox" id="sc-rights">
+          <span><b>권리 확인(필수)</b> — 이 영상은 내가 만들었거나, 사용 허가를 받은 영상입니다. 저작권 문제는 올리는 사람에게 책임이 있습니다.</span>
+        </label>
+
+        <button id="sc-go" class="sc-go" disabled>업로드 시작</button>
+
+        <div id="sc-prog" class="sc-hidden">
+          <div class="sc-bar"><i id="sc-bar-i"></i></div>
+          <div class="sc-status" id="sc-ptext">준비 중…</div>
+          <div class="sc-status" style="font-size:13px;">인터넷이 끊겨도 같은 파일을 다시 선택하면 이어서 올라갑니다.</div>
+        </div>
+
+        <div id="sc-probe" class="sc-probe sc-hidden"></div>
+      </div>
+
+      <!-- 내 프로젝트 -->
+      <div class="sc-card">
+        <div class="sc-h">내 영상 목록</div>
+        <div id="sc-list" class="sc-desc">불러오는 중…</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.1.0/dist/tus.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+(async function () {
+  const user = await requireLogin();
+  if (!user) return;
+  await renderHeader("shorts");
+  renderFooter();
+
+  // 기능 스위치 확인 (꺼져 있으면 관리자만)
+  const adm = await isAdmin(user);
+  try {
+    const { data: ff } = await sb.from("feature_flags").select("is_public").eq("key", "shorts_maker").maybeSingle();
+    const open = (ff && ff.is_public) || adm;
+    document.getElementById(open ? "sc-main" : "sc-locked").classList.remove("sc-hidden");
+    if (!open) return;
+  } catch { document.getElementById("sc-main").classList.remove("sc-hidden"); }
+
+  const $ = (id) => document.getElementById(id);
+  let file = null;
+  let objective = "views";
+
+  // 목적 선택
+  $("sc-obj").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    objective = b.dataset.v;
+    [...$("sc-obj").children].forEach((x) => x.classList.toggle("on", x === b));
+  });
+
+  // 파일 선택/드롭
+  const drop = $("sc-drop"), input = $("sc-input");
+  drop.addEventListener("click", () => input.click());
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("on"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("on"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("on"); if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]); });
+  input.addEventListener("change", () => { if (input.files[0]) setFile(input.files[0]); });
+
+  function fmtSize(n){ if(n>1e9) return (n/1e9).toFixed(2)+" GB"; if(n>1e6) return (n/1e6).toFixed(1)+" MB"; return Math.round(n/1e3)+" KB"; }
+
+  function setFile(f) {
+    const okExt = /\.(mp4|mov|webm|mkv)$/i.test(f.name);
+    if (!okExt) { alert("영상 파일(MP4, MOV, WEBM, MKV)만 올릴 수 있어요."); return; }
+    if (f.size > 5 * 1024 * 1024 * 1024) { alert("5GB보다 큰 파일은 아직 올릴 수 없어요."); return; }
+    file = f;
+    $("sc-fileinfo").classList.remove("sc-hidden");
+    $("sc-fileinfo").innerHTML = "🎞️ <b>" + escapeHtml(f.name) + "</b> · " + fmtSize(f.size);
+    updateGo();
+  }
+  $("sc-rights").addEventListener("change", updateGo);
+  function updateGo(){ $("sc-go").disabled = !(file && $("sc-rights").checked); }
+
+  // 업로드 (TUS 분할 업로드 — 중단 후 재개 지원)
+  $("sc-go").addEventListener("click", async () => {
+    if (!file) return;
+    $("sc-go").disabled = true;
+    $("sc-prog").classList.remove("sc-hidden");
+    $("sc-ptext").textContent = "업로드 준비 중…";
+
+    const { data: sess } = await sb.auth.getSession();
+    const token = sess && sess.session ? sess.session.access_token : null;
+    if (!token) { alert("로그인이 풀렸어요. 다시 로그인해 주세요."); location.reload(); return; }
+
+    const safeName = file.name.replace(/[^\w.\-가-힣 ]/g, "_");
+    const objectName = user.id + "/" + Date.now() + "_" + safeName;
+    const cfg = window.INBILAB_CONFIG;
+
+    const upload = new tus.Upload(file, {
+      endpoint: cfg.SUPABASE_URL + "/storage/v1/upload/resumable",
+      retryDelays: [0, 3000, 8000, 15000, 30000],
+      headers: { authorization: "Bearer " + token, "x-upsert": "false" },
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      chunkSize: 6 * 1024 * 1024,
+      metadata: { bucketName: "videos-source", objectName, contentType: file.type || "video/mp4", cacheControl: "3600" },
+      onError: (err) => {
+        $("sc-ptext").textContent = "⚠️ 업로드에 문제가 생겼어요. 잠시 후 [업로드 시작]을 다시 눌러주세요.";
+        console.error("upload error", err);
+        $("sc-go").disabled = false;
+      },
+      onProgress: (sent, total) => {
+        const pct = Math.floor((sent / total) * 100);
+        $("sc-bar-i").style.width = pct + "%";
+        $("sc-ptext").textContent = "올리는 중… " + pct + "% (" + fmtSize(sent) + " / " + fmtSize(total) + ")";
+      },
+      onSuccess: async () => {
+        $("sc-bar-i").style.width = "100%";
+        $("sc-ptext").textContent = "업로드 완료! 영상을 검사하고 있어요…";
+        // 프로젝트 등록 → 서버가 자동으로 검사(probe) 시작
+        const { data: proj, error } = await sb.from("sc_projects").insert({
+          user_id: user.id, title: file.name, source_path: objectName,
+          source_bytes: file.size, objective, rights_agreed_at: new Date().toISOString(),
+        }).select("id").single();
+        if (error) { $("sc-ptext").textContent = "⚠️ 등록 오류: " + error.message; return; }
+        await sb.from("sc_events").insert({ user_id: user.id, project_id: proj.id, event: "upload_done", payload: { size: file.size } });
+        watchProbe(proj.id);
+        loadList();
+      },
+    });
+    // 이전에 올리다 만 기록이 있으면 이어서
+    const prev = await upload.findPreviousUploads();
+    if (prev.length) upload.resumeFromPreviousUpload(prev[0]);
+    upload.start();
+  });
+
+  // 검사 결과 지켜보기
+  async function watchProbe(projectId) {
+    const box = $("sc-probe");
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      const { data: p } = await sb.from("sc_projects").select("status,status_detail,probe,source_duration_sec").eq("id", projectId).single();
+      if (!p) continue;
+      if (p.status === "failed_probe") {
+        box.classList.remove("sc-hidden");
+        box.innerHTML = "❌ 영상 검사에 실패했어요: " + escapeHtml(p.status_detail || "") + "<br>파일이 손상되지 않았는지 확인 후 다시 올려주세요.";
+        return;
+      }
+      if (p.probe) {
+        const pr = p.probe;
+        const min = Math.floor((pr.duration_sec || 0) / 60), sec = Math.round((pr.duration_sec || 0) % 60);
+        box.classList.remove("sc-hidden");
+        box.innerHTML =
+          "✅ <b>영상 검사 통과!</b><br>길이 " + min + "분 " + sec + "초 · 화질 " + (pr.width || "?") + "×" + (pr.height || "?") +
+          (pr.warnings && pr.warnings.length ? pr.warnings.map((w) => `<div class="warn">⚠️ ${escapeHtml(w)}</div>`).join("") : "") +
+          "<div style='margin-top:10px;color:var(--sub);'>다음 단계(AI가 숏츠감 찾기)는 곧 열립니다. 영상은 안전하게 보관 중입니다.</div>";
+        $("sc-ptext").textContent = "1단계 완료!";
+        loadList();
+        return;
+      }
+    }
+    box.classList.remove("sc-hidden");
+    box.textContent = "검사가 오래 걸리고 있어요. 아래 목록에서 상태를 확인해 주세요.";
+  }
+
+  // 내 프로젝트 목록
+  const badge = (s) => {
+    const map = { uploaded: ["검사 완료", "ok"], probing: ["검사 중", "run"], transcribing: ["전사 중", "run"],
+      analyzing: ["분석 중", "run"], candidates_ready: ["후보 완료", "ok"], rendering: ["만드는 중", "run"], done: ["완성", "ok"] };
+    const [t, c] = map[s] || (s && s.startsWith("failed") ? ["실패", "err"] : [s || "?", ""]);
+    return `<span class="sc-badge ${c}">${t}</span>`;
+  };
+  async function loadList() {
+    const { data } = await sb.from("sc_projects").select("id,title,status,source_duration_sec,created_at")
+      .order("created_at", { ascending: false }).limit(5);
+    const el = $("sc-list");
+    if (!data || !data.length) { el.textContent = "아직 올린 영상이 없습니다."; return; }
+    el.innerHTML = data.map((p) => {
+      const d = new Date(p.created_at);
+      const dur = p.source_duration_sec ? Math.round(p.source_duration_sec / 60) + "분" : "";
+      return `<div class="sc-list-item"><span>🎞️ ${escapeHtml(p.title || "영상")} <small style="color:#94a3b8">${dur}</small></span>
+        <span>${badge(p.status)} <small style="color:#94a3b8">${d.getMonth() + 1}/${d.getDate()}</small></span></div>`;
+    }).join("");
+  }
+  loadList();
+})();
+</script>
+</body>
+</html>
