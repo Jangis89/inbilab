@@ -483,16 +483,21 @@ async function runAnalyze(job) {
           ] }],
           generationConfig: {
             responseMimeType: "application/json", temperature: 0.4,
-            mediaResolution: "MEDIA_RESOLUTION_LOW", maxOutputTokens: 16384,
+            mediaResolution: "MEDIA_RESOLUTION_LOW", maxOutputTokens: 65536,
           },
         });
         usedModel = r.model;
-        out = parseJsonLoose(geminiText(r.gj));
+        const rawText = geminiText(r.gj);
+        out = parseJsonLoose(rawText);
+        if (!out || !Array.isArray(out.candidates)) {
+          const fin = r.gj?.candidates?.[0]?.finishReason || "없음";
+          console.error(`[analyze] 해석 실패 진단: finishReason=${fin}, 응답 앞부분=${rawText.slice(0, 200)}`);
+          throw new Error((ci + 1) + "번째 구간 분석 결과 해석 실패 (finishReason=" + fin + ")");
+        }
       } finally {
         await geminiDeleteFile(gFile.name);
         await unlink(proxyPath).catch(() => {});
       }
-      if (!out || !Array.isArray(out.candidates)) throw new Error((ci + 1) + "번째 구간 분석 결과 해석 실패");
       for (const c of out.candidates) {
         const s0 = Number(c.start_s), e0 = Number(c.end_s);
         if (!isFinite(s0) || !isFinite(e0)) continue;
