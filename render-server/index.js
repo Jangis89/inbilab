@@ -226,7 +226,7 @@ function geminiText(gj) {
 function parseJsonLoose(text) {
   if (!text) return null;
   try { return JSON.parse(text); } catch {}
-  const m = text.match(/\{[\s\S]*\}/);
+  const m = text.match(/\{[\s\S]*\}/) || text.match(/\[[\s\S]*\]/);
   if (m) { try { return JSON.parse(m[0]); } catch {} }
   return null;
 }
@@ -489,6 +489,7 @@ async function runAnalyze(job) {
         usedModel = r.model;
         const rawText = geminiText(r.gj);
         out = parseJsonLoose(rawText);
+        if (Array.isArray(out)) out = { candidates: out }; // 포장 없이 목록만 보내는 경우도 수용
         if (!out || !Array.isArray(out.candidates)) {
           const fin = r.gj?.candidates?.[0]?.finishReason || "없음";
           console.error(`[analyze] 해석 실패 진단: finishReason=${fin}, 응답 앞부분=${rawText.slice(0, 200)}`);
