@@ -32,8 +32,11 @@ const GEMINI_MODELS = ["gemini-flash-latest", "gemini-pro-latest"];
 const WORKER_ID = "worker-" + Math.random().toString(36).slice(2, 8);
 const POLL_MS = 5000;
 const CHUNK_SEC = 600; // 전사용 오디오를 10분 단위로 잘라 처리 (안정성·재시도 용이)
-const PROMPT_VER = "a2-video"; // 후보 발굴 프롬프트 버전 (a1=대본만, a2=영상 직접 시청)
-const VIDEO_CHUNK_SEC = 1200;   // 후보 발굴용 영상을 20분 단위로 잘라 AI에게 보여줌
+const PROMPT_VER = "a3-ingredients"; // a1=대본만, a2=통짜 영상, a3=재료(장면) 기반
+const VIDEO_CHUNK_SEC = 1200;   // 작업용 영상을 20분 단위로 처리
+const SHOT_MIN_SEC = 2.5;       // 재료(장면) 최소 길이 — 이보다 짧으면 앞 장면에 합침
+const SHOT_MAX_SEC = 12;        // 재료 최대 길이 — 이보다 길면 쪼갬
+const SHOT_BATCH = 12;          // AI에게 한 번에 보여줄 재료 개수
 
 // ---------- 상태 확인용 웹 응답 (Railway 헬스체크) ----------
 const PORT = process.env.PORT || 8080;
@@ -430,27 +433,44 @@ JSON만 출력하세요:
 {"candidates":[{"start_s":123.4,"end_s":168.0,"hook_type":3,"hook_type_name":"충격 비주얼","first_scene":"첫 3초에 실제로 보이는 화면 묘사","title":"...","hook_reason":"왜 터질 수 있는지 한 줄","summary":"구간 내용 요약 한 줄","scores":{"hook":8,"standalone":7,"density":6,"emotion":7,"novelty":9,"proof":5,"duration_fit":8,"context_dep":2,"safety":9},"risk_flags":[]}]}`;
 }
 
-// 스토리 짜집기 지시문: 명장면들을 재료로 새 이야기를 창작 (오락용 각색 허용)
-function buildStoryPrompt(objective, matList) {
-  return `당신은 유튜브 숏츠 스토리텔링 작가입니다. 아래는 한 긴 영상에서 발굴한 명장면 목록입니다. 원본은 잔잔한 다큐일 수 있지만, 시청자는 아무 생각 없이 쉬려고 숏츠를 봅니다. 장면들을 오려 순서를 바꿔 이어붙여, 원본에 없던 "새 이야기"를 창작하세요. 오락용 각색·과장·의인화·스토리 지어내기 전부 허용입니다 (단, 실존 인물 비방·의학/투자 허위정보는 금지).
+// 재료 기록 지시문: 클립 여러 개를 보고 "실제로 보이는 것만" 기록 (창작 금지)
+function buildIngredientPrompt(count) {
+  return `당신은 영상 재료 기록원입니다. 첨부된 짧은 클립 ${count}개를 순서대로 하나씩 보고, 각 클립에 "실제로 보이는 것"만 기록하세요.
 
-예시: "엉덩이 비비는 장면(발정)" + "짝짓기 장면" + "새끼 탄생 장면"을 이어붙여 → "발정난 사슴이 눈이 맞아 1년 뒤 가족을 이뤘다"는 이야기로 재구성.
-
-[명장면 재료]
-${matList}
-
-[규칙]
-1. 스토리 1~3개. 각 스토리는 장면 2~5개를 이어붙임 (장면 합계 20~90초).
-2. 장면 순서는 재미가 우선 — 원본 시간 순서를 무시해도 됩니다 (결과를 먼저 보여주고 되감기 등).
-3. 첫 장면 = 훅. 가장 강한 장면으로 시작하세요.
-4. 각 장면의 start_s/end_s는 재료 목록의 구간 안에서 고르되, 더 짧게 잘라 써도 됩니다 (원본 기준 초).
-5. caption은 그 장면 위에 얹을 자막 한 줄 — 짧고 강한 구어체(띄어쓰기 포함 20자 이내), 앞뒤 자막이 이야기로 이어지게.
-6. title은 어그로형 제목 30자 이내. 스토리형은 창작이 허용되므로 과장 가능.
-7. storyline은 이 스토리의 줄거리 1~2문장.
-8. 점수는 0~10 정수: hook, standalone, density, emotion, novelty, proof, duration_fit, context_dep, safety.
+[규칙 — 어기면 실패]
+- 추측·창작·해석 금지. 화면에 보이는 사실만. (예: "다리를 다친 것 같다" 금지 → 다리가 실제로 잘려 있을 때만 기록)
+- desc: 이 클립에 보이는 것 한 문장 (주어+행동 중심, 한국어)
+- action: 핵심 움직임 한 단어~짧은 구 (예: "나무 오르기", "걷기", "정지 화면")
+- subject_pos: 주인공(가장 눈에 띄는 대상)이 화면의 어디에 있는지 — left | center | right
+- tags: 검색용 단어 2~4개 (예: ["사향노루","야간","숲"])
+- usable: 까맣거나 흐릿하거나 자막판 같은 쓸모없는 클립이면 false
+- i는 클립 순서(1부터). 첨부된 순서 그대로.
 
 JSON만 출력하세요:
-{"stories":[{"title":"...","storyline":"...","hook_reason":"왜 터질 수 있는지 한 줄","segments":[{"start_s":800,"end_s":812,"caption":"장면 위 자막"}],"scores":{"hook":9,"standalone":8,"density":6,"emotion":8,"novelty":9,"proof":4,"duration_fit":8,"context_dep":1,"safety":9},"risk_flags":[]}]}`;
+{"clips":[{"i":1,"desc":"...","action":"...","subject_pos":"center","tags":["..."],"usable":true}]}`;
+}
+
+// 시나리오 지시문: 재료 창고 목록만 보고 이야기를 창작 (재료에 없는 장면 사용 금지)
+function buildStoryPrompt(objective, matList) {
+  return `당신은 유튜브 숏츠 스토리텔링 작가입니다. 아래는 한 긴 영상을 잘게 잘라 만든 "재료 창고"(장면 사전)입니다. 원본은 잔잔한 다큐일 수 있지만, 시청자는 아무 생각 없이 쉬려고 숏츠를 봅니다. 재료들을 골라 순서를 바꿔 이어붙여, 원본에 없던 "새 이야기"를 창작하세요. 오락용 각색·과장·의인화·스토리 지어내기 전부 허용입니다 (단, 실존 인물 비방·의학/투자 허위정보는 금지).
+
+예시: "엉덩이 비비는 장면" + "짝짓기 장면" + "새끼 장면"을 이어붙여 → "발정난 사슴이 눈이 맞아 1년 뒤 가족을 이뤘다"는 이야기로 재구성.
+
+[재료 창고 — 각 재료는 #번호로 부릅니다]
+${matList}
+
+[규칙 — 어기면 실패]
+1. 반드시 재료 창고에 있는 #번호만 사용하세요. 재료 설명(desc)에 없는 내용을 이야기 근거로 쓰지 마세요.
+2. 스토리 2~3개. 각 스토리는 재료 2~6개를 이어붙임 (합계 20~90초).
+3. 재료 순서는 재미가 우선 — 원본 시간 순서를 무시해도 됩니다.
+4. 첫 재료 = 훅. 가장 강한 화면으로 시작하세요.
+5. caption은 그 장면 위에 수강생이 얹을 자막 문구 — 짧고 강한 구어체(띄어쓰기 포함 22자 이내), 앞뒤가 이야기로 이어지게.
+6. narration은 그 장면에서 수강생이 AI 목소리로 읽을 나레이션 한 문장 (자막보다 조금 길어도 됨).
+7. title은 어그로형 제목 30자 이내. 창작 허용.
+8. storyline은 줄거리 1~2문장. 점수는 0~10 정수.
+
+JSON만 출력하세요:
+{"stories":[{"title":"...","storyline":"...","hook_reason":"왜 터질 수 있는지 한 줄","scenes":[{"shot":12,"caption":"장면 위 자막","narration":"AI 목소리로 읽을 문장"}],"scores":{"hook":9,"standalone":8,"density":6,"emotion":8,"novelty":9,"proof":4,"duration_fit":8,"context_dep":1,"safety":9},"risk_flags":[]}]}`;
 }
 
 async function runAnalyze(job) {
@@ -465,137 +485,12 @@ async function runAnalyze(job) {
   if (!durationSec) throw new Error("영상 길이 정보 없음 (검사부터 다시 필요)");
   const objective = proj.objective || "views";
   const chunkCount = Math.max(1, Math.ceil(durationSec / VIDEO_CHUNK_SEC));
-  await setProjectStatus(proj.id, "analyzing", "AI가 영상을 직접 보며 숏츠감을 찾는 중… (0/" + chunkCount + ")");
+  await setProjectStatus(proj.id, "analyzing", "재료 손질 준비 중…");
 
   const tmpDir = await mkdtemp(join(tmpdir(), "ib-an-"));
-  const rawCands = [];
   let usedModel = "";
-  try {
-    for (let ci = 0; ci < chunkCount; ci++) {
-      const offset = ci * VIDEO_CHUNK_SEC;
-      const chunkDur = Math.min(VIDEO_CHUNK_SEC, Math.max(1, durationSec - offset));
-      const { data: signed, error: se } = await sb.storage
-        .from("videos-source").createSignedUrl(proj.source_path, 3600);
-      if (se) throw new Error("서명 URL 실패: " + se.message);
-
-      // 1) AI 시청용 저화질 축소판 만들기 (360p, 5fps — 내용 파악에 충분, 전송량 최소)
-      const proxyPath = join(tmpDir, "proxy-" + ci + ".mp4");
-      const args = [];
-      if (offset > 0) args.push("-ss", String(offset));
-      args.push("-t", String(VIDEO_CHUNK_SEC), "-i", signed.signedUrl,
-        "-vf", "scale=-2:360", "-r", "5",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "32",
-        "-c:a", "aac", "-b:a", "48k", "-ac", "1",
-        "-movflags", "+faststart", proxyPath, "-y");
-      await exec("ffmpeg", args, { timeout: 1800000 });
-
-      // 2) Gemini에 업로드 → 3) 영상 직접 시청 분석
-      const buf = await readFile(proxyPath);
-      const gFile = await geminiUploadAudio(buf, "video/mp4"); // (오디오/영상 공용 업로드 도우미)
-      let out;
-      try {
-        // 이 클립 구간에 해당하는 대본만 클립 기준 시각으로 첨부
-        const localLines = sentences
-          .filter(x => x.s / 1000 >= offset && x.s / 1000 < offset + chunkDur)
-          .map(x => `[${(x.s / 1000 - offset).toFixed(1)}~${(x.e / 1000 - offset).toFixed(1)}] ${x.text}`)
-          .join("\n") || "(이 구간에는 받아적은 문장이 없습니다 — 화면 위주로 판단하세요)";
-        const r = await callGemini({
-          contents: [{ parts: [
-            { file_data: { file_uri: gFile.uri, mime_type: "video/mp4" } },
-            { text: buildAnalyzePrompt(objective, Math.round(offset / 60), Math.round((offset + chunkDur) / 60), localLines) },
-          ] }],
-          generationConfig: {
-            responseMimeType: "application/json", temperature: 0.4,
-            mediaResolution: "MEDIA_RESOLUTION_LOW", maxOutputTokens: 65536,
-          },
-        });
-        usedModel = r.model;
-        const rawText = geminiText(r.gj);
-        out = parseJsonLoose(rawText);
-        if (Array.isArray(out)) out = { candidates: out }; // 포장 없이 목록만 보내는 경우도 수용
-        if (!out || !Array.isArray(out.candidates)) {
-          const fin = r.gj?.candidates?.[0]?.finishReason || "없음";
-          console.error(`[analyze] 해석 실패 진단: finishReason=${fin}, 응답 앞부분=${rawText.slice(0, 200)}`);
-          throw new Error((ci + 1) + "번째 구간 분석 결과 해석 실패 (finishReason=" + fin + ")");
-        }
-      } finally {
-        await geminiDeleteFile(gFile.name);
-        await unlink(proxyPath).catch(() => {});
-      }
-      for (const c of out.candidates) {
-        const s0 = Number(c.start_s), e0 = Number(c.end_s);
-        if (!isFinite(s0) || !isFinite(e0)) continue;
-        // 클립 기준 → 원본 기준 시각으로 변환 (클립 길이 밖이면 눌러줌)
-        const cs = Math.max(0, Math.min(s0, chunkDur)) + offset;
-        const ce = Math.max(0, Math.min(e0, chunkDur)) + offset;
-        rawCands.push({ ...c, start_s: cs, end_s: ce });
-      }
-      await setJobProgress(job.id, ((ci + 1) / chunkCount) * 100);
-      await setProjectStatus(proj.id, "analyzing", "AI가 영상을 직접 보며 숏츠감을 찾는 중… (" + (ci + 1) + "/" + chunkCount + ")");
-      console.log(`[analyze] p=${proj.id} 구간 ${ci + 1}/${chunkCount} 완료 (누적 후보 ${rawCands.length})`);
-    }
-  } finally {
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-  }
-  const out = { candidates: rawCands };
-  const r = { model: usedModel };
-
-  // ---- 코드 검증 (AI를 믿지 않고 전부 다시 확인) ----
-  const W = OBJECTIVE_WEIGHTS[objective] || OBJECTIVE_WEIGHTS.views;
   const clamp10 = v => Math.max(0, Math.min(10, Math.round(Number(v) || 0)));
-  let cands = [];
-  for (const c of out.candidates) {
-    const s0 = Number(c.start_s), e0 = Number(c.end_s);
-    if (!isFinite(s0) || !isFinite(e0)) continue;
-    const dur = e0 - s0;
-    if (dur < 15 || dur > 90) continue;                       // 길이 규칙 위반 제외
-    if (s0 < 0 || (durationSec > 0 && e0 > durationSec + 5)) continue; // 영상 밖 구간 제외
-    const sc = c.scores || {};
-    const scores = {
-      hook: clamp10(sc.hook), standalone: clamp10(sc.standalone), density: clamp10(sc.density),
-      emotion: clamp10(sc.emotion), novelty: clamp10(sc.novelty), proof: clamp10(sc.proof),
-      duration_fit: clamp10(sc.duration_fit), context_dep: clamp10(sc.context_dep), safety: clamp10(sc.safety),
-    };
-    const parts = {
-      hook: scores.hook, novelty: scores.novelty, emotion: scores.emotion, density: scores.density,
-      standalone: scores.standalone, proof: scores.proof, duration_fit: scores.duration_fit,
-      context_indep: 10 - scores.context_dep,
-    };
-    let total = 0;
-    for (const k of Object.keys(W)) total += W[k] * (parts[k] ?? 0);
-    if (scores.hook < 7) continue; // 후킹이 약한 후보는 탈락 (사장님 판정 반영)
-    const hookName = String(c.hook_type_name || "").slice(0, 20);
-    const firstScene = String(c.first_scene || "").slice(0, 200);
-    cands.push({
-      start_ms: Math.round(s0 * 1000), end_ms: Math.round(e0 * 1000),
-      title: String(c.title || "").slice(0, 80),
-      hook_reason: ((hookName ? "[" + hookName + "] " : "") + String(c.hook_reason || "")).slice(0, 250)
-        + (firstScene ? "\n🎬 첫 화면: " + firstScene : ""),
-      summary: String(c.summary || "").slice(0, 300),
-      scores, total_score: Math.round(total * 100) / 100,
-      risk_flags: Array.isArray(c.risk_flags) ? c.risk_flags.slice(0, 5).map(x => String(x).slice(0, 100)) : [],
-    });
-  }
-  // 겹침 제거: 점수 높은 순으로 훑으며 이미 뽑힌 후보와 절반 이상 겹치면 버림
-  cands.sort((a, b) => b.total_score - a.total_score);
-  const kept = [];
-  for (const c of cands) {
-    const overlaps = kept.some(k => {
-      const ov = Math.min(c.end_ms, k.end_ms) - Math.max(c.start_ms, k.start_ms);
-      return ov > 0.5 * Math.min(c.end_ms - c.start_ms, k.end_ms - k.start_ms);
-    });
-    if (!overlaps) kept.push(c);
-    if (kept.length >= 10) break;
-  }
-  if (kept.length === 0) throw new Error("규칙을 통과한 후보가 없습니다 (영상에 숏츠감 구간이 부족할 수 있음)");
-
-  // ---- 스토리 짜집기: 명장면들을 재료로 새 이야기 창작 ----
-  await setProjectStatus(proj.id, "analyzing", "AI가 장면들을 엮어 이야기를 짜는 중…");
-  const clampSc = sc => ({
-    hook: clamp10(sc.hook), standalone: clamp10(sc.standalone), density: clamp10(sc.density),
-    emotion: clamp10(sc.emotion), novelty: clamp10(sc.novelty), proof: clamp10(sc.proof),
-    duration_fit: clamp10(sc.duration_fit), context_dep: clamp10(sc.context_dep), safety: clamp10(sc.safety),
-  });
+  const W = OBJECTIVE_WEIGHTS[objective] || OBJECTIVE_WEIGHTS.views;
   const weighted = scores => {
     const parts = {
       hook: scores.hook, novelty: scores.novelty, emotion: scores.emotion, density: scores.density,
@@ -606,74 +501,204 @@ async function runAnalyze(job) {
     for (const k of Object.keys(W)) t += W[k] * (parts[k] ?? 0);
     return Math.round(t * 100) / 100;
   };
+  const clampSc = sc => ({
+    hook: clamp10(sc.hook), standalone: clamp10(sc.standalone), density: clamp10(sc.density),
+    emotion: clamp10(sc.emotion), novelty: clamp10(sc.novelty), proof: clamp10(sc.proof),
+    duration_fit: clamp10(sc.duration_fit), context_dep: clamp10(sc.context_dep), safety: clamp10(sc.safety),
+  });
+
+  const shots = []; // 재료: {idx, chunk, ls, le(조각 내 시각), gs, ge(원본 시각), desc, pos, action, tags, usable}
   let stories = [];
-  if (kept.length >= 2) {
-    try {
-      const matList = kept.map((c, i) =>
-        `${i + 1}. [${Math.round(c.start_ms / 1000)}초~${Math.round(c.end_ms / 1000)}초] ${c.title}\n   내용: ${c.summary}\n   훅: ${c.hook_reason.replace(/\n/g, " · ")}`).join("\n");
-      const r2 = await callGemini({
-        contents: [{ parts: [{ text: buildStoryPrompt(objective, matList) }] }],
-        generationConfig: { responseMimeType: "application/json", temperature: 0.8, maxOutputTokens: 32768 },
-      });
-      let so = parseJsonLoose(geminiText(r2.gj));
-      if (Array.isArray(so)) so = { stories: so };
-      for (const s of (so && Array.isArray(so.stories) ? so.stories : [])) {
-        const segs = (Array.isArray(s.segments) ? s.segments : []).map(g => ({
-          in_s: Math.max(0, Math.round((Number(g.start_s) || 0) * 10) / 10),
-          out_s: Math.min(durationSec, Math.round((Number(g.end_s) || 0) * 10) / 10),
-          caption: String(g.caption || "").slice(0, 60),
-        })).filter(g => g.out_s - g.in_s >= 2 && g.out_s - g.in_s <= 50);
-        if (segs.length < 2 || segs.length > 6) continue;
-        const totalSec = segs.reduce((a, g) => a + (g.out_s - g.in_s), 0);
-        if (totalSec < 15 || totalSec > 95) continue;
-        const scores = clampSc(s.scores || {});
-        stories.push({
-          kind: "story", segments: segs,
-          start_ms: Math.round(segs[0].in_s * 1000),
-          end_ms: Math.round(segs[0].in_s * 1000 + totalSec * 1000),
-          title: String(s.title || "").slice(0, 80),
-          hook_reason: "[스토리 짜집기] " + String(s.hook_reason || "").slice(0, 240),
-          summary: String(s.storyline || s.summary || "").slice(0, 300),
-          scores, total_score: weighted(scores),
-          risk_flags: Array.isArray(s.risk_flags) ? s.risk_flags.slice(0, 5).map(x => String(x).slice(0, 100)) : [],
+  try {
+    // ===== 1단계: 재료 손질 — 장면 전환을 감지해 잘게 자르기 =====
+    const proxyPaths = [];
+    let shotIdx = 0;
+    for (let ci = 0; ci < chunkCount; ci++) {
+      const offset = ci * VIDEO_CHUNK_SEC;
+      const chunkDur = Math.min(VIDEO_CHUNK_SEC, Math.max(1, durationSec - offset));
+      const { data: signed, error: se } = await sb.storage
+        .from("videos-source").createSignedUrl(proj.source_path, 3600);
+      if (se) throw new Error("서명 URL 실패: " + se.message);
+
+      const proxyPath = join(tmpDir, "proxy-" + ci + ".mp4");
+      const args = [];
+      if (offset > 0) args.push("-ss", String(offset));
+      args.push("-t", String(VIDEO_CHUNK_SEC), "-i", signed.signedUrl,
+        "-vf", "scale=-2:360", "-r", "6",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
+        "-an", proxyPath, "-y");
+      await exec("ffmpeg", args, { timeout: 1800000 });
+      proxyPaths.push(proxyPath);
+
+      // 장면 전환 감지
+      const metaPath = join(tmpDir, "scdet-" + ci + ".txt");
+      await exec("ffmpeg", ["-i", proxyPath,
+        "-vf", "select='gt(scene,0.30)',metadata=print:file=" + metaPath,
+        "-an", "-f", "null", "-"], { timeout: 900000 });
+      let cuts = [];
+      try {
+        const metaTxt = await readFile(metaPath, "utf8");
+        cuts = [...metaTxt.matchAll(/pts_time:([0-9.]+)/g)].map(m => Number(m[1]))
+          .filter(v => isFinite(v) && v > 0 && v < chunkDur).sort((a, b) => a - b);
+      } catch {}
+
+      // 경계 → 재료 목록 (너무 짧으면 앞에 합치고, 너무 길면 쪼갬)
+      const bounds = [0, ...cuts, chunkDur];
+      for (let bi = 0; bi < bounds.length - 1; bi++) {
+        let s0 = bounds[bi];
+        const e0 = bounds[bi + 1];
+        if (e0 - s0 < SHOT_MIN_SEC) {
+          const prev = shots[shots.length - 1];
+          if (prev && prev.chunk === ci) { prev.le = e0; prev.ge = e0 + offset; }
+          continue;
+        }
+        while (e0 - s0 > SHOT_MAX_SEC + 1) {
+          shots.push({ idx: shotIdx++, chunk: ci, ls: s0, le: s0 + SHOT_MAX_SEC, gs: s0 + offset, ge: s0 + SHOT_MAX_SEC + offset });
+          s0 += SHOT_MAX_SEC;
+        }
+        shots.push({ idx: shotIdx++, chunk: ci, ls: s0, le: e0, gs: s0 + offset, ge: e0 + offset });
+      }
+      await setProjectStatus(proj.id, "analyzing", `1/3 재료 손질 중… (${ci + 1}/${chunkCount} 구간, 재료 ${shots.length}개)`);
+      console.log(`[analyze] p=${proj.id} 손질 ${ci + 1}/${chunkCount} — 누적 재료 ${shots.length}`);
+    }
+    if (shots.length < 5) throw new Error("장면이 너무 적어 재료를 만들 수 없습니다");
+    if (shots.length > 600) shots.length = 600; // 폭주 방지
+
+    // ===== 2단계: 재료 분석 — 조각을 묶어 AI에게 보여주고 "보이는 것만" 기록 =====
+    let doneCnt = 0;
+    for (let bi = 0; bi < shots.length; bi += SHOT_BATCH) {
+      const batch = shots.slice(bi, bi + SHOT_BATCH);
+      const files = [];
+      for (const sh of batch) {
+        const clipPath = join(tmpDir, `shot-${sh.idx}.mp4`);
+        await exec("ffmpeg", ["-ss", String(sh.ls), "-t", String(Math.max(1, sh.le - sh.ls)),
+          "-i", proxyPaths[sh.chunk],
+          "-vf", "scale=-2:240", "-r", "4",
+          "-c:v", "libx264", "-preset", "ultrafast", "-crf", "34", "-an", clipPath, "-y"], { timeout: 120000 });
+        files.push(clipPath);
+      }
+      const gFiles = [];
+      try {
+        for (const f of files) gFiles.push(await geminiUploadAudio(await readFile(f), "video/mp4"));
+        const r = await callGemini({
+          contents: [{ parts: [
+            ...gFiles.map(g => ({ file_data: { file_uri: g.uri, mime_type: "video/mp4" } })),
+            { text: buildIngredientPrompt(batch.length) },
+          ] }],
+          generationConfig: {
+            responseMimeType: "application/json", temperature: 0.1,
+            mediaResolution: "MEDIA_RESOLUTION_LOW", maxOutputTokens: 16384,
+          },
+        });
+        usedModel = r.model;
+        let out = parseJsonLoose(geminiText(r.gj));
+        if (Array.isArray(out)) out = { clips: out };
+        const clips = (out && Array.isArray(out.clips)) ? out.clips : [];
+        batch.forEach((sh, k) => {
+          const c = clips.find(x => Number(x.i) === k + 1) || clips[k] || {};
+          sh.desc = String(c.desc || "").slice(0, 200);
+          sh.pos = ["left", "center", "right"].includes(c.subject_pos) ? c.subject_pos : "center";
+          sh.action = String(c.action || "").slice(0, 60);
+          sh.tags = Array.isArray(c.tags) ? c.tags.slice(0, 4).map(t => String(t).slice(0, 20)) : [];
+          sh.usable = c.usable !== false && !!sh.desc;
+        });
+      } catch (e) {
+        // 한 묶음 실패해도 전체는 계속 (실패 재료는 사용 안 함)
+        console.error(`[analyze] 재료 묶음 분석 실패 (${bi}~): ${e.message}`);
+        batch.forEach(sh => { sh.desc = ""; sh.usable = false; });
+      } finally {
+        for (const g of gFiles) await geminiDeleteFile(g.name);
+        for (const f of files) await unlink(f).catch(() => {});
+      }
+      doneCnt += batch.length;
+      await setJobProgress(job.id, (doneCnt / shots.length) * 80);
+      await setProjectStatus(proj.id, "analyzing", `2/3 재료 분석 중… (${doneCnt}/${shots.length})`);
+      console.log(`[analyze] p=${proj.id} 재료 분석 ${doneCnt}/${shots.length}`);
+    }
+
+    // 재료 창고 저장 (다시 실행해도 겹치지 않게 이전 것 삭제)
+    await sb.from("sc_shots").delete().eq("project_id", proj.id);
+    const shotRows = shots.map(sh => ({
+      project_id: proj.id, idx: sh.idx,
+      start_ms: Math.round(sh.gs * 1000), end_ms: Math.round(sh.ge * 1000),
+      description: sh.desc || "", subject_pos: sh.pos || "center",
+      action: sh.action || "", tags: sh.tags || [], usable: !!sh.usable,
+    }));
+    for (let i = 0; i < shotRows.length; i += 200) {
+      const { error: se2 } = await sb.from("sc_shots").insert(shotRows.slice(i, i + 200));
+      if (se2) throw new Error("재료 저장 실패: " + se2.message);
+    }
+
+    // ===== 3단계: 시나리오 작성 — 창고에 있는 재료만 사용 =====
+    const usable = shots.filter(s => s.usable && s.desc);
+    if (usable.length < 5) throw new Error("쓸만한 재료가 너무 적습니다 (" + usable.length + "개)");
+    const matList = usable.map(s =>
+      `#${s.idx} [${fmtTime(s.gs * 1000)}~${fmtTime(s.ge * 1000)}, ${Math.round(s.ge - s.gs)}초] ${s.desc}` +
+      (s.action ? ` | 행동: ${s.action}` : "")).join("\n");
+    await setProjectStatus(proj.id, "analyzing", "3/3 AI가 재료로 이야기를 짜는 중…");
+    const r2 = await callGemini({
+      contents: [{ parts: [{ text: buildStoryPrompt(objective, matList) }] }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.8, maxOutputTokens: 32768 },
+    });
+    usedModel = r2.model;
+    let so = parseJsonLoose(geminiText(r2.gj));
+    if (Array.isArray(so)) so = { stories: so };
+    const byIdx = new Map(shots.map(s => [s.idx, s]));
+    const r1 = v => Math.round(v * 10) / 10;
+    for (const s of (so && Array.isArray(so.stories) ? so.stories : [])) {
+      const scenes = Array.isArray(s.scenes) ? s.scenes : [];
+      const segs = [];
+      let valid = true;
+      for (const sc0 of scenes) {
+        const sh = byIdx.get(Number(sc0.shot));
+        if (!sh || !sh.usable) { valid = false; break; } // 창고에 없는 재료를 쓰면 그 스토리 폐기
+        segs.push({
+          in_s: r1(sh.gs), out_s: r1(sh.ge), shot: sh.idx, pos: sh.pos || "center",
+          caption: String(sc0.caption || "").slice(0, 60),
+          narration: String(sc0.narration || "").slice(0, 200),
         });
       }
-      stories.sort((a, b) => b.total_score - a.total_score);
-      stories = stories.slice(0, 3);
-      console.log(`[analyze] p=${proj.id} 스토리 ${stories.length}개 구성됨`);
-    } catch (e) {
-      console.error("[analyze] 스토리 구성 실패 (명장면 후보는 그대로 저장):", e.message);
+      if (!valid || segs.length < 2 || segs.length > 6) continue;
+      const totalSec = segs.reduce((a, g) => a + (g.out_s - g.in_s), 0);
+      if (totalSec < 12 || totalSec > 95) continue;
+      const scores = clampSc(s.scores || {});
+      stories.push({
+        segments: segs,
+        start_ms: Math.round(segs[0].in_s * 1000),
+        end_ms: Math.round(segs[0].in_s * 1000 + totalSec * 1000),
+        title: String(s.title || "").slice(0, 80),
+        hook_reason: "[스토리 짜집기] " + String(s.hook_reason || "").slice(0, 240),
+        summary: String(s.storyline || s.summary || "").slice(0, 300),
+        scores, total_score: weighted(scores),
+        risk_flags: Array.isArray(s.risk_flags) ? s.risk_flags.slice(0, 5).map(x => String(x).slice(0, 100)) : [],
+      });
     }
+    stories.sort((a, b) => b.total_score - a.total_score);
+    stories = stories.slice(0, 3);
+    if (!stories.length) throw new Error("재료로 이야기 구성에 실패했습니다 (다시 시도해 주세요)");
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 
-  // 다시 실행해도 겹치지 않게: 이전 후보 삭제 후 저장 (멱등성)
+  // 후보 저장 (이전 후보 삭제 후)
   await sb.from("sc_candidates").delete().eq("project_id", proj.id);
-  const rows = [
-    ...stories.map(c => ({
-      project_id: proj.id, kind: "story", segments: c.segments,
-      start_ms: c.start_ms, end_ms: c.end_ms, title: c.title,
-      hook_reason: c.hook_reason, summary: c.summary, scores: c.scores,
-      total_score: c.total_score, risk_flags: c.risk_flags,
-      model_info: { model: r.model, prompt_ver: PROMPT_VER, objective },
-    })),
-    ...kept.map(c => ({
-      project_id: proj.id, kind: "moment", segments: null,
-      start_ms: c.start_ms, end_ms: c.end_ms, title: c.title,
-      hook_reason: c.hook_reason, summary: c.summary, scores: c.scores,
-      total_score: c.total_score, risk_flags: c.risk_flags,
-      model_info: { model: r.model, prompt_ver: PROMPT_VER, objective },
-    })),
-  ];
+  const rows = stories.map(c => ({
+    project_id: proj.id, kind: "story", segments: c.segments,
+    start_ms: c.start_ms, end_ms: c.end_ms, title: c.title,
+    hook_reason: c.hook_reason, summary: c.summary, scores: c.scores,
+    total_score: c.total_score, risk_flags: c.risk_flags,
+    model_info: { model: usedModel, prompt_ver: PROMPT_VER, objective },
+  }));
   const { error: ie } = await sb.from("sc_candidates").insert(rows);
   if (ie) throw new Error("후보 저장 실패: " + ie.message);
 
   await setProjectStatus(proj.id, "candidates_ready",
-    "후보 발굴 완료 — 스토리 " + stories.length + "개 · 명장면 " + kept.length + "개");
+    "재료 " + shots.length + "개 · 스토리 " + stories.length + "개 완성");
   await sb.from("sc_usage_log").insert({
     project_id: proj.id, kind: "analyze", duration_sec: durationSec,
-    meta: { candidates: kept.length, stories: stories.length, model: r.model, objective, prompt_ver: PROMPT_VER },
+    meta: { shots: shots.length, stories: stories.length, model: usedModel, objective, prompt_ver: PROMPT_VER },
   });
-  console.log(`[analyze] 완료 p=${proj.id} 스토리=${stories.length} 명장면=${kept.length}`);
+  console.log(`[analyze] 완료 p=${proj.id} 재료=${shots.length} 스토리=${stories.length}`);
 }
 
 // ---------- 작업: render (숏츠 영상 만들기 — 자르고 붙이고 자막) ----------
@@ -713,7 +738,6 @@ async function runRender(job) {
   if (segs.length > 8) throw new Error("장면이 너무 많습니다 (최대 8개)");
 
   await setProjectStatus(proj.id, "rendering", "숏츠 영상을 만드는 중… (0/" + segs.length + ")");
-  const font = pickFont();
   const tmpDir = await mkdtemp(join(tmpdir(), "ib-rd-"));
   try {
     const partFiles = [];
@@ -727,20 +751,15 @@ async function runRender(job) {
         .from("videos-source").createSignedUrl(proj.source_path, 3600);
       if (se) throw new Error("서명 URL 실패: " + se.message);
 
-      // 세로 1080x1920 변환(가운데 잘라내기) + 자막 얹기
-      let vf = "crop='min(iw,ih*9/16)':ih,scale=1080:1920,setsar=1";
-      const capText = wrapCaption(g.caption);
-      const capPath = join(tmpDir, "cap-" + i + ".txt");
-      if (capText && font) {
-        await writeFile(capPath, capText, "utf8");
-        vf += `,drawtext=fontfile=${font}:textfile=${capPath}:fontcolor=white:fontsize=62:borderw=5:bordercolor=black@0.85:x=(w-text_w)/2:y=210:line_spacing=14`;
-      }
+      // 세로 1080x1920 변환 — 주인공 위치(left/center/right)를 따라 잘라냄
+      // 자막·소리는 넣지 않음 (수강생이 직접 AI 목소리와 자막을 입힘 — 사장님 지시)
+      const posX = g.pos === "left" ? "0" : g.pos === "right" ? "iw-ow" : "(iw-ow)/2";
+      const vf = `crop='min(iw,ih*9/16)':ih:${posX}:0,scale=1080:1920,setsar=1`;
       const partPath = join(tmpDir, "part-" + i + ".mp4");
       await exec("ffmpeg", [
         "-ss", String(inS), "-t", String(dur), "-i", signed.signedUrl,
-        "-vf", vf, "-r", "30",
+        "-vf", vf, "-r", "30", "-an",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
         partPath, "-y",
       ], { timeout: 900000 });
       partFiles.push(partPath);
