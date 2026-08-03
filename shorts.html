@@ -289,7 +289,7 @@
       return `<div class="sc-cand">
         <div class="top"><span class="rank">${medal(i)}</span><span class="time">⏱️ ${fmtT(c.start_ms)} ~ ${fmtT(c.end_ms)} (${durS}초)</span><span class="score">AI 점수 ${Number(c.total_score).toFixed(1)}/10</span></div>
         <div class="ttl">${escapeHtml(c.title || "제목 없음")}</div>
-        <div class="why">💡 ${escapeHtml(c.hook_reason || "")}</div>
+        <div class="why">💡 ${escapeHtml(c.hook_reason || "").replace(/\n/g, "<br>")}</div>
         <div class="sum">${escapeHtml(c.summary || "")}</div>
         <div class="chips">${chips}${flags}</div>
       </div>`;
