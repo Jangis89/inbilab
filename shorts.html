@@ -293,7 +293,7 @@
     window.__scCands = {};
     data.forEach((c) => { window.__scCands[c.id] = c; });
     const fmtS = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
-    const makeBtn = (c) => `<button class="sc-make" data-cid="${c.id}" data-pid="${c.project_id}">🎬 이 후보로 숏츠 만들기</button><div class="sc-make-status" id="mk-${c.id}"></div>`;
+    const makeBtn = (c) => `<button class="sc-make" data-cid="${c.id}" data-pid="${c.project_id}">🎬 이 후보로 숏츠 만들기</button>${c.kind === "story" ? ` <button class="sc-make" style="background:#7c3aed;" data-copy="${c.id}">📋 자막·나레이션 대본 복사</button>` : ""}<div class="sc-make-status" id="mk-${c.id}"></div>`;
     let momentRank = 0;
     const medal = (i) => i === 0 ? "🥇 1위" : i === 1 ? "🥈 2위" : i === 2 ? "🥉 3위" : (i + 1) + "위";
     wrap.innerHTML = data.map((c) => {
@@ -305,7 +305,7 @@
       if (isStory) {
         const tot = Math.round(c.segments.reduce((a, g) => a + (g.out_s - g.in_s), 0));
         const segHtml = c.segments.map((g, gi) =>
-          `<div class="seg"><b>장면${gi + 1}</b> ⏱️ ${fmtS(g.in_s)}~${fmtS(g.out_s)} — "${escapeHtml(g.caption || "")}"</div>`).join("");
+          `<div class="seg"><b>장면${gi + 1}</b> ⏱️ ${fmtS(g.in_s)}~${fmtS(g.out_s)} — 자막: "${escapeHtml(g.caption || "")}"${g.narration ? `<br><span style="color:#64748b;">🎙️ 나레이션: ${escapeHtml(g.narration)}</span>` : ""}</div>`).join("");
         return `<div class="sc-cand story">
           <div class="top"><span class="storybadge">📖 스토리 짜집기</span><span class="time">장면 ${c.segments.length}개 · 총 ${tot}초</span><span class="score">AI 점수 ${Number(c.total_score).toFixed(1)}/10</span></div>
           <div class="ttl">${escapeHtml(c.title || "제목 없음")}</div>
@@ -332,6 +332,19 @@
 
   // "숏츠 만들기" 버튼: 레시피 등록 → 서버가 자동 렌더링 → 완성되면 내려받기 버튼 표시
   document.getElementById("sc-cands").addEventListener("click", async (e) => {
+    const copyBtn = e.target.closest("[data-copy]");
+    if (copyBtn) {
+      const c = (window.__scCands || {})[copyBtn.dataset.copy];
+      if (!c) return;
+      const fmt2 = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
+      const txt = `제목: ${c.title}\n줄거리: ${c.summary}\n\n` +
+        (c.segments || []).map((g, i) =>
+          `장면${i + 1} (${fmt2(g.in_s)}~${fmt2(g.out_s)})\n자막: ${g.caption || ""}\n나레이션: ${g.narration || ""}`).join("\n\n");
+      try { await navigator.clipboard.writeText(txt); copyBtn.textContent = "✅ 복사됨!"; }
+      catch { alert(txt); }
+      setTimeout(() => { copyBtn.textContent = "📋 자막·나레이션 대본 복사"; }, 2000);
+      return;
+    }
     const btn = e.target.closest(".sc-make");
     if (!btn) return;
     const c = (window.__scCands || {})[btn.dataset.cid];
@@ -356,7 +369,7 @@
       if (rr && rr.render_path) {
         const { data: su } = await sb.storage.from("videos-clips").createSignedUrl(rr.render_path, 3600);
         if (su && su.signedUrl) {
-          st.innerHTML = `✅ 완성! <a class="sc-dl" href="${su.signedUrl}" download="shorts.mp4">⬇️ 숏츠 내려받기</a>`;
+          st.innerHTML = `✅ 완성! (소리 없음 — AI 목소리와 자막은 대본을 보고 직접 입히세요) <a class="sc-dl" href="${su.signedUrl}" download="shorts.mp4">⬇️ 숏츠 내려받기</a>`;
         } else {
           st.textContent = "✅ 완성됐지만 내려받기 주소 생성에 실패했어요. 새로고침 후 다시 시도해 주세요.";
         }
