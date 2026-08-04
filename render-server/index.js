@@ -435,19 +435,42 @@ JSON만 출력하세요:
 
 // 재료 기록 지시문: 클립 여러 개를 보고 "실제로 보이는 것만" 기록 (창작 금지)
 function buildIngredientPrompt(count) {
-  return `당신은 영상 재료 기록원입니다. 첨부된 짧은 클립 ${count}개를 순서대로 하나씩 보고, 각 클립에 "실제로 보이는 것"만 기록하세요.
+  return `당신은 영상 재료 기록원입니다. 첨부된 짧은 클립 ${count}개를 순서대로 하나씩 보고 들으며, 각 클립에 "실제로 보이고 들리는 것"만 기록하세요.
 
 [규칙 — 어기면 실패]
 - 추측·창작·해석 금지. 화면에 보이는 사실만. (예: "다리를 다친 것 같다" 금지 → 다리가 실제로 잘려 있을 때만 기록)
 - desc: 이 클립에 보이는 것 한 문장 (주어+행동 중심, 한국어)
 - action: 핵심 움직임 한 단어~짧은 구 (예: "나무 오르기", "걷기", "정지 화면")
 - subject_pos: 주인공(가장 눈에 띄는 대상)이 화면의 어디에 있는지 — left | center | right
+- event: 사건성 점수 0~10. "이 조각에서 뭔가 일어나는가?"만 평가.
+  10 = 결정적 순간(사냥, 점프, 충돌, 출산, 골처럼 확실한 사건이 벌어짐)
+  7~9 = 눈에 띄는 행동·움직임·반전이 있음 / 함성·웃음·비명 등 소리가 터짐
+  4~6 = 무언가 하고는 있지만 평범한 움직임
+  0~3 = 풍경, 정지, 인터뷰, 잔잔한 장면
 - tags: 검색용 단어 2~4개 (예: ["사향노루","야간","숲"])
 - usable: 까맣거나 흐릿하거나 자막판 같은 쓸모없는 클립이면 false
 - i는 클립 순서(1부터). 첨부된 순서 그대로.
 
 JSON만 출력하세요:
-{"clips":[{"i":1,"desc":"...","action":"...","subject_pos":"center","tags":["..."],"usable":true}]}`;
+{"clips":[{"i":1,"desc":"...","action":"...","subject_pos":"center","event":5,"tags":["..."],"usable":true}]}`;
+}
+
+// 하이라이트 대본 지시문: 이미 뽑힌 장면들(시간순)에 제목·자막·나레이션만 입힘 (장면 변경 금지)
+function buildHighlightPrompt(sceneList) {
+  return `당신은 스포츠 뉴스 하이라이트 편집자입니다. 아래는 긴 영상에서 "사건이 일어난 순간"만 뽑아 시간 순서대로 나열한 하이라이트 장면들입니다. 장면 구성은 이미 확정됐습니다 — 바꾸지 말고, 제목과 장면별 자막·나레이션만 만드세요.
+
+[확정된 하이라이트 장면 — 시간순]
+${sceneList}
+
+[규칙]
+- 각 장면의 desc에 실제로 있는 내용만 쓰세요. 창작·과장으로 없는 사실을 만들지 마세요 (하이라이트는 다큐처럼 정직하게, 대신 문장은 박진감 있게).
+- caption: 장면 위에 얹을 자막 한 줄 (띄어쓰기 포함 22자 이내, 강한 구어체)
+- narration: 수강생이 AI 목소리로 읽을 한 문장 (스포츠 캐스터처럼 생동감 있게)
+- title: 이 하이라이트 전체의 제목 (30자 이내)
+- summary: 전체 요약 1~2문장
+
+JSON만 출력하세요:
+{"title":"...","summary":"...","scenes":[{"i":1,"caption":"...","narration":"..."}]}`;
 }
 
 // 시나리오 지시문: 재료 창고 목록만 보고 이야기를 창작 (재료에 없는 장면 사용 금지)
@@ -526,7 +549,8 @@ async function runAnalyze(job) {
       args.push("-t", String(VIDEO_CHUNK_SEC), "-i", signed.signedUrl,
         "-vf", "scale=-2:360", "-r", "6",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
-        "-an", proxyPath, "-y");
+        "-c:a", "aac", "-b:a", "48k", "-ac", "1",
+        proxyPath, "-y");
       await exec("ffmpeg", args, { timeout: 1800000 });
       proxyPaths.push(proxyPath);
 
@@ -574,8 +598,28 @@ async function runAnalyze(job) {
         await exec("ffmpeg", ["-ss", String(sh.ls), "-t", String(Math.max(1, sh.le - sh.ls)),
           "-i", proxyPaths[sh.chunk],
           "-vf", "scale=-2:240", "-r", "4",
-          "-c:v", "libx264", "-preset", "ultrafast", "-crf", "34", "-an", clipPath, "-y"], { timeout: 120000 });
+          "-c:v", "libx264", "-preset", "ultrafast", "-crf", "34",
+          "-c:a", "aac", "-b:a", "32k", clipPath, "-y"], { timeout: 120000 });
         files.push(clipPath);
+
+        // 소리 크기 측정 (함성·웃음이 터지는 순간은 소리가 큼)
+        try {
+          const { stderr } = await exec("ffmpeg", ["-ss", String(sh.ls), "-t", String(Math.max(1, sh.le - sh.ls)),
+            "-i", proxyPaths[sh.chunk], "-vn", "-af", "volumedetect", "-f", "null", "-"], { timeout: 60000 });
+          const mm = String(stderr).match(/max_volume:\s*(-?[0-9.]+)\s*dB/);
+          sh.audio_db = mm ? Number(mm[1]) : -91;
+        } catch { sh.audio_db = -91; }
+
+        // 화면 움직임 측정 (프레임 간 변화량 평균)
+        try {
+          const mfile = join(tmpDir, `mot-${sh.idx}.txt`);
+          await exec("ffmpeg", ["-i", clipPath, "-vf", "select='gte(scene,0)',metadata=print:file=" + mfile,
+            "-an", "-f", "null", "-"], { timeout: 60000 });
+          const mtxt = await readFile(mfile, "utf8");
+          const vals = [...mtxt.matchAll(/scene_score=([0-9.]+)/g)].map(m => Number(m[1]));
+          sh.motion = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+          await unlink(mfile).catch(() => {});
+        } catch { sh.motion = 0; }
       }
       let gFiles = [];
       try {
@@ -600,6 +644,7 @@ async function runAnalyze(job) {
           sh.desc = String(c.desc || "").slice(0, 200);
           sh.pos = ["left", "center", "right"].includes(c.subject_pos) ? c.subject_pos : "center";
           sh.action = String(c.action || "").slice(0, 60);
+          sh.event = Math.max(0, Math.min(10, Math.round(Number(c.event) || 0)));
           sh.tags = Array.isArray(c.tags) ? c.tags.slice(0, 4).map(t => String(t).slice(0, 20)) : [];
           sh.usable = c.usable !== false && !!sh.desc;
         });
@@ -624,10 +669,82 @@ async function runAnalyze(job) {
       start_ms: Math.round(sh.gs * 1000), end_ms: Math.round(sh.ge * 1000),
       description: sh.desc || "", subject_pos: sh.pos || "center",
       action: sh.action || "", tags: sh.tags || [], usable: !!sh.usable,
+      event: sh.event || 0, sig: { audio_db: sh.audio_db ?? -91, motion: Math.round((sh.motion || 0) * 1000) / 1000 },
     }));
     for (let i = 0; i < shotRows.length; i += 200) {
       const { error: se2 } = await sb.from("sc_shots").insert(shotRows.slice(i, i + 200));
       if (se2) throw new Error("재료 저장 실패: " + se2.message);
+    }
+
+    // ===== 하이라이트 조립 — 스포츠 뉴스 방식: 사건 순간만 골라 시간순으로 =====
+    // 점수 = AI 사건성 45% + 소리 크기 20% + 화면 움직임 20% + 대사 흥분 단어 15%
+    var highlight = null;
+    try {
+      const HOT_WORDS = ["최초", "충격", "드디어", "놀라", "기적", "포착", "성공", "위기", "탄생", "발견", "결정적", "믿을 수 없", "!"];
+      const okShots = shots.filter(s => s.usable && s.desc);
+      const audioVals = okShots.map(s => s.audio_db ?? -91).sort((a, b) => a - b);
+      const motionVals = okShots.map(s => s.motion || 0).sort((a, b) => a - b);
+      const pct = (arr, v) => arr.length ? arr.filter(x => x <= v).length / arr.length : 0.5;
+      const scored = okShots.map(s => {
+        const talk = sentences.filter(x => x.s / 1000 < s.ge && x.e / 1000 > s.gs).map(x => x.text).join(" ");
+        const speech = HOT_WORDS.some(w => talk.includes(w)) ? 1 : 0;
+        const score = 0.45 * (s.event || 0) / 10 + 0.2 * pct(audioVals, s.audio_db ?? -91)
+          + 0.2 * pct(motionVals, s.motion || 0) + 0.15 * speech;
+        return { s, score };
+      }).sort((a, b) => b.score - a.score);
+      const picked = [];
+      let totalSecH = 0;
+      for (const { s } of scored) {
+        const d = s.ge - s.gs;
+        if (totalSecH + d > 65) continue;
+        picked.push(s); totalSecH += d;
+        if (totalSecH >= 50 || picked.length >= 8) break;
+      }
+      if (picked.length >= 3 && totalSecH >= 25) {
+        picked.sort((a, b) => a.gs - b.gs); // 시간 순서 유지 (하이라이트의 핵심)
+        const merged = [];
+        for (const s of picked) {
+          const last = merged[merged.length - 1];
+          if (last && Math.abs(last.ge - s.gs) < 0.2) { last.ge = s.ge; last.descs.push(s.desc); }
+          else merged.push({ gs: s.gs, ge: s.ge, pos: s.pos || "center", descs: [s.desc] });
+        }
+        const sceneList = merged.map((m, i) =>
+          `${i + 1}. [${fmtTime(m.gs * 1000)}~${fmtTime(m.ge * 1000)}] ${m.descs.join(" / ")}`).join("\n");
+        let hl = null;
+        try {
+          const r3 = await callGemini({
+            contents: [{ parts: [{ text: buildHighlightPrompt(sceneList) }] }],
+            generationConfig: { responseMimeType: "application/json", temperature: 0.5, maxOutputTokens: 8192 },
+          });
+          hl = parseJsonLoose(geminiText(r3.gj));
+        } catch (e) { console.error("[analyze] 하이라이트 대본 실패(자막 없이 진행):", e.message); }
+        const hscenes = (hl && Array.isArray(hl.scenes)) ? hl.scenes : [];
+        const r1x = v => Math.round(v * 10) / 10;
+        const segs = merged.map((m, i) => {
+          const sc0 = hscenes.find(x => Number(x.i) === i + 1) || hscenes[i] || {};
+          return {
+            in_s: r1x(m.gs), out_s: r1x(m.ge), pos: m.pos,
+            caption: String(sc0.caption || "").slice(0, 60),
+            narration: String(sc0.narration || "").slice(0, 200),
+          };
+        });
+        const hScores = clampSc({ hook: 7, standalone: 8, density: 8, emotion: 7, novelty: 7, proof: 8, duration_fit: 8, context_dep: 2, safety: 9 });
+        highlight = {
+          segments: segs,
+          start_ms: Math.round(segs[0].in_s * 1000),
+          end_ms: Math.round(segs[0].in_s * 1000 + totalSecH * 1000),
+          title: String((hl && hl.title) || "하이라이트 모음").slice(0, 80),
+          hook_reason: "[하이라이트] 사건 점수 + 소리 + 움직임 상위 장면을 시간 순서 그대로 모음 (창작 없음)",
+          summary: String((hl && hl.summary) || "").slice(0, 300),
+          scores: hScores, total_score: weighted(hScores),
+          risk_flags: [],
+        };
+        console.log(`[analyze] p=${proj.id} 하이라이트 조립: 장면 ${segs.length}개, 총 ${Math.round(totalSecH)}초`);
+      } else {
+        console.log(`[analyze] p=${proj.id} 하이라이트 재료 부족 (${picked.length}개/${Math.round(totalSecH)}초)`);
+      }
+    } catch (e) {
+      console.error("[analyze] 하이라이트 조립 실패:", e.message);
     }
 
     // ===== 3단계: 시나리오 작성 — 창고에 있는 재료만 사용 =====
@@ -676,30 +793,39 @@ async function runAnalyze(job) {
     }
     stories.sort((a, b) => b.total_score - a.total_score);
     stories = stories.slice(0, 3);
-    if (!stories.length) throw new Error("재료로 이야기 구성에 실패했습니다 (다시 시도해 주세요)");
+    if (!stories.length && !highlight) throw new Error("하이라이트·이야기 구성에 모두 실패했습니다 (다시 시도해 주세요)");
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 
-  // 후보 저장 (이전 후보 삭제 후)
+  // 후보 저장 (이전 후보 삭제 후) — 하이라이트가 맨 앞
   await sb.from("sc_candidates").delete().eq("project_id", proj.id);
-  const rows = stories.map(c => ({
-    project_id: proj.id, kind: "story", segments: c.segments,
-    start_ms: c.start_ms, end_ms: c.end_ms, title: c.title,
-    hook_reason: c.hook_reason, summary: c.summary, scores: c.scores,
-    total_score: c.total_score, risk_flags: c.risk_flags,
-    model_info: { model: usedModel, prompt_ver: PROMPT_VER, objective },
-  }));
+  const rows = [
+    ...(highlight ? [{
+      project_id: proj.id, kind: "highlight", segments: highlight.segments,
+      start_ms: highlight.start_ms, end_ms: highlight.end_ms, title: highlight.title,
+      hook_reason: highlight.hook_reason, summary: highlight.summary, scores: highlight.scores,
+      total_score: highlight.total_score, risk_flags: highlight.risk_flags,
+      model_info: { model: usedModel, prompt_ver: PROMPT_VER, objective },
+    }] : []),
+    ...stories.map(c => ({
+      project_id: proj.id, kind: "story", segments: c.segments,
+      start_ms: c.start_ms, end_ms: c.end_ms, title: c.title,
+      hook_reason: c.hook_reason, summary: c.summary, scores: c.scores,
+      total_score: c.total_score, risk_flags: c.risk_flags,
+      model_info: { model: usedModel, prompt_ver: PROMPT_VER, objective },
+    })),
+  ];
   const { error: ie } = await sb.from("sc_candidates").insert(rows);
   if (ie) throw new Error("후보 저장 실패: " + ie.message);
 
   await setProjectStatus(proj.id, "candidates_ready",
-    "재료 " + shots.length + "개 · 스토리 " + stories.length + "개 완성");
+    "재료 " + shots.length + "개 · 하이라이트 " + (highlight ? 1 : 0) + "개 · 스토리 " + stories.length + "개");
   await sb.from("sc_usage_log").insert({
     project_id: proj.id, kind: "analyze", duration_sec: durationSec,
-    meta: { shots: shots.length, stories: stories.length, model: usedModel, objective, prompt_ver: PROMPT_VER },
+    meta: { shots: shots.length, highlight: !!highlight, stories: stories.length, model: usedModel, objective, prompt_ver: PROMPT_VER },
   });
-  console.log(`[analyze] 완료 p=${proj.id} 재료=${shots.length} 스토리=${stories.length}`);
+  console.log(`[analyze] 완료 p=${proj.id} 재료=${shots.length} 하이라이트=${highlight ? 1 : 0} 스토리=${stories.length}`);
 }
 
 // ---------- 작업: render (숏츠 영상 만들기 — 자르고 붙이고 자막) ----------
