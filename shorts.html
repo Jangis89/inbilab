@@ -51,6 +51,8 @@
   .sc-list-item.clickable{cursor:pointer;}
   .sc-list-item.clickable:hover{background:#f8fafc;}
   .sc-cand.story{border:2px solid #a78bfa;background:#faf5ff;}
+  .sc-cand.hl{border:2px solid #34d399;background:#f0fdf4;}
+  .sc-cand .hlbadge{font-size:12.5px;font-weight:800;background:#059669;color:#fff;border-radius:999px;padding:3px 10px;}
   .sc-cand .storybadge{font-size:12.5px;font-weight:800;background:#7c3aed;color:#fff;border-radius:999px;padding:3px 10px;}
   .sc-cand .segs{margin-top:10px;border-left:3px solid #a78bfa;padding-left:12px;}
   .sc-cand .seg{font-size:13.5px;color:#334155;padding:4px 0;line-height:1.5;}
@@ -288,12 +290,13 @@
       .eq("excluded", false).order("total_score", { ascending: false }).limit(10);
     if (!data || !data.length) return;
     $("sc-cands-title").textContent = title ? "— " + title : "";
-    // 스토리형 먼저, 그 다음 명장면 — 각각 점수 높은 순
-    data.sort((a, b) => (a.kind === "story" ? 0 : 1) - (b.kind === "story" ? 0 : 1) || b.total_score - a.total_score);
+    // 하이라이트 → 스토리 → 명장면 순서
+    const kindOrder = (k) => k === "highlight" ? 0 : k === "story" ? 1 : 2;
+    data.sort((a, b) => kindOrder(a.kind) - kindOrder(b.kind) || b.total_score - a.total_score);
     window.__scCands = {};
     data.forEach((c) => { window.__scCands[c.id] = c; });
     const fmtS = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
-    const makeBtn = (c) => `<button class="sc-make" data-cid="${c.id}" data-pid="${c.project_id}">🎬 이 후보로 숏츠 만들기</button>${c.kind === "story" ? ` <button class="sc-make" style="background:#7c3aed;" data-copy="${c.id}">📋 자막·나레이션 대본 복사</button>` : ""}<div class="sc-make-status" id="mk-${c.id}"></div>`;
+    const makeBtn = (c) => `<button class="sc-make" data-cid="${c.id}" data-pid="${c.project_id}">🎬 이 후보로 숏츠 만들기</button>${(c.kind === "story" || c.kind === "highlight") ? ` <button class="sc-make" style="background:#7c3aed;" data-copy="${c.id}">📋 자막·나레이션 대본 복사</button>` : ""}<div class="sc-make-status" id="mk-${c.id}"></div>`;
     let momentRank = 0;
     const medal = (i) => i === 0 ? "🥇 1위" : i === 1 ? "🥈 2위" : i === 2 ? "🥉 3위" : (i + 1) + "위";
     wrap.innerHTML = data.map((c) => {
@@ -301,17 +304,18 @@
       const chips = [["훅", sc.hook], ["완결성", sc.standalone], ["밀도", sc.density], ["감정", sc.emotion], ["새로움", sc.novelty], ["근거", sc.proof]]
         .map(([k, v]) => `<span class="chip">${k} ${v ?? "?"}</span>`).join("");
       const flags = (c.risk_flags || []).map((f) => `<span class="flag">⚠️ ${escapeHtml(f)}</span>`).join("");
-      const isStory = c.kind === "story" && Array.isArray(c.segments) && c.segments.length;
-      if (isStory) {
+      const isMulti = (c.kind === "story" || c.kind === "highlight") && Array.isArray(c.segments) && c.segments.length;
+      if (isMulti) {
+        const isHl = c.kind === "highlight";
         const tot = Math.round(c.segments.reduce((a, g) => a + (g.out_s - g.in_s), 0));
         const segHtml = c.segments.map((g, gi) =>
           `<div class="seg"><b>장면${gi + 1}</b> ⏱️ ${fmtS(g.in_s)}~${fmtS(g.out_s)} — 자막: "${escapeHtml(g.caption || "")}"${g.narration ? `<br><span style="color:#64748b;">🎙️ 나레이션: ${escapeHtml(g.narration)}</span>` : ""}</div>`).join("");
-        return `<div class="sc-cand story">
-          <div class="top"><span class="storybadge">📖 스토리 짜집기</span><span class="time">장면 ${c.segments.length}개 · 총 ${tot}초</span><span class="score">AI 점수 ${Number(c.total_score).toFixed(1)}/10</span></div>
+        return `<div class="sc-cand ${isHl ? "hl" : "story"}">
+          <div class="top"><span class="${isHl ? "hlbadge" : "storybadge"}">${isHl ? "⚡ 하이라이트 (시간순·사실 그대로)" : "📖 스토리 짜집기 (창작)"}</span><span class="time">장면 ${c.segments.length}개 · 총 ${tot}초</span><span class="score">AI 점수 ${Number(c.total_score).toFixed(1)}/10</span></div>
           <div class="ttl">${escapeHtml(c.title || "제목 없음")}</div>
-          <div class="sum"><b>줄거리:</b> ${escapeHtml(c.summary || "")}</div>
+          <div class="sum"><b>${isHl ? "요약" : "줄거리"}:</b> ${escapeHtml(c.summary || "")}</div>
           <div class="segs">${segHtml}</div>
-          <div class="why">💡 ${escapeHtml((c.hook_reason || "").replace("[스토리 짜집기] ", ""))}</div>
+          <div class="why">💡 ${escapeHtml((c.hook_reason || "").replace(/^\[(스토리 짜집기|하이라이트)\] /, ""))}</div>
           <div class="chips">${chips}${flags}</div>
           ${makeBtn(c)}
         </div>`;
@@ -353,7 +357,7 @@
     const st = document.getElementById("mk-" + c.id);
     st.textContent = "⏳ 만들기 예약 중…";
     // 장면 목록: 스토리형은 segments 그대로, 명장면형은 그 구간 하나
-    const segments = (c.kind === "story" && Array.isArray(c.segments) && c.segments.length)
+    const segments = ((c.kind === "story" || c.kind === "highlight") && Array.isArray(c.segments) && c.segments.length)
       ? c.segments
       : [{ in_s: c.start_ms / 1000, out_s: c.end_ms / 1000, caption: c.title || "" }];
     const { data: rec, error } = await sb.from("sc_recipes").insert({
