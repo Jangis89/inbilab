@@ -1044,12 +1044,20 @@ async function runDesilence(job) {
         await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-i", srcPath, "-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart", outPath, "-y"], { timeout: 2400000, maxBuffer: 128*1024*1024 });
       } else {
         const Q = String.fromCharCode(39);
-        let list = "ffconcat version 1.0" + String.fromCharCode(10);
-        for (let i = 0; i < keeps.length; i++) { list += "file " + Q + srcPath + Q + String.fromCharCode(10) + "inpoint " + keeps[i][0].toFixed(3) + String.fromCharCode(10) + "outpoint " + keeps[i][1].toFixed(3) + String.fromCharCode(10); }
-        await writeFile(join(tmpDir, "list.txt"), list, "utf8");
+        const NL = String.fromCharCode(10);
         await setProjectStatus(proj.id, "desilence_running", "무음을 잘라 이어붙이는 중… (" + keeps.length + "개 구간, 길면 몇 분 걸려요)");
         await setJobProgress(job.id, 45);
-        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-f","concat","-safe","0","-i", join(tmpDir, "list.txt"), "-c:v","libx264","-preset","veryfast","-crf","23","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart", outPath, "-y"], { timeout: 3600000, maxBuffer: 128*1024*1024 });
+        let list = "";
+        for (let i = 0; i < keeps.length; i++) {
+          const segStart = keeps[i][0];
+          const segDur = Math.max(0.02, keeps[i][1] - keeps[i][0]);
+          const segPath = join(tmpDir, "seg_" + String(i).padStart(5, "0") + ".mp4");
+          await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-ss", segStart.toFixed(3), "-i", srcPath, "-t", segDur.toFixed(3), "-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p","-r","30","-vsync","cfr","-video_track_timescale","15360","-c:a","aac","-b:a","160k","-ar","48000","-ac","2","-avoid_negative_ts","make_zero","-fflags","+genpts", segPath, "-y"], { timeout: 600000, maxBuffer: 32*1024*1024 });
+          list += "file " + Q + segPath + Q + NL;
+          if (i % 15 === 0) { await setJobProgress(job.id, Math.min(85, 45 + Math.round((i / keeps.length) * 40))); }
+        }
+        await writeFile(join(tmpDir, "list.txt"), list, "utf8");
+        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-f","concat","-safe","0","-i", join(tmpDir, "list.txt"), "-c","copy","-movflags","+faststart", outPath, "-y"], { timeout: 3600000, maxBuffer: 128*1024*1024 });
       }
       await setJobProgress(job.id, 90);
       const buf = await readFile(outPath);
