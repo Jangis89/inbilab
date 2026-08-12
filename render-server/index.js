@@ -1016,7 +1016,7 @@ async function runDesilence(job) {
       const newDur = Math.max(0, dur - cutTotal);
       const detail = JSON.stringify({ result_url: rsigned.signedUrl, orig_sec: Math.round(dur), new_sec: Math.round(newDur), cut_sec: Math.round(cutTotal), spots: silences.length });
       await sb.from("sc_projects").update({ status: "desilence_done", status_detail: detail, updated_at: new Date().toISOString() }).eq("id", proj.id);
-      try { await sb.storage.from("videos-source").remove([proj.source_path]); console.log("[정리] 원본 삭제 완료 " + proj.source_path); } catch (delErr) { console.error("[정리] 원본 삭제 실패:", delErr.message); }
+      /* 원본과 완성본은 24시간 뒤 cleanupExpired에서 함께 삭제 (그 사이 다시 자르기 가능) */
       try { await sb.from("sc_usage_log").insert({ project_id: proj.id, kind: "desilence", duration_sec: dur, meta: { cut_sec: Math.round(cutTotal) } }); } catch (e) {}
       console.log("[desilence] 완료 p=" + proj.id + " 원본=" + Math.round(dur) + "s 컷=" + Math.round(cutTotal) + "s");
     } finally {
@@ -1028,10 +1028,30 @@ async function runDesilence(job) {
   }
 }
 
+let lastCleanup = 0;
+async function cleanupExpired() {
+  try {
+    const cutoff = new Date(Date.now() - 24*3600*1000).toISOString();
+    const { data: rows } = await sb.from("sc_projects")
+      .select("id, user_id, source_path")
+      .eq("objective", "desilence").eq("status", "desilence_done")
+      .is("cleaned_at", null).lt("updated_at", cutoff).limit(20);
+    if (!rows || !rows.length) return;
+    for (const p of rows) {
+      const clip = p.user_id + "/desilence_" + p.id + ".mp4";
+      try { await sb.storage.from("videos-clips").remove([clip]); } catch (e) {}
+      if (p.source_path) { try { await sb.storage.from("videos-source").remove([p.source_path]); } catch (e) {} }
+      await sb.from("sc_projects").update({ cleaned_at: new Date().toISOString() }).eq("id", p.id);
+      console.log("[정리] 24시간 경과 삭제 " + p.id);
+    }
+  } catch (e) { console.error("[정리] cleanupExpired 실패:", e.message); }
+}
+
 async function loop() {
   lastPollAt = new Date().toISOString();
   try {
     if (!flagsEnsured) { await ensureFlags(); flagsEnsured = true; }
+    if (Date.now() - lastCleanup > 300000) { lastCleanup = Date.now(); cleanupExpired(); }
     const job = await claimJob();
     if (job) {
       console.log(`[작업] ${job.job_type} 시작 (job=${job.id}, 시도=${job.attempts + 1})`);
