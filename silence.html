@@ -39,7 +39,7 @@
   <div class="wrap" style="max-width:820px;">
     <h1 class="page-title">무음 제거기 🔇</h1>
     <div class="devnote" id="devnote" style="display:none;">🔒 이 기능은 아직 <b>비공개(관리자 전용)</b>입니다. 공개하려면 작업실에서 스위치를 켜세요.</div>
-    <p class="an-hint" style="font-size:14.5px;margin-bottom:14px;">TTS 음성 파일을 넣으면 문장 사이의 <b>조용한 빈 구간을 자동으로 잘라</b> 드립니다. <b>여러 파일을 한꺼번에</b> 넣으면 하나씩 자동으로 처리하고, <b>파일별로도 전체(ZIP)로도</b> 받을 수 있습니다. 모든 처리는 내 컴퓨터 안에서만 이루어지고, 파일이 외부로 전송되지 않습니다.</p>
+    <p class="an-hint" style="font-size:14.5px;margin-bottom:14px;">TTS 음성 파일을 넣으면 문장 사이의 <b>조용한 빈 구간을 자동으로 잘라</b> 드립니다. <b>여러 파일을 한꺼번에</b> 넣으면 하나씩 자동으로 처리하고, <b>파일별로도 전체(ZIP)로도</b> 받을 수 있습니다. 모든 처리는 내 컴퓨터 안에서만 이루어지고, 파일이 외부로 전송되지 않습니다. <b>시작을 누른 뒤 다른 창을 봐도 계속 처리됩니다.</b></p>
     <div class="drop" id="drop" onclick="pickFiles()">
       🎵 <b>여기를 눌러 음성 파일 선택</b> (여러 개 가능 · 끌어다 놓기도 됩니다)
       <div class="sub">MP3·M4A는 300MB(약 3시간), WAV는 5GB까지 · 파일은 서버로 올라가지 않습니다</div>
@@ -68,12 +68,150 @@
 <script src="assets/js/config.js"></script>
 <script src="assets/js/app.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js"></script>
+<script id="worker-src" type="text/plain">
+importScripts("https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js");
+var WIN=1024, THRESH=0.00562, MIN_SIL=0.35;
+function prog(p,t){ self.postMessage({type:"progress", pct:p, txt:t}); }
+function detectSilence(data, rate){
+  var flags=[], n=Math.floor(data.length/WIN);
+  for (var w=0;w<n;w++){ var sum=0, off=w*WIN; for (var i=0;i<WIN;i++){ var v=data[off+i]; sum+=v*v; } flags.push(Math.sqrt(sum/WIN)<THRESH); }
+  var runs=[], start=-1;
+  for (var w2=0;w2<=n;w2++){ var f=w2<n?flags[w2]:false; if(f&&start<0)start=w2; if(!f&&start>=0){ var dur=(w2-start)*WIN/rate; if(dur>=MIN_SIL) runs.push([start*WIN, w2*WIN]); start=-1; } }
+  return runs;
+}
+function buildSegments(runs, totalLen, rate, keepSec){
+  var keepN=Math.round(keepSec*rate), segs=[], pos=0, silTot=0, removed=0;
+  for (var i=0;i<runs.length;i++){ var s=runs[i][0], e=runs[i][1], dN=e-s; silTot+=dN; if(dN<=keepN)continue; segs.push([pos, s+keepN]); removed+=dN-keepN; pos=e; }
+  segs.push([pos, totalLen]); return { segs:segs, silSec:silTot/rate, removed:removed };
+}
+function buildOutput(mono, segs, rate){
+  var fadeN=Math.round(0.008*rate), total=0;
+  for (var i=0;i<segs.length;i++) total+=segs[i][1]-segs[i][0];
+  var out=new Float32Array(total), p=0;
+  for (var i2=0;i2<segs.length;i2++){ var s=segs[i2][0], e=segs[i2][1], n=e-s; out.set(mono.subarray(s,e), p);
+    if (i2>0) for (var k=0;k<fadeN&&k<n;k++) out[p+k]*=k/fadeN;
+    if (i2<segs.length-1) for (var k2=0;k2<fadeN&&k2<n;k2++) out[p+n-1-k2]*=k2/fadeN; p+=n; }
+  return out;
+}
+function encodeMp3sync(data, rate){
+  var enc=new lamejs.Mp3Encoder(1, rate, 128), block=1152, parts=[], int16=new Int16Array(block);
+  for (var i=0;i<data.length;i+=block){ var n=Math.min(block, data.length-i);
+    for (var j=0;j<n;j++){ var v=Math.max(-1,Math.min(1,data[i+j])); int16[j]=v<0?v*32768:v*32767; }
+    var chunk=enc.encodeBuffer(n===block?int16:int16.subarray(0,n)); if(chunk.length) parts.push(new Uint8Array(chunk));
+    if ((i/block)%400===0) prog(40+Math.round(55*i/data.length), "MP3로 만드는 중… "+Math.round(100*i/data.length)+"%"); }
+  var end=enc.flush(); if(end.length) parts.push(new Uint8Array(end));
+  return new Blob(parts, {type:"audio/mpeg"});
+}
+function readSample(dv, off, f){
+  if (f.bits===16) return dv.getInt16(off,true)/32768;
+  if (f.bits===24){ var b=dv.getUint8(off)|(dv.getUint8(off+1)<<8)|(dv.getUint8(off+2)<<16); if(b&0x800000)b|=-16777216; return b/8388608; }
+  if (f.format===3) return dv.getFloat32(off,true);
+  return dv.getInt32(off,true)/2147483648;
+}
+async function parseWav(file){
+  var head=new DataView(await file.slice(0, 1024*1024).arrayBuffer());
+  function tag(o){ return String.fromCharCode(head.getUint8(o),head.getUint8(o+1),head.getUint8(o+2),head.getUint8(o+3)); }
+  var riff=tag(0); if (riff!=="RIFF"&&riff!=="RF64") throw new Error("WAV 파일이 아니거나 지원하지 않는 형식입니다.");
+  var pos=12, f=null, dataStart=-1, dataSize=0;
+  while (pos+8<=head.byteLength){ var id=tag(pos), sz=head.getUint32(pos+4,true);
+    if (id==="fmt ") f={ format:head.getUint16(pos+8,true), ch:head.getUint16(pos+10,true), rate:head.getUint32(pos+12,true), bits:head.getUint16(pos+22,true) };
+    if (id==="data"){ dataStart=pos+8; dataSize=sz; break; } pos+=8+sz+(sz%2); }
+  if (!f||dataStart<0) throw new Error("WAV 내부 정보를 찾지 못했습니다. 표준 16비트 WAV로 저장해 주세요.");
+  if (dataSize===0||dataSize===4294967295||dataStart+dataSize>file.size) dataSize=file.size-dataStart;
+  var okFmt=(f.format===1||f.format===3||f.format===65534)&&(f.bits===16||f.bits===24||f.bits===32);
+  if (!okFmt||f.ch<1||f.ch>2||!f.rate) throw new Error("이 WAV 형식은 지원하지 않습니다. 16비트 WAV로 저장해 주세요.");
+  var bytesPer=f.bits/8, block=bytesPer*f.ch, totalSamples=Math.floor(dataSize/block);
+  return { fmt:f, dataStart:dataStart, block:block, bytesPer:bytesPer, totalSamples:totalSamples, rate:f.rate };
+}
+async function detectWav(file, meta){
+  var f=meta.fmt, block=meta.block, bytesPer=meta.bytesPer, rate=meta.rate;
+  var runs=[], winSum=0, winCnt=0, winIdx=0, silStart=-1;
+  var totalBytes=meta.totalSamples*block, read=0, CH=4194304-(4194304%block);
+  while (read<totalBytes){
+    var endB=Math.min(read+CH, totalBytes);
+    var buf=await file.slice(meta.dataStart+read, meta.dataStart+endB).arrayBuffer();
+    var nS=Math.floor(buf.byteLength/block);
+    if (f.bits===16){ var a=new Int16Array(buf);
+      for (var i=0;i<nS;i++){ var m=f.ch===1?a[i]/32768:(a[i*2]+a[i*2+1])/65536; winSum+=m*m; winCnt++;
+        if (winCnt===WIN){ var sil=Math.sqrt(winSum/WIN)<THRESH; if(sil&&silStart<0)silStart=winIdx*WIN; if(!sil&&silStart>=0){ if((winIdx*WIN-silStart)/rate>=MIN_SIL) runs.push([silStart,winIdx*WIN]); silStart=-1; } winIdx++; winSum=0; winCnt=0; } } }
+    else { var dv=new DataView(buf);
+      for (var i2=0;i2<nS;i2++){ var m2=0, off=i2*block; for (var c=0;c<f.ch;c++) m2+=readSample(dv, off+c*bytesPer, f); m2/=f.ch; winSum+=m2*m2; winCnt++;
+        if (winCnt===WIN){ var sil2=Math.sqrt(winSum/WIN)<THRESH; if(sil2&&silStart<0)silStart=winIdx*WIN; if(!sil2&&silStart>=0){ if((winIdx*WIN-silStart)/rate>=MIN_SIL) runs.push([silStart,winIdx*WIN]); silStart=-1; } winIdx++; winSum=0; winCnt=0; } } }
+    read=endB; prog(3+Math.round(30*read/totalBytes), "무음 찾는 중… "+Math.round(100*read/totalBytes)+"%");
+  }
+  if (silStart>=0&&(winIdx*WIN-silStart)/rate>=MIN_SIL) runs.push([silStart, winIdx*WIN]);
+  return runs;
+}
+function wavHeader(totalSamples, rate){
+  var dataBytes=totalSamples*2, h=new ArrayBuffer(44), dv=new DataView(h);
+  function ws(o,s){ for(var i=0;i<s.length;i++) dv.setUint8(o+i, s.charCodeAt(i)); }
+  ws(0,"RIFF"); dv.setUint32(4,36+dataBytes,true); ws(8,"WAVE"); ws(12,"fmt "); dv.setUint32(16,16,true); dv.setUint16(20,1,true); dv.setUint16(22,1,true);
+  dv.setUint32(24,rate,true); dv.setUint32(28,rate*2,true); dv.setUint16(32,2,true); dv.setUint16(34,16,true); ws(36,"data"); dv.setUint32(40,dataBytes,true);
+  return new Uint8Array(h);
+}
+function fillMono16(buf, n, out, meta){
+  var f=meta.fmt, ch=f.ch;
+  if (f.bits===16){ var a=new Int16Array(buf); if(ch===1){ out.set(a.subarray(0,n)); return; } for (var i=0;i<n;i++) out[i]=((a[i*2]+a[i*2+1])/2)|0; return; }
+  var dv=new DataView(buf);
+  for (var i2=0;i2<n;i2++){ var m=0, off=i2*meta.block; for (var c=0;c<ch;c++) m+=readSample(dv, off+c*meta.bytesPer, f); m/=ch; var v=Math.max(-1,Math.min(1,m)); out[i2]=v<0?(v*32768)|0:(v*32767)|0; }
+}
+async function writeBig(file, meta, segs, rate){
+  var fadeN=Math.round(0.008*rate), total=0;
+  for (var i=0;i<segs.length;i++) total+=segs[i][1]-segs[i][0];
+  var parts=[wavHeader(total, rate)], CH=4194304-(4194304%meta.block), chSamples=Math.floor(CH/meta.block), done=0;
+  for (var s2=0;s2<segs.length;s2++){ var s=segs[s2][0], e=segs[s2][1], segLen=e-s, written=0;
+    while (written<segLen){ var n=Math.min(chSamples, segLen-written);
+      var byteA=meta.dataStart+(s+written)*meta.block;
+      var buf=await file.slice(byteA, byteA+n*meta.block).arrayBuffer();
+      var o16=new Int16Array(n); fillMono16(buf, n, o16, meta);
+      if (s2>0 && written<fadeN){ var lim=Math.min(fadeN-written,n); for (var k=0;k<lim;k++) o16[k]=(o16[k]*(written+k)/fadeN)|0; }
+      if (s2<segs.length-1 && written+n>segLen-fadeN){ for (var k2=Math.max(0,segLen-fadeN-written); k2<n; k2++){ var dist=segLen-1-(written+k2); o16[k2]=(o16[k2]*dist/fadeN)|0; } }
+      parts.push(new Uint8Array(o16.buffer)); written+=n; done+=n;
+      prog(35+Math.round(60*done/total), "무음 잘라 저장 중… "+Math.round(100*done/total)+"%"); } }
+  return new Blob(parts, {type:"audio/wav"});
+}
+self.onmessage = async function(ev){
+  var d=ev.data;
+  try {
+    if (d.cmd==="pcm"){
+      var mono=new Float32Array(d.pcm), rate=d.rate, keepSec=d.keepSec;
+      prog(30,"무음 찾는 중…");
+      var runs=detectSilence(mono, rate);
+      var seg=buildSegments(runs, mono.length, rate, keepSec);
+      var out=buildOutput(mono, seg.segs, rate);
+      var blob=encodeMp3sync(out, rate);
+      self.postMessage({type:"done", blob:blob, ext:"mp3", orig:mono.length/rate, out:out.length/rate, sil:seg.silSec, runs:runs.length});
+    } else if (d.cmd==="wav"){
+      prog(3,"WAV 정보 읽는 중…");
+      var meta=await parseWav(d.file);
+      var runs2=await detectWav(d.file, meta);
+      var seg2=buildSegments(runs2, meta.totalSamples, meta.rate, d.keepSec);
+      var blob2=await writeBig(d.file, meta, seg2.segs, meta.rate);
+      self.postMessage({type:"done", blob:blob2, ext:"wav", orig:meta.totalSamples/meta.rate, out:(meta.totalSamples-seg2.removed)/meta.rate, sil:seg2.silSec, runs:runs2.length});
+    }
+  } catch(err){ self.postMessage({type:"error", message:(err&&err.message)?err.message:String(err)}); }
+};
+</script>
 <script>
   var WIN = 1024, THRESH = 0.00562, MIN_SIL = 0.35;
   var MB = 1024 * 1024;
   var LIMIT_MP3 = 300 * MB, LIMIT_WAV = 5 * 1024 * MB, BIG_WAV = 150 * MB;
   var queue = [];
   var busy = false;
+  var worker = null, useWorker = true, keepAudio = null;
+  function keepAwakeOn(){ try { if (keepAudio) return; var AC=window.AudioContext||window.webkitAudioContext; var ctx=new AC(); if(ctx.state==="suspended") ctx.resume(); var osc=ctx.createOscillator(), g=ctx.createGain(); g.gain.value=0.0001; osc.connect(g); g.connect(ctx.destination); osc.start(); keepAudio={ctx:ctx, osc:osc}; } catch(e){} }
+  function keepAwakeOff(){ if (keepAudio){ try{ keepAudio.osc.stop(); keepAudio.ctx.close(); }catch(e){} keepAudio=null; } }
+  function getWorker(){ if (worker) return worker; var src=document.getElementById("worker-src").textContent; var url=URL.createObjectURL(new Blob([src],{type:"text/javascript"})); worker=new Worker(url); return worker; }
+  function workerJob(msg, transfer, onProg){
+    return new Promise(function(resolve,reject){
+      var w; try { w=getWorker(); } catch(e){ reject(new Error("WORKER_INIT")); return; }
+      function cleanup(){ w.removeEventListener("message",onMsg); w.removeEventListener("error",onErr); }
+      function onMsg(e){ var d=e.data; if(d.type==="progress"){ if(onProg)onProg(d.pct,d.txt); return; } if(d.type==="done"){ cleanup(); resolve(d); } else if(d.type==="error"){ cleanup(); reject(new Error(d.message)); } }
+      function onErr(e){ cleanup(); try{worker=null;}catch(_){} reject(new Error("WORKER_INIT")); }
+      w.addEventListener("message",onMsg); w.addEventListener("error",onErr);
+      try { w.postMessage(msg, transfer||[]); } catch(e){ cleanup(); reject(new Error("WORKER_INIT")); }
+    });
+  }
   function pickFiles(){ document.getElementById("file-in").click(); }
   function fmt(sec){ sec = Math.max(0, Math.round(sec)); var m = Math.floor(sec/60), s = sec%60; return m>0 ? (m+"분 "+s+"초") : (s+"초"); }
   function showErr(msg){ var e=$id("sil-err"); e.textContent=msg; e.className="sil-err show"; }
@@ -122,6 +260,7 @@
   function setProg(i,pct,txt){ var fl=$id("fill-"+i); if(fl) fl.style.width=pct+"%"; var st=$id("st-"+i); if(st) st.textContent=txt; }
   async function runAll(){
     if (busy) return; busy=true; hideErr();
+    keepAwakeOn();
     $id("btn-all").disabled=true;
     var keepSec = parseFloat($id("keep-gap").value);
     for (var i=0;i<queue.length;i++){
@@ -143,7 +282,7 @@
       }
       updateAllActions();
     }
-    busy=false; $id("btn-all").disabled=false; updateAllActions();
+    keepAwakeOff(); busy=false; $id("btn-all").disabled=false; updateAllActions();
   }
   function updateAllActions(){
     var done=0, saved=0;
@@ -153,7 +292,27 @@
   }
   async function processItem(it, idx, keepSec){
     var prog=function(p,t){ setProg(idx, p, t); };
-    if (it.isWav && it.file.size > BIG_WAV){
+    if (useWorker){
+      try {
+        if (it.isWav){
+          var d=await workerJob({cmd:"wav", file:it.file, keepSec:keepSec}, [], prog);
+          it.blob=d.blob; it.ext="wav"; it.orig=d.orig; it.out=d.out; it.sil=d.sil; it.runsCount=d.runs; return;
+        } else {
+          prog(4,"파일 읽는 중…");
+          var buf=await it.file.arrayBuffer();
+          prog(10,"음성 해석 중…");
+          var ac=new (window.AudioContext||window.webkitAudioContext)();
+          var audio; try { audio=await ac.decodeAudioData(buf); } catch(e){ try{ac.close();}catch(_){} throw new Error("이 파일을 읽지 못했습니다 (MP3/WAV 확인, 또는 메모리 부족). 아주 긴 파일은 WAV로 넣어주세요."); }
+          var rate=audio.sampleRate, ch=audio.numberOfChannels, len=audio.length;
+          var mono=new Float32Array(len);
+          for (var c=0;c<ch;c++){ var dd=audio.getChannelData(c); for (var i=0;i<len;i++) mono[i]+=dd[i]/ch; }
+          try{ac.close();}catch(_){}
+          var d2=await workerJob({cmd:"pcm", pcm:mono.buffer, rate:rate, keepSec:keepSec}, [mono.buffer], prog);
+          it.blob=d2.blob; it.ext="mp3"; it.orig=d2.orig; it.out=d2.out; it.sil=d2.sil; it.runsCount=d2.runs; return;
+        }
+      } catch(e){ if (String(e.message).indexOf("WORKER_INIT")>=0){ useWorker=false; } else { throw e; } }
+    }
+    if (it.isWav){
       var r=await processBigWav(it.file, keepSec, prog);
       it.blob=r.blob; it.ext="wav"; it.orig=r.orig; it.out=r.out; it.sil=r.sil; it.runsCount=r.runs;
     } else {
