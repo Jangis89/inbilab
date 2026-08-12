@@ -301,10 +301,10 @@
     if (!user) { location.replace("login.html?next=silence.html"); return; }
     const adm = await isAdmin(user);
     if (!adm) {
-      const { data: fl } = await sb.from("feature_flags").select("is_public").eq("key", "silence_remover").maybeSingle();
+      const { data: fl } = await sb.from("feature_flags").select("is_public").eq("key", "audio_trim").maybeSingle();
       if (!fl || !fl.is_public) { location.replace("dashboard.html"); return; }
     } else {
-      const { data: fl2 } = await sb.from("feature_flags").select("is_public").eq("key", "silence_remover").maybeSingle();
+      const { data: fl2 } = await sb.from("feature_flags").select("is_public").eq("key", "audio_trim").maybeSingle();
       if (!fl2 || !fl2.is_public) $id("devnote").style.display = "block";
     }
     await renderHeader("silence");
