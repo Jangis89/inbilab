@@ -983,33 +983,29 @@ async function runDesilence(job) {
 
     const dMin = Math.max(0.05, Math.min(2, Number(proj.desilence_min) || 0.15));
     await setJobProgress(job.id, 15);
-    const det = await exec("ffmpeg", ["-hide_banner","-nostats","-i", url, "-af", ("silencedetect=noise=-40dB:d=" + dMin), "-f","null","-"], { timeout: 1500000, maxBuffer: 64*1024*1024 });
-    const silences = parseSilence((det.stderr || "") + (det.stdout || ""), dur);
-    const kr = keepRanges(silences, dur, Math.min(0.05, dMin*0.4));
-    const keeps = kr.keeps, cutTotal = kr.cutTotal;
-
     const tmpDir = await mkdtemp(join(tmpdir(), "ib-ds-"));
     try {
       const clipPath = proj.user_id + "/desilence_" + proj.id + ".mp4";
       const outPath = join(tmpDir, "out.mp4");
+      const srcPath = join(tmpDir, "src.mkv");
+      await setProjectStatus(proj.id, "desilence_running", "영상을 받아 오는 중…");
+      await exec("ffmpeg", ["-hide_banner","-nostats","-i", url, "-c","copy", srcPath, "-y"], { timeout: 2400000, maxBuffer: 16*1024*1024 });
+      await setProjectStatus(proj.id, "desilence_running", "무음 구간을 찾는 중…");
+      const det = await exec("ffmpeg", ["-hide_banner","-nostats","-i", srcPath, "-af", ("silencedetect=noise=-40dB:d=" + dMin), "-f","null","-"], { timeout: 1500000, maxBuffer: 64*1024*1024 });
+      const silences = parseSilence((det.stderr || "") + (det.stdout || ""), dur);
+      const kr = keepRanges(silences, dur, Math.min(0.05, dMin*0.4));
+      const keeps = kr.keeps, cutTotal = kr.cutTotal;
       if (cutTotal < 1 || keeps.length === 0) {
-        await setProjectStatus(proj.id, "desilence_running", "무음이 거의 없어 원본을 그대로 저장 중…");
-        await exec("ffmpeg", ["-i", url, "-c", "copy", "-movflags", "+faststart", outPath, "-y"], { timeout: 900000, maxBuffer: 16*1024*1024 });
+        await setProjectStatus(proj.id, "desilence_running", "무음이 거의 없어 그대로 저장 중…");
+        await exec("ffmpeg", ["-i", srcPath, "-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart", outPath, "-y"], { timeout: 2400000, maxBuffer: 16*1024*1024 });
       } else {
         const Q = String.fromCharCode(39);
-        let expr = "";
-        for (let i = 0; i < keeps.length; i++) { if (i) expr += "+"; expr += "between(t," + keeps[i][0].toFixed(3) + "," + keeps[i][1].toFixed(3) + ")"; }
-        const vf = "select=" + Q + expr + Q + ",setpts=N/FRAME_RATE/TB";
-        const af = "aselect=" + Q + expr + Q + ",asetpts=N/SR/TB";
-        await writeFile(join(tmpDir, "vf.txt"), vf, "utf8");
-        await writeFile(join(tmpDir, "af.txt"), af, "utf8");
-        await setProjectStatus(proj.id, "desilence_running", "무음을 잘라 영상을 다시 만드는 중… (길면 몇 분 걸려요)");
+        let list = "ffconcat version 1.0" + String.fromCharCode(10);
+        for (let i = 0; i < keeps.length; i++) { list += "file " + Q + srcPath + Q + String.fromCharCode(10) + "inpoint " + keeps[i][0].toFixed(3) + String.fromCharCode(10) + "outpoint " + keeps[i][1].toFixed(3) + String.fromCharCode(10); }
+        await writeFile(join(tmpDir, "list.txt"), list, "utf8");
+        await setProjectStatus(proj.id, "desilence_running", "무음을 잘라 이어붙이는 중… (" + keeps.length + "개 구간, 길면 몇 분 걸려요)");
         await setJobProgress(job.id, 45);
-        await exec("ffmpeg", ["-i", url,
-          "-filter_script:v", join(tmpDir, "vf.txt"),
-          "-filter_script:a", join(tmpDir, "af.txt"),
-          "-c:v","libx264","-preset","veryfast","-crf","23","-pix_fmt","yuv420p",
-          "-c:a","aac","-b:a","160k","-movflags","+faststart", outPath, "-y"], { timeout: 2400000, maxBuffer: 16*1024*1024 });
+        await exec("ffmpeg", ["-f","concat","-safe","0","-i", join(tmpDir, "list.txt"), "-c:v","libx264","-preset","veryfast","-crf","23","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart", outPath, "-y"], { timeout: 3600000, maxBuffer: 16*1024*1024 });
       }
       await setJobProgress(job.id, 90);
       const buf = await readFile(outPath);
