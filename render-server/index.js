@@ -1058,7 +1058,7 @@ async function runDesilence(job) {
       const { data: rsigned, error: rse } = await sb.storage.from("videos-clips").createSignedUrl(clipPath, 86400);
       if (rse) throw new Error("결과 링크 생성 실패: " + rse.message);
       const newDur = Math.max(0, dur - cutTotal);
-      const detail = JSON.stringify({ result_url: rsigned.signedUrl, orig_sec: Math.round(dur), new_sec: Math.round(newDur), cut_sec: Math.round(cutTotal), spots: silences.length });
+      const detail = JSON.stringify({ result_url: rsigned.signedUrl, orig_sec: Math.round(dur), new_sec: Math.round(newDur), cut_sec: Math.round(cutTotal), spots: keeps.length });
       await sb.from("sc_projects").update({ status: "desilence_done", status_detail: detail, updated_at: new Date().toISOString() }).eq("id", proj.id);
       /* 원본과 완성본은 24시간 뒤 cleanupExpired에서 함께 삭제 (그 사이 다시 자르기 가능) */
       try { await sb.from("sc_usage_log").insert({ project_id: proj.id, kind: "desilence", duration_sec: dur, meta: { cut_sec: Math.round(cutTotal) } }); } catch (e) {}
