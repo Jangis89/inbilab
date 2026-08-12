@@ -8,7 +8,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile, unlink, mkdtemp, rm } from "node:fs/promises";
+import { readFile, writeFile, unlink, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import http from "node:http";
@@ -64,7 +64,7 @@ if (!GEMINI_KEY) console.warn("[준비] GEMINI_API_KEY 미설정 — 전사(tran
 // ---------- 대기열 처리 루프 ----------
 async function claimJob() {
   // queued 상태의 가장 오래된 작업 1개를 원자적으로 가져온다 (경쟁 방지: status 조건부 업데이트)
-  const allowedTypes = GEMINI_KEY ? ["probe", "transcribe", "analyze", "render"] : ["probe", "render"];
+  const allowedTypes = GEMINI_KEY ? ["probe", "transcribe", "analyze", "render", "desilence"] : ["probe", "render", "desilence"];
   const { data: jobs, error } = await sb
     .from("sc_render_jobs")
     .select("id, project_id, recipe_id, job_type, attempts")
@@ -117,7 +117,7 @@ async function enqueueJob(projectId, jobType) {
 // ---------- 작업: probe (파일 검사) ----------
 async function runProbe(job) {
   const { data: proj, error } = await sb.from("sc_projects")
-    .select("id, source_path").eq("id", job.project_id).single();
+    .select("id, source_path, objective").eq("id", job.project_id).single();
   if (error || !proj?.source_path) throw new Error("프로젝트/원본 경로 없음");
   await setProjectStatus(proj.id, "probing");
 
@@ -166,7 +166,8 @@ async function runProbe(job) {
   console.log(`[probe] 완료 p=${proj.id} 길이=${Math.round(durationSec)}초 경고=${warnings.length}`);
 
   // 소리가 있는 영상이면 다음 단계(전사)를 자동 예약
-  if (audio) await enqueueJob(proj.id, "transcribe");
+  if ((proj.objective || "") === "desilence") await enqueueJob(proj.id, "desilence");
+  else if (audio) await enqueueJob(proj.id, "transcribe");
   else console.log(`[probe] p=${proj.id} 오디오 없음 — 전사 건너뜀`);
 }
 
@@ -922,9 +923,117 @@ async function runRender(job) {
 
 // ---------- 메인 루프 ----------
 console.log(`[시작] 렌더 서버 ${WORKER_ID} — ${POLL_MS / 1000}초 간격 대기열 감시`);
+let flagsEnsured = false;
+async function ensureFlags() {
+  try {
+    const { data } = await sb.from("feature_flags").select("key").eq("key", "video_desilence").maybeSingle();
+    if (!data) await sb.from("feature_flags").insert({ key: "video_desilence", name: "영상 무음 제거", is_public: false });
+  } catch (e) { console.error("[flag] ensure 실패:", e.message); }
+}
+
+function parseSilence(txt, durationSec) {
+  const sil = []; let curStart = null;
+  const re = /silence_(start|end):\s*([0-9.]+)/g; let m;
+  while ((m = re.exec(txt))) {
+    if (m[1] === "start") curStart = parseFloat(m[2]);
+    else { if (curStart != null) { sil.push([curStart, parseFloat(m[2])]); curStart = null; } }
+  }
+  if (curStart != null) sil.push([curStart, durationSec]);
+  return sil;
+}
+
+function keepRanges(silences, durationSec, keepPad) {
+  const cuts = [];
+  for (let i = 0; i < silences.length; i++) {
+    const cs = silences[i][0] + keepPad, ce = silences[i][1] - keepPad;
+    if (ce - cs > 0.05) cuts.push([cs, ce]);
+  }
+  const keeps = []; let pos = 0;
+  for (let i = 0; i < cuts.length; i++) { if (cuts[i][0] > pos) keeps.push([pos, cuts[i][0]]); pos = cuts[i][1]; }
+  if (pos < durationSec) keeps.push([pos, durationSec]);
+  let cutTotal = 0; for (let i = 0; i < cuts.length; i++) cutTotal += cuts[i][1] - cuts[i][0];
+  return { keeps: keeps, cutTotal: cutTotal };
+}
+
+// ---------- 작업: desilence (영상 무음 구간 잘라내기) ----------
+async function runDesilence(job) {
+  const { data: proj, error } = await sb.from("sc_projects")
+    .select("id, user_id, source_path, source_duration_sec, probe, objective").eq("id", job.project_id).single();
+  if (error || !proj || !proj.source_path) throw new Error("프로젝트/원본 없음");
+
+  const failStatus = async (msg) => {
+    if ((job.attempts || 0) >= 1) await setProjectStatus(proj.id, "failed_desilence", String(msg).slice(0, 200));
+  };
+  try {
+    await setProjectStatus(proj.id, "desilence_running", "무음 구간을 찾는 중…");
+    const { data: signed, error: se } = await sb.storage.from("videos-source").createSignedUrl(proj.source_path, 21600);
+    if (se) throw new Error("서명 URL 실패: " + se.message);
+    const url = signed.signedUrl;
+
+    let dur = proj.source_duration_sec || 0;
+    let hasAudio = !!(proj.probe && proj.probe.audio_codec);
+    if (!dur || !proj.probe) {
+      const { stdout } = await exec("ffprobe", ["-v","error","-print_format","json","-show_format","-show_streams", url], { timeout: 120000, maxBuffer: 16*1024*1024 });
+      const info = JSON.parse(stdout); dur = parseFloat((info.format || {}).duration || 0);
+      hasAudio = (info.streams || []).some((s) => s.codec_type === "audio");
+    }
+    if (!hasAudio) throw new Error("소리가 없는 영상은 무음을 찾을 수 없어요.");
+    if (!dur) throw new Error("영상 길이를 확인하지 못했어요.");
+    if (dur > 3600) throw new Error("지금은 60분 이하 영상만 지원해요. 더 긴 영상은 나눠서 넣어주세요.");
+
+    await setJobProgress(job.id, 15);
+    const det = await exec("ffmpeg", ["-hide_banner","-nostats","-i", url, "-af", "silencedetect=noise=-40dB:d=0.35", "-f","null","-"], { timeout: 1500000, maxBuffer: 64*1024*1024 });
+    const silences = parseSilence((det.stderr || "") + (det.stdout || ""), dur);
+    const kr = keepRanges(silences, dur, 0.15);
+    const keeps = kr.keeps, cutTotal = kr.cutTotal;
+
+    const tmpDir = await mkdtemp(join(tmpdir(), "ib-ds-"));
+    try {
+      const clipPath = proj.user_id + "/desilence_" + proj.id + ".mp4";
+      const outPath = join(tmpDir, "out.mp4");
+      if (cutTotal < 1 || keeps.length === 0) {
+        await setProjectStatus(proj.id, "desilence_running", "무음이 거의 없어 원본을 그대로 저장 중…");
+        await exec("ffmpeg", ["-i", url, "-c", "copy", "-movflags", "+faststart", outPath, "-y"], { timeout: 900000, maxBuffer: 16*1024*1024 });
+      } else {
+        const Q = String.fromCharCode(39);
+        let expr = "";
+        for (let i = 0; i < keeps.length; i++) { if (i) expr += "+"; expr += "between(t," + keeps[i][0].toFixed(3) + "," + keeps[i][1].toFixed(3) + ")"; }
+        const vf = "select=" + Q + expr + Q + ",setpts=N/FRAME_RATE/TB";
+        const af = "aselect=" + Q + expr + Q + ",asetpts=N/SR/TB";
+        await writeFile(join(tmpDir, "vf.txt"), vf, "utf8");
+        await writeFile(join(tmpDir, "af.txt"), af, "utf8");
+        await setProjectStatus(proj.id, "desilence_running", "무음을 잘라 영상을 다시 만드는 중… (길면 몇 분 걸려요)");
+        await setJobProgress(job.id, 45);
+        await exec("ffmpeg", ["-i", url,
+          "-filter_script:v", join(tmpDir, "vf.txt"),
+          "-filter_script:a", join(tmpDir, "af.txt"),
+          "-c:v","libx264","-preset","veryfast","-crf","23","-pix_fmt","yuv420p",
+          "-c:a","aac","-b:a","160k","-movflags","+faststart", outPath, "-y"], { timeout: 2400000, maxBuffer: 16*1024*1024 });
+      }
+      await setJobProgress(job.id, 90);
+      const buf = await readFile(outPath);
+      const { error: ue } = await sb.storage.from("videos-clips").upload(clipPath, buf, { contentType: "video/mp4", upsert: true });
+      if (ue) throw new Error("완성본 업로드 실패: " + ue.message);
+      const { data: rsigned, error: rse } = await sb.storage.from("videos-clips").createSignedUrl(clipPath, 86400);
+      if (rse) throw new Error("결과 링크 생성 실패: " + rse.message);
+      const newDur = Math.max(0, dur - cutTotal);
+      const detail = JSON.stringify({ result_url: rsigned.signedUrl, orig_sec: Math.round(dur), new_sec: Math.round(newDur), cut_sec: Math.round(cutTotal), spots: silences.length });
+      await sb.from("sc_projects").update({ status: "desilence_done", status_detail: detail, updated_at: new Date().toISOString() }).eq("id", proj.id);
+      try { await sb.from("sc_usage_log").insert({ project_id: proj.id, kind: "desilence", duration_sec: dur, meta: { cut_sec: Math.round(cutTotal) } }); } catch (e) {}
+      console.log("[desilence] 완료 p=" + proj.id + " 원본=" + Math.round(dur) + "s 컷=" + Math.round(cutTotal) + "s");
+    } finally {
+      try { await rm(tmpDir, { recursive: true, force: true }); } catch (e) {}
+    }
+  } catch (e) {
+    await failStatus(e.message);
+    throw e;
+  }
+}
+
 async function loop() {
   lastPollAt = new Date().toISOString();
   try {
+    if (!flagsEnsured) { await ensureFlags(); flagsEnsured = true; }
     const job = await claimJob();
     if (job) {
       console.log(`[작업] ${job.job_type} 시작 (job=${job.id}, 시도=${job.attempts + 1})`);
@@ -933,6 +1042,7 @@ async function loop() {
         else if (job.job_type === "transcribe") await runTranscribe(job);
         else if (job.job_type === "analyze") await runAnalyze(job);
         else if (job.job_type === "render") await runRender(job);
+        else if (job.job_type === "desilence") await runDesilence(job);
         else throw new Error("아직 지원하지 않는 작업 유형: " + job.job_type);
         await finishJob(job.id, true);
         processedCount++;
