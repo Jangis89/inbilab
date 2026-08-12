@@ -1016,6 +1016,7 @@ async function runDesilence(job) {
       const newDur = Math.max(0, dur - cutTotal);
       const detail = JSON.stringify({ result_url: rsigned.signedUrl, orig_sec: Math.round(dur), new_sec: Math.round(newDur), cut_sec: Math.round(cutTotal), spots: silences.length });
       await sb.from("sc_projects").update({ status: "desilence_done", status_detail: detail, updated_at: new Date().toISOString() }).eq("id", proj.id);
+      try { await sb.storage.from("videos-source").remove([proj.source_path]); console.log("[정리] 원본 삭제 완료 " + proj.source_path); } catch (delErr) { console.error("[정리] 원본 삭제 실패:", delErr.message); }
       try { await sb.from("sc_usage_log").insert({ project_id: proj.id, kind: "desilence", duration_sec: dur, meta: { cut_sec: Math.round(cutTotal) } }); } catch (e) {}
       console.log("[desilence] 완료 p=" + proj.id + " 원본=" + Math.round(dur) + "s 컷=" + Math.round(cutTotal) + "s");
     } finally {
