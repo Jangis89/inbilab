@@ -7,6 +7,7 @@ import onnxruntime as ort
 MODEL = "/app/models/silero_vad.onnx"
 SR = 16000
 WINDOW = 512
+CONTEXT = 64
 
 def _session():
     so = ort.SessionOptions()
@@ -17,7 +18,7 @@ def _session():
 def selfcheck():
     sess = _session()
     ins = [i.name for i in sess.get_inputs()]
-    x = np.zeros((1, WINDOW), dtype=np.float32)
+    x = np.zeros((1, WINDOW + CONTEXT), dtype=np.float32)
     state = np.zeros((2, 1, 128), dtype=np.float32)
     sr = np.array(SR, dtype=np.int64)
     sess.run(None, {"input": x, "state": state, "sr": sr})
@@ -32,6 +33,7 @@ def read_wav_mono16k(path):
 def get_speech_timestamps(audio, threshold=0.5, min_speech_ms=250, min_silence_ms=100, pad_ms=30):
     sess = _session()
     state = np.zeros((2, 1, 128), dtype=np.float32)
+    context = np.zeros((1, CONTEXT), dtype=np.float32)
     sr = np.array(SR, dtype=np.int64)
     probs = []
     n = len(audio)
@@ -39,15 +41,11 @@ def get_speech_timestamps(audio, threshold=0.5, min_speech_ms=250, min_silence_m
         chunk = audio[start:start + WINDOW]
         if len(chunk) < WINDOW:
             chunk = np.pad(chunk, (0, WINDOW - len(chunk)))
-        x = chunk.reshape(1, -1).astype(np.float32)
+        x = np.concatenate([context[0], chunk]).reshape(1, -1).astype(np.float32)
         out = sess.run(None, {"input": x, "state": state, "sr": sr})
         state = out[1]
+        context = x[:, -CONTEXT:]
         probs.append(float(np.array(out[0]).reshape(-1)[0]))
-    import sys as _s
-    if probs:
-        _hi = sum(1 for _p in probs if _p >= threshold)
-        _lo = sum(1 for _p in probs if _p < 0.35)
-        _s.stderr.write("VADDBG n=%d win=%d pmin=%.3f pmax=%.3f pmean=%.3f hi=%d lo=%d" % (n, len(probs), min(probs), max(probs), sum(probs)/len(probs), _hi, _lo) + chr(10))
     neg = max(0.15, threshold - 0.15)
     min_speech = SR * min_speech_ms / 1000.0
     min_silence = SR * min_silence_ms / 1000.0
