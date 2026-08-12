@@ -1057,7 +1057,7 @@ async function runDesilence(job) {
           if (i % 15 === 0) { await setJobProgress(job.id, Math.min(85, 45 + Math.round((i / keeps.length) * 40))); }
         }
         await writeFile(join(tmpDir, "list.txt"), list, "utf8");
-        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-f","concat","-safe","0","-i", join(tmpDir, "list.txt"), "-c","copy","-movflags","+faststart", outPath, "-y"], { timeout: 3600000, maxBuffer: 128*1024*1024 });
+        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-f","concat","-safe","0","-i", join(tmpDir, "list.txt"), "-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p","-r","30","-vsync","cfr","-c:a","aac","-b:a","160k","-ar","48000","-ac","2","-movflags","+faststart", outPath, "-y"], { timeout: 3600000, maxBuffer: 128*1024*1024 });
       }
       await setJobProgress(job.id, 90);
       const buf = await readFile(outPath);
