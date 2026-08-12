@@ -1043,7 +1043,7 @@ async function runDesilence(job) {
       console.log("[\ubb34\uc74c\ud0d0\uc9c0] method=" + detMethod + " keeps=" + keeps.length + " cut=" + Math.round(cutTotal) + "s");
       if (cutTotal < 1 || keeps.length === 0) {
         await setProjectStatus(proj.id, "desilence_running", "무음이 거의 없어 그대로 저장 중…");
-        await exec("ffmpeg", ["-i", srcPath, "-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart", outPath, "-y"], { timeout: 2400000, maxBuffer: 16*1024*1024 });
+        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-i", srcPath, "-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart", outPath, "-y"], { timeout: 2400000, maxBuffer: 128*1024*1024 });
       } else {
         const Q = String.fromCharCode(39);
         let list = "ffconcat version 1.0" + String.fromCharCode(10);
@@ -1051,7 +1051,7 @@ async function runDesilence(job) {
         await writeFile(join(tmpDir, "list.txt"), list, "utf8");
         await setProjectStatus(proj.id, "desilence_running", "무음을 잘라 이어붙이는 중… (" + keeps.length + "개 구간, 길면 몇 분 걸려요)");
         await setJobProgress(job.id, 45);
-        await exec("ffmpeg", ["-f","concat","-safe","0","-i", join(tmpDir, "list.txt"), "-c:v","libx264","-preset","veryfast","-crf","23","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart", outPath, "-y"], { timeout: 3600000, maxBuffer: 16*1024*1024 });
+        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-f","concat","-safe","0","-i", join(tmpDir, "list.txt"), "-c:v","libx264","-preset","veryfast","-crf","23","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart", outPath, "-y"], { timeout: 3600000, maxBuffer: 128*1024*1024 });
       }
       await setJobProgress(job.id, 90);
       const buf = await readFile(outPath);
