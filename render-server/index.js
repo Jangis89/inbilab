@@ -978,6 +978,20 @@ function keepRanges(silences, durationSec, keepPad) {
 }
 
 // ---------- 작업: desilence (영상 무음 구간 잘라내기) ----------
+async function vadKeepRanges(srcPath, tmpDir, dur, dMin) {
+  const wavPath = join(tmpDir, "audio16k.wav");
+  await exec("ffmpeg", ["-hide_banner","-nostats","-i", srcPath, "-vn","-ac","1","-ar","16000","-c:a","pcm_s16le","-f","wav", wavPath, "-y"], { timeout: 600000, maxBuffer: 16*1024*1024 });
+  const minSilenceMs = Math.round(Math.max(0.05, Math.min(2, dMin)) * 1000);
+  const padMs = Math.round(Math.min(0.08, Math.max(0.02, dMin * 0.3)) * 1000);
+  const res = await exec("python3", ["/app/vad.py", wavPath, String(minSilenceMs), String(padMs)], { timeout: 1500000, maxBuffer: 64*1024*1024 });
+  const parsed = JSON.parse((res.stdout || "").trim());
+  const speech = parsed.speech || [];
+  if (!speech.length) return { keeps: [[0, dur]], cutTotal: 0 };
+  const keeps = speech.map(function(s){ return [Math.max(0, s[0]), Math.min(dur, s[1])]; }).filter(function(s){ return s[1] > s[0]; });
+  const kept = keeps.reduce(function(a, s){ return a + (s[1] - s[0]); }, 0);
+  return { keeps: keeps, cutTotal: Math.max(0, dur - kept) };
+}
+
 async function runDesilence(job) {
   const { data: proj, error } = await sb.from("sc_projects")
     .select("id, user_id, source_path, source_duration_sec, probe, objective, desilence_min").eq("id", job.project_id).single();
@@ -1013,10 +1027,18 @@ async function runDesilence(job) {
       await setProjectStatus(proj.id, "desilence_running", "영상을 받아 오는 중…");
       await downloadToFile(url, srcPath, proj.id);
       await setProjectStatus(proj.id, "desilence_running", "무음 구간을 찾는 중…");
-      const det = await exec("ffmpeg", ["-hide_banner","-nostats","-i", srcPath, "-af", ("silencedetect=noise=-40dB:d=" + dMin), "-f","null","-"], { timeout: 1500000, maxBuffer: 64*1024*1024 });
-      const silences = parseSilence((det.stderr || "") + (det.stdout || ""), dur);
-      const kr = keepRanges(silences, dur, Math.min(0.05, dMin*0.4));
-      const keeps = kr.keeps, cutTotal = kr.cutTotal;
+      let keeps, cutTotal, detMethod;
+      try {
+        const vr = await vadKeepRanges(srcPath, tmpDir, dur, dMin);
+        keeps = vr.keeps; cutTotal = vr.cutTotal; detMethod = "vad";
+      } catch (ve) {
+        console.error("[VAD] \uc2e4\ud328 \u2192 dB \ubc29\uc2dd\uc73c\ub85c \ub300\uccb4: " + ((ve && ve.message) || ve));
+        const det = await exec("ffmpeg", ["-hide_banner","-nostats","-i", srcPath, "-af", ("silencedetect=noise=-40dB:d=" + dMin), "-f","null","-"], { timeout: 1500000, maxBuffer: 64*1024*1024 });
+        const silences = parseSilence((det.stderr || "") + (det.stdout || ""), dur);
+        const kr = keepRanges(silences, dur, Math.min(0.05, dMin*0.4));
+        keeps = kr.keeps; cutTotal = kr.cutTotal; detMethod = "db";
+      }
+      console.log("[\ubb34\uc74c\ud0d0\uc9c0] method=" + detMethod + " keeps=" + keeps.length + " cut=" + Math.round(cutTotal) + "s");
       if (cutTotal < 1 || keeps.length === 0) {
         await setProjectStatus(proj.id, "desilence_running", "무음이 거의 없어 그대로 저장 중…");
         await exec("ffmpeg", ["-i", srcPath, "-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart", outPath, "-y"], { timeout: 2400000, maxBuffer: 16*1024*1024 });
