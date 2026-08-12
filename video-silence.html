@@ -38,6 +38,9 @@
   .wl-sens{padding:4px 6px;border-radius:6px;}
   .recut-btn{padding:6px 12px;border-radius:8px;border:1px solid var(--blue);background:#fff;color:var(--blue);cursor:pointer;font-weight:600;}
   @media(max-width:860px){ .wl-act{flex-direction:column;align-items:stretch;} }
+  .wl-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;}
+  .wl-head .wl-title{margin-bottom:0;}
+  .hide-btn{flex:0 0 auto;font-size:12px;padding:4px 10px;border-radius:8px;border:1px solid var(--line);background:#f8fafc;color:var(--sub);cursor:pointer;white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -50,7 +53,7 @@
     <div style="margin:0 0 12px;font-size:14px;line-height:1.9;">
       <span style="color:var(--sub);margin-right:6px;">무음을 얼마나 과감하게 자를까요?</span><br>
       <label style="margin-right:12px;"><input type="radio" name="sens" value="0.1"> 매우 과감(0.1초)</label>
-      <label style="margin-right:12px;"><input type="radio" name="sens" value="0.15" checked> 과감(0.15초·추천)</label>
+      <label style="margin-right:12px;"><input type="radio" name="sens" value="0.15" checked> 과감(0.15초)</label>
       <label style="margin-right:12px;"><input type="radio" name="sens" value="0.25"> 보통(0.25초)</label>
       <label><input type="radio" name="sens" value="0.4"> 자연스럽게(0.4초)</label>
     </div>
@@ -79,7 +82,7 @@
   function hideErr(){ $id("vs-err").className="vs-err"; }
   function setUp(p,t){ var w=$id("up-wrap"); if(p<0){ w.className="prog-wrap"; return; } w.className="prog-wrap show"; $id("up-fill").style.width=p+"%"; $id("up-txt").textContent=t; }
   function curMin(){ var s=document.querySelector('input[name=sens]:checked'); return s?parseFloat(s.value):0.15; }
-  var SENS_OPTS='<option value="0.1">매우 과감(0.1초)</option><option value="0.15">과감(0.15초)</option><option value="0.25">보통(0.25초)</option><option value="0.4">자연스럽게(0.4초)</option>';
+  var SENS_OPTS='<option value="0.1">매우 과감(0.1초)</option><option value="0.15" selected>과감(0.15초)</option><option value="0.25">보통(0.25초)</option><option value="0.4">자연스럽게(0.4초)</option>';
   $id("file-in").addEventListener("change", function(ev){ if(ev.target.files&&ev.target.files.length) choose(ev.target.files); ev.target.value=""; });
   var dz=$id("drop"); dz.addEventListener("dragover",function(e){e.preventDefault();}); dz.addEventListener("drop",function(e){e.preventDefault(); if(e.dataTransfer.files&&e.dataTransfer.files.length) choose(e.dataTransfer.files);});
   async function choose(fileList){
@@ -120,9 +123,10 @@
   function makeRow(id, title){
     if(rows[id]) return rows[id];
     var w=document.createElement("div"); w.className="wl-item";
-    w.innerHTML='<div class="wl-title"></div><div class="wl-prog"><div class="prog-bar"><div class="prog-fill wl-fill"></div></div><div class="prog-txt wl-txt">대기 중…</div></div><div class="wl-done" style="display:none;"><h4 style="margin:0 0 8px;">✅ 완성! 미리 보고 받으세요</h4><video class="wl-video" controls preload="metadata"></video><div class="stat-row"><div class="stat-c"><b class="s-o">-</b><span>원래</span></div><div class="stat-c"><b class="s-n">-</b><span>처리 후</span></div><div class="stat-c green"><b class="s-c">-</b><span>줄인 시간</span></div></div><div class="wl-note">⏳ 이 영상은 <b>24시간 뒤 자동 삭제</b>돼요. 미리 받아두세요.</div><div class="wl-act"><a class="dl-btn wl-dl" download>⬇️ 다운로드</a> <span class="recut-box">다시 자를까요? <select class="wl-sens">'+SENS_OPTS+'</select> <button class="recut-btn">✂️ 다시 자르기</button></span></div></div>';
+    w.innerHTML='<div class="wl-head"><div class="wl-title"></div><button class="hide-btn">가리기</button></div><div class="wl-prog"><div class="prog-bar"><div class="prog-fill wl-fill"></div></div><div class="prog-txt wl-txt">대기 중…</div></div><div class="wl-done" style="display:none;"><h4 style="margin:0 0 8px;">✅ 완성! 미리 보고 받으세요</h4><video class="wl-video" controls preload="metadata"></video><div class="stat-row"><div class="stat-c"><b class="s-o">-</b><span>원래</span></div><div class="stat-c"><b class="s-n">-</b><span>처리 후</span></div><div class="stat-c green"><b class="s-c">-</b><span>줄인 시간</span></div></div><div class="wl-note">⏳ 이 영상은 <b>24시간 뒤 자동 삭제</b>돼요. 미리 받아두세요.</div><div class="wl-act"><a class="dl-btn wl-dl" download>⬇️ 다운로드</a> <span class="recut-box">다시 자를까요? <select class="wl-sens">'+SENS_OPTS+'</select> <button class="recut-btn">✂️ 다시 자르기</button></span></div></div>';
     w.querySelector(".wl-title").textContent=title;
     w.querySelector(".recut-btn").addEventListener("click", function(){ var m=parseFloat(w.querySelector(".wl-sens").value)||0.15; doRecut(id,m,w); });
+    w.querySelector(".hide-btn").addEventListener("click", function(){ hideItem(id,w); });
     var wl=$id("worklist"); wl.insertBefore(w, wl.firstChild); rows[id]=w; return w;
   }
   async function doRecut(id,m,w){
@@ -130,6 +134,11 @@
     var r=await sb.rpc("recut_desilence", { p_project:id, p_min:m });
     if(r.error){ showErr("다시 자르기 실패: "+r.error.message); return; }
     ensurePoll();
+  }
+  async function hideItem(id,w){
+    var r=await sb.rpc("hide_desilence",{ p_project:id });
+    if(r.error){ showErr("가리기 실패: "+r.error.message); return; }
+    if(w&&w.parentNode) w.parentNode.removeChild(w); delete rows[id];
   }
   function updateRow(w,p){
     var st=p.status||"", detail=p.status_detail||"";
@@ -149,7 +158,7 @@
   }
   async function pollAll(){
     var user=await getUser(); if(!user) return;
-    var r=await sb.from("sc_projects").select("id,title,status,status_detail").eq("user_id",user.id).eq("objective","desilence").order("created_at",{ascending:false}).limit(12);
+    var r=await sb.from("sc_projects").select("id,title,status,status_detail").eq("user_id",user.id).eq("objective","desilence").is("hidden_at",null).order("created_at",{ascending:false}).limit(12);
     if(r.error||!r.data) return;
     var active=false;
     r.data.forEach(function(p){ var w=rows[p.id]||makeRow(p.id,p.title); updateRow(w,p); if(p.status!=="desilence_done" && (p.status||"").indexOf("failed")!==0) active=true; });
@@ -157,7 +166,7 @@
   }
   async function loadStats(){
     try{ var s=await sb.rpc("admin_desilence_stats"); if(s.error||!s.data) return; var d=s.data; var cost=(d.month_done*0.04);
-      $id("adm-stats").innerHTML="오늘 처리 <b>"+d.today_done+"</b>건 · 처리 중 <b>"+d.active+"</b>건 · 이번 달 <b>"+d.month_done+"</b>건 · 예상 비용 약 <b>$"+cost.toFixed(1)+"</b> (대략)";
+      $id("adm-stats").innerHTML="오늘 처리 <b>"+d.today_done+"</b>건 · 처리 중 <b>"+d.active+"</b>건 · 이번 달 <b>"+d.month_done+"</b>건";
     }catch(e){}
   }
   (async () => {
