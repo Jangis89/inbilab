@@ -982,7 +982,7 @@ async function vadKeepRanges(srcPath, tmpDir, dur, dMin) {
   const wavPath = join(tmpDir, "audio16k.wav");
   await exec("ffmpeg", ["-hide_banner","-nostats","-i", srcPath, "-vn","-ac","1","-ar","16000","-c:a","pcm_s16le","-f","wav", wavPath, "-y"], { timeout: 600000, maxBuffer: 16*1024*1024 });
   const minSilenceMs = Math.round(Math.max(0.05, Math.min(2, dMin)) * 1000);
-  const padMs = Math.round(Math.min(0.08, Math.max(0.02, dMin * 0.3)) * 1000);
+  const padMs = Math.round(Math.min(0.15, Math.max(0.08, dMin * 0.3)) * 1000);
   const res = await exec("python3", ["/app/vad.py", wavPath, String(minSilenceMs), String(padMs)], { timeout: 1500000, maxBuffer: 64*1024*1024 });
   const parsed = JSON.parse((res.stdout || "").trim());
   const speech = parsed.speech || [];
@@ -1017,7 +1017,7 @@ async function runDesilence(job) {
     if (!dur) throw new Error("영상 길이를 확인하지 못했어요.");
     if (dur > 10800) throw new Error("지금은 3시간 이하 영상만 지원해요. 더 긴 영상은 나눠서 넣어주세요.");
 
-    const dMin = Math.max(0.05, Math.min(2, Number(proj.desilence_min) || 0.15));
+    const dMin = Math.max(0.05, Math.min(2, Number(proj.desilence_min) || 0.4));
     await setJobProgress(job.id, 15);
     const tmpDir = await mkdtemp(join(tmpdir(), "ib-ds-"));
     try {
@@ -1039,26 +1039,45 @@ async function runDesilence(job) {
         keeps = kr.keeps; cutTotal = kr.cutTotal; detMethod = "db";
       }
       console.log("[\ubb34\uc74c\ud0d0\uc9c0] method=" + detMethod + " keeps=" + keeps.length + " cut=" + Math.round(cutTotal) + "s");
+      let srcFps = 30;
+      try {
+        const fp = await exec("ffprobe", ["-v","error","-select_streams","v:0","-show_entries","stream=r_frame_rate","-of","default=nw=1:nk=1", srcPath], { timeout: 60000, maxBuffer: 4*1024*1024 });
+        const pr = String(fp.stdout).trim().split("/");
+        const f = (pr.length === 2 && Number(pr[1])) ? Number(pr[0]) / Number(pr[1]) : Number(pr[0]);
+        if (f > 0 && f <= 120) srcFps = Math.round(f * 1000) / 1000;
+      } catch (e) {}
+      const vts = String(Math.max(600, Math.round(srcFps * 1000)));
       if (cutTotal < 1 || keeps.length === 0) {
         await setProjectStatus(proj.id, "desilence_running", "무음이 거의 없어 그대로 저장 중…");
-        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-i", srcPath, "-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart", outPath, "-y"], { timeout: 2400000, maxBuffer: 128*1024*1024 });
+        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-i", srcPath, "-c:v","libx264","-preset","medium","-crf","16","-pix_fmt","yuv420p","-c:a","aac","-b:a","256k","-movflags","+faststart", outPath, "-y"], { timeout: 2400000, maxBuffer: 128*1024*1024 });
       } else {
         const Q = String.fromCharCode(39);
         const NL = String.fromCharCode(10);
         await setProjectStatus(proj.id, "desilence_running", "무음을 잘라 이어붙이는 중… (" + keeps.length + "개 구간, 길면 몇 분 걸려요)");
-        await setJobProgress(job.id, 45);
-        let list = "";
+        await setJobProgress(job.id, 40);
+        let vlist = "", alist = "";
         for (let i = 0; i < keeps.length; i++) {
-          const segStart = keeps[i][0];
-          const segDur = Math.max(0.02, keeps[i][1] - keeps[i][0]);
-          const segPath = join(tmpDir, "seg_" + String(i).padStart(5, "0") + ".mp4");
-          await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-ss", segStart.toFixed(3), "-i", srcPath, "-t", segDur.toFixed(3), "-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p","-r","30","-vsync","cfr","-video_track_timescale","15360","-c:a","aac","-b:a","160k","-ar","48000","-ac","2","-avoid_negative_ts","make_zero","-fflags","+genpts", segPath, "-y"], { timeout: 600000, maxBuffer: 32*1024*1024 });
-          list += "file " + Q + segPath + Q + NL;
-          if (i % 15 === 0) { await setJobProgress(job.id, Math.min(85, 45 + Math.round((i / keeps.length) * 40))); }
+          const s0 = Math.round(keeps[i][0] * srcFps) / srcFps;
+          const e0 = Math.round(keeps[i][1] * srcFps) / srcFps;
+          const segDur = Math.max(1 / srcFps, e0 - s0);
+          const vPath = join(tmpDir, "v_" + String(i).padStart(5, "0") + ".mp4");
+          const aPath = join(tmpDir, "a_" + String(i).padStart(5, "0") + ".wav");
+          await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-ss", s0.toFixed(3), "-t", segDur.toFixed(3), "-i", srcPath, "-an","-c:v","libx264","-preset","medium","-crf","16","-pix_fmt","yuv420p","-r", String(srcFps), "-vsync","cfr","-video_track_timescale", vts, vPath, "-vn","-c:a","pcm_s16le", aPath, "-y"], { timeout: 600000, maxBuffer: 32*1024*1024 });
+          vlist += "file " + Q + vPath + Q + NL;
+          alist += "file " + Q + aPath + Q + NL;
+          if (i % 12 === 0) { await setJobProgress(job.id, Math.min(80, 40 + Math.round((i / keeps.length) * 40))); }
         }
-        await writeFile(join(tmpDir, "list.txt"), list, "utf8");
-        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-f","concat","-safe","0","-i", join(tmpDir, "list.txt"), "-c:v","libx264","-preset","veryfast","-crf","21","-pix_fmt","yuv420p","-r","30","-vsync","cfr","-c:a","aac","-b:a","160k","-ar","48000","-ac","2","-movflags","+faststart", outPath, "-y"], { timeout: 3600000, maxBuffer: 128*1024*1024 });
+        await writeFile(join(tmpDir, "vlist.txt"), vlist, "utf8");
+        await writeFile(join(tmpDir, "alist.txt"), alist, "utf8");
+        const vidPath = join(tmpDir, "vid.mp4");
+        const audPath = join(tmpDir, "aud.m4a");
+        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-f","concat","-safe","0","-i", join(tmpDir, "vlist.txt"), "-an","-c:v","copy", vidPath, "-y"], { timeout: 1800000, maxBuffer: 128*1024*1024 });
+        await setJobProgress(job.id, 84);
+        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-f","concat","-safe","0","-i", join(tmpDir, "alist.txt"), "-c:a","aac","-b:a","256k", audPath, "-y"], { timeout: 1800000, maxBuffer: 128*1024*1024 });
+        await setJobProgress(job.id, 88);
+        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-i", vidPath, "-i", audPath, "-c","copy","-movflags","+faststart", outPath, "-y"], { timeout: 600000, maxBuffer: 128*1024*1024 });
       }
+
       await setJobProgress(job.id, 90);
       const buf = await readFile(outPath);
       const { error: ue } = await sb.storage.from("videos-clips").upload(clipPath, buf, { contentType: "video/mp4", upsert: true });
