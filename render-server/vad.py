@@ -91,5 +91,8 @@ if __name__ == "__main__":
             print("VAD_SELFCHECK_FAIL " + str(e))
             sys.exit(1)
     else:
-        audio = read_wav_mono16k(sys.argv[1])
-        print(json.dumps({"sr": SR, "speech": get_speech_timestamps(audio)}))
+        path = sys.argv[1]
+        min_sil = int(sys.argv[2]) if len(sys.argv) > 2 else 100
+        pad = int(sys.argv[3]) if len(sys.argv) > 3 else 30
+        audio = read_wav_mono16k(path)
+        print(json.dumps({"sr": SR, "speech": get_speech_timestamps(audio, min_silence_ms=min_sil, pad_ms=pad)}))
