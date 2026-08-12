@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#2563eb">
+<link rel="icon" type="image/png" sizes="48x48" href="/assets/icons/favicon-48.png">
+<link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
+<title>무음 제거기 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  .devnote{background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:9px 14px;font-size:13px;color:#854d0e;margin-bottom:16px;}
+  .drop{border:2px dashed var(--line);border-radius:16px;padding:34px 20px;text-align:center;background:var(--bg-soft);cursor:pointer;margin-bottom:14px;}
+  .drop:hover{border-color:var(--blue);}
+  .drop b{color:var(--blue);}
+  .drop .sub{font-size:13.5px;color:var(--sub);margin-top:6px;}
+  .sil-opts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0;font-size:14.5px;}
+  .sil-opts select{padding:8px 12px;border:2px solid var(--line);border-radius:10px;font-size:14.5px;font-family:inherit;}
+  .stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0;}
+  .stat-c{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:12px;text-align:center;}
+  .stat-c b{display:block;font-size:19px;color:var(--blue);}
+  .stat-c.green b{color:#16a34a;}
+  .stat-c span{font-size:12.5px;color:var(--sub);}
+  .go-btn{width:100%;padding:15px;border:none;border-radius:12px;background:var(--blue);color:#fff;font-size:16.5px;font-weight:800;cursor:pointer;font-family:inherit;}
+  .go-btn:disabled{opacity:.5;cursor:not-allowed;}
+  .prog-wrap{display:none;margin:14px 0;}
+  .prog-wrap.show{display:block;}
+  .prog-bar{height:14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;overflow:hidden;}
+  .prog-fill{height:100%;width:0%;background:var(--blue);transition:width .2s;}
+  .prog-txt{font-size:13.5px;color:var(--sub);margin-top:6px;text-align:center;}
+  .result{display:none;background:#f0fdf4;border:2px solid #bbf7d0;border-radius:14px;padding:18px;margin-top:16px;}
+  .result.show{display:block;}
+  .result h3{font-size:17px;margin-bottom:10px;}
+  .result audio{width:100%;margin:10px 0;}
+  .dl-btn{display:inline-block;padding:13px 24px;border:none;border-radius:12px;background:#16a34a;color:#fff;font-size:15.5px;font-weight:800;cursor:pointer;font-family:inherit;text-decoration:none;}
+  .sil-err{display:none;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:12px;padding:12px 15px;margin:12px 0;font-size:14px;}
+  .sil-err.show{display:block;}
+  @media(max-width:860px){ .stat-row{grid-template-columns:repeat(2,1fr);} }
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+
+<main class="page">
+  <div class="wrap" style="max-width:820px;">
+    <h1 class="page-title">무음 제거기 🔇</h1>
+    <div class="devnote" id="devnote" style="display:none;">🔒 이 기능은 아직 <b>비공개(관리자 전용)</b>입니다. 공개하려면 작업실에서 스위치를 켜세요.</div>
+    <p class="an-hint" style="font-size:14.5px;margin-bottom:14px;">TTS 음성 파일(MP3, WAV)을 넣으면 문장 사이의 <b>조용한 빈 구간을 자동으로 잘라</b> 드립니다. 모든 처리는 내 컴퓨터 안에서만 이루어지고, 파일이 외부로 전송되지 않습니다.</p>
+
+    <div class="drop" id="drop" onclick="document.getElementById('file-in').click()">
+      🎵 <b>여기를 눌러 음성 파일 선택</b> (또는 파일을 끌어다 놓기)
+      <div class="sub">MP3, WAV, M4A 지원 · 파일은 서버로 올라가지 않습니다</div>
+    </div>
+    <input id="file-in" type="file" accept="audio/*,.mp3,.wav,.m4a" style="display:none">
+
+    <div class="sil-err" id="sil-err"></div>
+
+    <div id="panel" style="display:none;">
+      <div style="font-size:14.5px;color:var(--sub);" id="fname-line"></div>
+      <div class="stat-row">
+        <div class="stat-c"><b id="st-orig">-</b><span>원래 길이</span></div>
+        <div class="stat-c"><b id="st-sil">-</b><span>발견한 무음</span></div>
+        <div class="stat-c"><b id="st-new">-</b><span>처리 후 길이</span></div>
+        <div class="stat-c green"><b id="st-save">-</b><span>줄어드는 시간</span></div>
+      </div>
+      <div class="sil-opts">
+        <span>문장 사이에 남길 숨 고르기 간격:</span>
+        <select id="keep-gap" onchange="reAnalyze()">
+          <option value="0.1">짧게 (0.1초)</option>
+          <option value="0.15" selected>보통 (0.15초)</option>
+          <option value="0.25">여유 있게 (0.25초)</option>
+          <option value="0.4">길게 (0.4초)</option>
+        </select>
+      </div>
+      <button class="go-btn" id="btn-go" onclick="runRemove()">무음 제거한 MP3 만들기</button>
+    </div>
+
+    <div class="prog-wrap" id="prog-wrap">
+      <div class="prog-bar"><div class="prog-fill" id="prog-fill"></div></div>
+      <div class="prog-txt" id="prog-txt">준비 중…</div>
+    </div>
+
+    <div class="result" id="result">
+      <h3>✅ 완성! 미리 들어보세요</h3>
+      <audio id="out-audio" controls></audio>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <a class="dl-btn" id="dl-a" download>⬇️ MP3 다운로드</a>
+        <span style="font-size:13.5px;color:var(--sub);" id="out-size"></span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js"></script>
+<script>
+  var monoData = null, srcRate = 44100, srcName = "", segments = null, silTotal = 0;
+  var WIN = 1024, THRESH = 0.00562, MIN_SIL = 0.35;
+
+  function fmt(sec) {
+    sec = Math.max(0, Math.round(sec));
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return m > 0 ? (m + "분 " + s + "초") : (s + "초");
+  }
+  function showErr(msg) { var e = $id("sil-err"); e.textContent = msg; e.className = "sil-err show"; }
+  function hideErr() { $id("sil-err").className = "sil-err"; }
+  function setProg(pct, txt) {
+    $id("prog-wrap").className = "prog-wrap show";
+    $id("prog-fill").style.width = pct + "%";
+    $id("prog-txt").textContent = txt;
+  }
+
+  // ---------- 파일 읽기 ----------
+  $id("file-in").addEventListener("change", function (ev) {
+    if (ev.target.files && ev.target.files[0]) loadFile(ev.target.files[0]);
+  });
+  var dropEl = $id("drop");
+  dropEl.addEventListener("dragover", function (e) { e.preventDefault(); });
+  dropEl.addEventListener("drop", function (e) {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+  });
+
+  async function loadFile(file) {
+    hideErr();
+    $id("result").className = "result";
+    $id("panel").style.display = "none";
+    if (file.size > 60 * 1024 * 1024) { showErr("파일이 너무 큽니다 (60MB 이하만 지원). 파일을 나눠서 넣어주세요."); return; }
+    srcName = file.name.replace(/\.[^.]+$/, "");
+    setProg(5, "파일을 읽는 중…");
+    try {
+      var buf = await file.arrayBuffer();
+      setProg(15, "음성을 해석하는 중… (긴 파일은 수십 초 걸릴 수 있어요)");
+      var ac = new (window.AudioContext || window.webkitAudioContext)();
+      var audio = await ac.decodeAudioData(buf);
+      srcRate = audio.sampleRate;
+      var ch = audio.numberOfChannels, len = audio.length;
+      monoData = new Float32Array(len);
+      for (var c = 0; c < ch; c++) {
+        var d = audio.getChannelData(c);
+        for (var i = 0; i < len; i++) monoData[i] += d[i] / ch;
+      }
+      try { ac.close(); } catch (e) {}
+      setProg(30, "무음 구간을 찾는 중…");
+      await new Promise(function (r) { setTimeout(r, 30); });
+      reAnalyze();
+      $id("panel").style.display = "block";
+      $id("fname-line").textContent = "파일: " + file.name;
+      $id("prog-wrap").className = "prog-wrap";
+    } catch (e) {
+      $id("prog-wrap").className = "prog-wrap";
+      showErr("이 파일을 읽지 못했습니다. MP3 또는 WAV 파일인지 확인해 주세요. (" + e.message + ")");
+    }
+  }
+
+  // ---------- 무음 분석 ----------
+  function detectSilence(data, rate) {
+    var flags = [];
+    var n = Math.floor(data.length / WIN);
+    for (var w = 0; w < n; w++) {
+      var sum = 0, off = w * WIN;
+      for (var i = 0; i < WIN; i++) { var v = data[off + i]; sum += v * v; }
+      flags.push(Math.sqrt(sum / WIN) < THRESH);
+    }
+    var runs = [], start = -1;
+    for (var w2 = 0; w2 <= n; w2++) {
+      var f = w2 < n ? flags[w2] : false;
+      if (f && start < 0) start = w2;
+      if (!f && start >= 0) {
+        var dur = (w2 - start) * WIN / rate;
+        if (dur >= MIN_SIL) runs.push([start * WIN, w2 * WIN]);
+        start = -1;
+      }
+    }
+    return runs;
+  }
+
+  function reAnalyze() {
+    if (!monoData) return;
+    var keep = parseFloat($id("keep-gap").value);
+    var keepN = Math.round(keep * srcRate);
+    var runs = detectSilence(monoData, srcRate);
+    segments = [];
+    var pos = 0; silTotal = 0; var removed = 0;
+    for (var i = 0; i < runs.length; i++) {
+      var s = runs[i][0], e = runs[i][1], durN = e - s;
+      silTotal += durN;
+      if (durN <= keepN) continue;
+      segments.push([pos, s + keepN]);
+      removed += durN - keepN;
+      pos = e;
+    }
+    segments.push([pos, monoData.length]);
+    var orig = monoData.length / srcRate;
+    var newLen = orig - removed / srcRate;
+    $id("st-orig").textContent = fmt(orig);
+    $id("st-sil").textContent = fmt(silTotal / srcRate) + " (" + runs.length + "곳)";
+    $id("st-new").textContent = fmt(newLen);
+    $id("st-save").textContent = "-" + fmt(removed / srcRate);
+  }
+
+  // ---------- 잘라 붙이기 (이음새 8ms 부드럽게) ----------
+  function buildOutput() {
+    var fadeN = Math.round(0.008 * srcRate);
+    var total = 0;
+    for (var i = 0; i < segments.length; i++) total += segments[i][1] - segments[i][0];
+    var out = new Float32Array(total);
+    var p = 0;
+    for (var i2 = 0; i2 < segments.length; i2++) {
+      var s = segments[i2][0], e = segments[i2][1], n = e - s;
+      out.set(monoData.subarray(s, e), p);
+      if (i2 > 0) for (var k = 0; k < fadeN && k < n; k++) out[p + k] *= k / fadeN;
+      if (i2 < segments.length - 1) for (var k2 = 0; k2 < fadeN && k2 < n; k2++) out[p + n - 1 - k2] *= k2 / fadeN;
+      p += n;
+    }
+    return out;
+  }
+
+  // ---------- MP3 인코딩 ----------
+  async function encodeMp3(data, rate) {
+    var enc = new lamejs.Mp3Encoder(1, rate, 128);
+    var block = 1152, parts = [], int16 = new Int16Array(block);
+    for (var i = 0; i < data.length; i += block) {
+      var n = Math.min(block, data.length - i);
+      for (var j = 0; j < n; j++) {
+        var v = Math.max(-1, Math.min(1, data[i + j]));
+        int16[j] = v < 0 ? v * 32768 : v * 32767;
+      }
+      var chunk = enc.encodeBuffer(n === block ? int16 : int16.subarray(0, n));
+      if (chunk.length) parts.push(new Uint8Array(chunk));
+      if ((i / block) % 400 === 0) {
+        setProg(40 + Math.round(55 * i / data.length), "MP3로 만드는 중… " + Math.round(100 * i / data.length) + "%");
+        await new Promise(function (r) { setTimeout(r, 0); });
+      }
+    }
+    var end = enc.flush();
+    if (end.length) parts.push(new Uint8Array(end));
+    return new Blob(parts, { type: "audio/mpeg" });
+  }
+
+  function encodeWav(data, rate) {
+    var n = data.length, buf = new ArrayBuffer(44 + n * 2), dv = new DataView(buf);
+    function wstr(o, s) { for (var i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); }
+    wstr(0, "RIFF"); dv.setUint32(4, 36 + n * 2, true); wstr(8, "WAVE"); wstr(12, "fmt ");
+    dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+    dv.setUint32(24, rate, true); dv.setUint32(28, rate * 2, true); dv.setUint16(32, 2, true);
+    dv.setUint16(34, 16, true); wstr(36, "data"); dv.setUint32(40, n * 2, true);
+    var o = 44;
+    for (var i = 0; i < n; i++) { var v = Math.max(-1, Math.min(1, data[i])); dv.setInt16(o, v < 0 ? v * 32768 : v * 32767, true); o += 2; }
+    return new Blob([buf], { type: "audio/wav" });
+  }
+
+  async function runRemove() {
+    if (!monoData || !segments) return;
+    hideErr();
+    $id("btn-go").disabled = true;
+    try {
+      setProg(38, "무음을 잘라내는 중…");
+      await new Promise(function (r) { setTimeout(r, 30); });
+      var out = buildOutput();
+      var blob, ext;
+      try { blob = await encodeMp3(out, srcRate); ext = "mp3"; }
+      catch (e) { setProg(70, "MP3 도구를 못 불러와 WAV로 저장합니다…"); blob = encodeWav(out, srcRate); ext = "wav"; }
+      setProg(100, "완성!");
+      var url = URL.createObjectURL(blob);
+      $id("out-audio").src = url;
+      var a = $id("dl-a");
+      a.href = url;
+      a.download = srcName + "_무음제거." + ext;
+      a.textContent = "⬇️ " + ext.toUpperCase() + " 다운로드";
+      $id("out-size").textContent = "파일 크기 " + (blob.size / 1024 / 1024).toFixed(1) + "MB";
+      $id("result").className = "result show";
+      setTimeout(function () { $id("prog-wrap").className = "prog-wrap"; }, 800);
+      window.__silDone = { bytes: blob.size, ext: ext, outSec: out.length / srcRate };
+    } catch (e) {
+      showErr("처리 중 문제가 생겼습니다: " + e.message);
+      $id("prog-wrap").className = "prog-wrap";
+    }
+    $id("btn-go").disabled = false;
+  }
+
+  // 자동 검증용 (내부 테스트)
+  window.__silTest = function (seconds) {
+    var rate = 44100, n = rate * seconds;
+    var d = new Float32Array(n);
+    for (var i = 0; i < n; i++) {
+      var t = i / rate, inSpeech = (t % 4) < 2.5; // 2.5초 말 + 1.5초 무음 반복
+      d[i] = inSpeech ? 0.3 * Math.sin(2 * Math.PI * 440 * t) : 0;
+    }
+    monoData = d; srcRate = rate; srcName = "test";
+    reAnalyze();
+    return { segs: segments.length, silSec: silTotal / rate };
+  };
+
+  (async () => {
+    const { data } = await sb.auth.getSession();
+    const user = data && data.session ? data.session.user : null;
+    if (!user) { location.replace("login.html?next=silence.html"); return; }
+    const adm = await isAdmin(user);
+    if (!adm) {
+      const { data: fl } = await sb.from("feature_flags").select("is_public").eq("key", "silence_remover").maybeSingle();
+      if (!fl || !fl.is_public) { location.replace("dashboard.html"); return; }
+    } else {
+      const { data: fl2 } = await sb.from("feature_flags").select("is_public").eq("key", "silence_remover").maybeSingle();
+      if (!fl2 || !fl2.is_public) $id("devnote").style.display = "block";
+    }
+    await renderHeader("silence");
+    renderFooter();
+  })();
+</script>
+</body>
+</html>
