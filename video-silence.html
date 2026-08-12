@@ -76,6 +76,7 @@
 <script src="assets/js/app.js"></script>
 <script>
 
+  var cfg = window.INBILAB_CONFIG || {};
   var pollTimer=null, rows={};
   function pick(){ document.getElementById("file-in").click(); }
   function fmt(sec){ sec=Math.max(0,Math.round(sec)); var m=Math.floor(sec/60), s=sec%60; return m>0?(m+"분 "+s+"초"):(s+"초"); }
