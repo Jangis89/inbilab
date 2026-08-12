@@ -958,7 +958,7 @@ function keepRanges(silences, durationSec, keepPad) {
 // ---------- 작업: desilence (영상 무음 구간 잘라내기) ----------
 async function runDesilence(job) {
   const { data: proj, error } = await sb.from("sc_projects")
-    .select("id, user_id, source_path, source_duration_sec, probe, objective").eq("id", job.project_id).single();
+    .select("id, user_id, source_path, source_duration_sec, probe, objective, desilence_min").eq("id", job.project_id).single();
   if (error || !proj || !proj.source_path) throw new Error("프로젝트/원본 없음");
 
   const failStatus = async (msg) => {
@@ -979,12 +979,13 @@ async function runDesilence(job) {
     }
     if (!hasAudio) throw new Error("소리가 없는 영상은 무음을 찾을 수 없어요.");
     if (!dur) throw new Error("영상 길이를 확인하지 못했어요.");
-    if (dur > 3600) throw new Error("지금은 60분 이하 영상만 지원해요. 더 긴 영상은 나눠서 넣어주세요.");
+    if (dur > 10800) throw new Error("지금은 3시간 이하 영상만 지원해요. 더 긴 영상은 나눠서 넣어주세요.");
 
+    const dMin = Math.max(0.05, Math.min(2, Number(proj.desilence_min) || 0.15));
     await setJobProgress(job.id, 15);
-    const det = await exec("ffmpeg", ["-hide_banner","-nostats","-i", url, "-af", "silencedetect=noise=-40dB:d=0.35", "-f","null","-"], { timeout: 1500000, maxBuffer: 64*1024*1024 });
+    const det = await exec("ffmpeg", ["-hide_banner","-nostats","-i", url, "-af", ("silencedetect=noise=-40dB:d=" + dMin), "-f","null","-"], { timeout: 1500000, maxBuffer: 64*1024*1024 });
     const silences = parseSilence((det.stderr || "") + (det.stdout || ""), dur);
-    const kr = keepRanges(silences, dur, 0.15);
+    const kr = keepRanges(silences, dur, Math.min(0.05, dMin*0.4));
     const keeps = kr.keeps, cutTotal = kr.cutTotal;
 
     const tmpDir = await mkdtemp(join(tmpdir(), "ib-ds-"));
