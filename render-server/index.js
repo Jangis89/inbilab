@@ -8,7 +8,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile, writeFile, unlink, mkdtemp, rm } from "node:fs/promises";
+import { readFile, unlink, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import http from "node:http";
