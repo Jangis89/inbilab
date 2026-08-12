@@ -50,7 +50,7 @@
 
     <div class="drop" id="drop" onclick="document.getElementById('file-in').click()">
       🎵 <b>여기를 눌러 음성 파일 선택</b> (또는 파일을 끌어다 놓기)
-      <div class="sub">MP3, WAV, M4A 지원 · 파일은 서버로 올라가지 않습니다</div>
+      <div class="sub">MP3·M4A는 150MB(약 1시간 반), WAV는 5GB까지 · 파일은 서버로 올라가지 않습니다</div>
     </div>
     <input id="file-in" type="file" accept="audio/*,.mp3,.wav,.m4a" style="display:none">
 
@@ -98,6 +98,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js"></script>
 <script>
   var monoData = null, srcRate = 44100, srcName = "", segments = null, silTotal = 0;
+  var bigWav = null, bigRuns = null;
   var WIN = 1024, THRESH = 0.00562, MIN_SIL = 0.35;
 
   function fmt(sec) {
@@ -128,7 +129,14 @@
     hideErr();
     $id("result").className = "result";
     $id("panel").style.display = "none";
-    if (file.size > 60 * 1024 * 1024) { showErr("파일이 너무 큽니다 (60MB 이하만 지원). 파일을 나눠서 넣어주세요."); return; }
+    var MB = 1024 * 1024;
+    bigWav = null; bigRuns = null;
+    if (file.size > 150 * MB) {
+      var isWav = /\.wav$/i.test(file.name) || file.type === "audio/wav" || file.type === "audio/x-wav";
+      if (isWav) { try { await loadBigWav(file); } catch (e2) { $id("prog-wrap").className = "prog-wrap"; showErr("대용량 WAV 처리 중 문제: " + e2.message); } return; }
+      showErr("MP3, M4A는 150MB(약 1시간 30분)까지 지원합니다. 더 긴 파일은 TTS 프로그램에서 WAV로 저장해 넣어주세요 — WAV는 5GB까지 됩니다.");
+      return;
+    }
     srcName = file.name.replace(/\.[^.]+$/, "");
     setProg(5, "파일을 읽는 중…");
     try {
@@ -179,10 +187,12 @@
   }
 
   function reAnalyze() {
-    if (!monoData) return;
+    var totalLen, runs;
+    if (bigWav) { totalLen = bigWav.totalSamples; runs = bigRuns; }
+    else if (monoData) { totalLen = monoData.length; runs = detectSilence(monoData, srcRate); }
+    else return;
     var keep = parseFloat($id("keep-gap").value);
     var keepN = Math.round(keep * srcRate);
-    var runs = detectSilence(monoData, srcRate);
     segments = [];
     var pos = 0; silTotal = 0; var removed = 0;
     for (var i = 0; i < runs.length; i++) {
@@ -193,8 +203,8 @@
       removed += durN - keepN;
       pos = e;
     }
-    segments.push([pos, monoData.length]);
-    var orig = monoData.length / srcRate;
+    segments.push([pos, totalLen]);
+    var orig = totalLen / srcRate;
     var newLen = orig - removed / srcRate;
     $id("st-orig").textContent = fmt(orig);
     $id("st-sil").textContent = fmt(silTotal / srcRate) + " (" + runs.length + "곳)";
@@ -241,6 +251,146 @@
     return new Blob(parts, { type: "audio/mpeg" });
   }
 
+  // ---------- 대용량 WAV (5GB까지, 흘려보내기 처리) ----------
+  function readSample(dv, off, f) {
+    if (f.bits === 16) return dv.getInt16(off, true) / 32768;
+    if (f.bits === 24) { var b = dv.getUint8(off) | (dv.getUint8(off + 1) << 8) | (dv.getUint8(off + 2) << 16); if (b & 0x800000) b |= -16777216; return b / 8388608; }
+    if (f.format === 3) return dv.getFloat32(off, true);
+    return dv.getInt32(off, true) / 2147483648;
+  }
+
+  async function loadBigWav(file) {
+    setProg(5, "WAV 정보를 읽는 중…");
+    var head = new DataView(await file.slice(0, 1024 * 1024).arrayBuffer());
+    function tag(o) { return String.fromCharCode(head.getUint8(o), head.getUint8(o + 1), head.getUint8(o + 2), head.getUint8(o + 3)); }
+    var riff = tag(0);
+    if (riff !== "RIFF" && riff !== "RF64") { showErr("WAV 파일이 아니거나 지원하지 않는 형식입니다."); $id("prog-wrap").className = "prog-wrap"; return; }
+    var pos = 12, f = null, dataStart = -1, dataSize = 0;
+    while (pos + 8 <= head.byteLength) {
+      var id = tag(pos), sz = head.getUint32(pos + 4, true);
+      if (id === "fmt ") f = { format: head.getUint16(pos + 8, true), ch: head.getUint16(pos + 10, true), rate: head.getUint32(pos + 12, true), bits: head.getUint16(pos + 22, true) };
+      if (id === "data") { dataStart = pos + 8; dataSize = sz; break; }
+      pos += 8 + sz + (sz % 2);
+    }
+    if (!f || dataStart < 0) { showErr("WAV 내부 정보를 찾지 못했습니다. 표준 WAV(16비트)로 저장해 주세요."); $id("prog-wrap").className = "prog-wrap"; return; }
+    if (dataSize === 0 || dataSize === 4294967295 || dataStart + dataSize > file.size) dataSize = file.size - dataStart;
+    var okFmt = (f.format === 1 || f.format === 3 || f.format === 65534) && (f.bits === 16 || f.bits === 24 || f.bits === 32);
+    if (!okFmt || f.ch < 1 || f.ch > 2 || !f.rate) { showErr("이 WAV 형식(bit " + f.bits + ", 채널 " + f.ch + ")은 지원하지 않습니다. 16비트 WAV로 저장해 주세요."); $id("prog-wrap").className = "prog-wrap"; return; }
+    var bytesPer = f.bits / 8, block = bytesPer * f.ch;
+    var totalSamples = Math.floor(dataSize / block);
+    bigWav = { file: file, fmt: f, dataStart: dataStart, block: block, bytesPer: bytesPer, totalSamples: totalSamples };
+    srcRate = f.rate; srcName = file.name.replace(/\.[^.]+$/, ""); monoData = null;
+    bigRuns = [];
+    var CH = 4194304 - (4194304 % block);
+    var winSum = 0, winCnt = 0, winIdx = 0, silStart = -1;
+    var totalBytes = totalSamples * block, read = 0;
+    while (read < totalBytes) {
+      var endB = Math.min(read + CH, totalBytes);
+      var buf = await file.slice(dataStart + read, dataStart + endB).arrayBuffer();
+      var nS = Math.floor(buf.byteLength / block);
+      if (f.bits === 16) {
+        var a = new Int16Array(buf);
+        for (var i = 0; i < nS; i++) {
+          var m = f.ch === 1 ? a[i] / 32768 : (a[i * 2] + a[i * 2 + 1]) / 65536;
+          winSum += m * m; winCnt++;
+          if (winCnt === WIN) {
+            var sil = Math.sqrt(winSum / WIN) < THRESH;
+            if (sil && silStart < 0) silStart = winIdx * WIN;
+            if (!sil && silStart >= 0) { if ((winIdx * WIN - silStart) / srcRate >= MIN_SIL) bigRuns.push([silStart, winIdx * WIN]); silStart = -1; }
+            winIdx++; winSum = 0; winCnt = 0;
+          }
+        }
+      } else {
+        var dv = new DataView(buf);
+        for (var i2 = 0; i2 < nS; i2++) {
+          var m2 = 0, off = i2 * block;
+          for (var c = 0; c < f.ch; c++) m2 += readSample(dv, off + c * bytesPer, f);
+          m2 /= f.ch;
+          winSum += m2 * m2; winCnt++;
+          if (winCnt === WIN) {
+            var sil2 = Math.sqrt(winSum / WIN) < THRESH;
+            if (sil2 && silStart < 0) silStart = winIdx * WIN;
+            if (!sil2 && silStart >= 0) { if ((winIdx * WIN - silStart) / srcRate >= MIN_SIL) bigRuns.push([silStart, winIdx * WIN]); silStart = -1; }
+            winIdx++; winSum = 0; winCnt = 0;
+          }
+        }
+      }
+      read = endB;
+      setProg(5 + Math.round(28 * read / totalBytes), "무음 구간을 찾는 중… " + Math.round(100 * read / totalBytes) + "%");
+      await new Promise(function (r) { setTimeout(r, 0); });
+    }
+    if (silStart >= 0 && (winIdx * WIN - silStart) / srcRate >= MIN_SIL) bigRuns.push([silStart, winIdx * WIN]);
+    reAnalyze();
+    $id("panel").style.display = "block";
+    $id("fname-line").textContent = "파일: " + file.name + " (대용량 WAV 모드 · 결과는 WAV로 저장됩니다)";
+    $id("prog-wrap").className = "prog-wrap";
+  }
+
+  function wavHeader(totalSamples, rate) {
+    var dataBytes = totalSamples * 2;
+    var h = new ArrayBuffer(44), dv = new DataView(h);
+    function wstr(o, s) { for (var i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); }
+    wstr(0, "RIFF"); dv.setUint32(4, 36 + dataBytes, true); wstr(8, "WAVE"); wstr(12, "fmt ");
+    dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+    dv.setUint32(24, rate, true); dv.setUint32(28, rate * 2, true); dv.setUint16(32, 2, true);
+    dv.setUint16(34, 16, true); wstr(36, "data"); dv.setUint32(40, dataBytes, true);
+    return new Uint8Array(h);
+  }
+
+  function fillMono16(buf, n, out) {
+    var f = bigWav.fmt, ch = f.ch;
+    if (f.bits === 16) {
+      var a = new Int16Array(buf);
+      if (ch === 1) { out.set(a.subarray(0, n)); return; }
+      for (var i = 0; i < n; i++) out[i] = ((a[i * 2] + a[i * 2 + 1]) / 2) | 0;
+      return;
+    }
+    var dv = new DataView(buf);
+    for (var i2 = 0; i2 < n; i2++) {
+      var m = 0, off = i2 * bigWav.block;
+      for (var c = 0; c < ch; c++) m += readSample(dv, off + c * bigWav.bytesPer, f);
+      m /= ch;
+      var v = Math.max(-1, Math.min(1, m));
+      out[i2] = v < 0 ? (v * 32768) | 0 : (v * 32767) | 0;
+    }
+  }
+
+  async function runRemoveBig() {
+    var fadeN = Math.round(0.008 * srcRate);
+    var total = 0;
+    for (var i = 0; i < segments.length; i++) total += segments[i][1] - segments[i][0];
+    var parts = [wavHeader(total, srcRate)];
+    var CH = 4194304 - (4194304 % bigWav.block);
+    var chSamples = Math.floor(CH / bigWav.block);
+    var done = 0;
+    for (var s2 = 0; s2 < segments.length; s2++) {
+      var s = segments[s2][0], e = segments[s2][1];
+      var segLen = e - s, written = 0;
+      while (written < segLen) {
+        var n = Math.min(chSamples, segLen - written);
+        var byteA = bigWav.dataStart + (s + written) * bigWav.block;
+        var buf = await bigWav.file.slice(byteA, byteA + n * bigWav.block).arrayBuffer();
+        var outI16 = new Int16Array(n);
+        fillMono16(buf, n, outI16);
+        if (s2 > 0 && written < fadeN) {
+          var lim = Math.min(fadeN - written, n);
+          for (var k = 0; k < lim; k++) outI16[k] = (outI16[k] * (written + k) / fadeN) | 0;
+        }
+        if (s2 < segments.length - 1 && written + n > segLen - fadeN) {
+          for (var k2 = Math.max(0, segLen - fadeN - written); k2 < n; k2++) {
+            var dist = segLen - 1 - (written + k2);
+            outI16[k2] = (outI16[k2] * dist / fadeN) | 0;
+          }
+        }
+        parts.push(new Uint8Array(outI16.buffer));
+        written += n; done += n;
+        setProg(35 + Math.round(60 * done / total), "무음을 잘라 저장하는 중… " + Math.round(100 * done / total) + "%");
+        await new Promise(function (r) { setTimeout(r, 0); });
+      }
+    }
+    return new Blob(parts, { type: "audio/wav" });
+  }
+
   function encodeWav(data, rate) {
     var n = data.length, buf = new ArrayBuffer(44 + n * 2), dv = new DataView(buf);
     function wstr(o, s) { for (var i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); }
@@ -253,28 +403,39 @@
     return new Blob([buf], { type: "audio/wav" });
   }
 
+  function finishResult(blob, ext, outSec) {
+    setProg(100, "완성!");
+    var url = URL.createObjectURL(blob);
+    $id("out-audio").src = url;
+    var a = $id("dl-a");
+    a.href = url;
+    a.download = srcName + "_무음제거." + ext;
+    a.textContent = "⬇️ " + ext.toUpperCase() + " 다운로드";
+    $id("out-size").textContent = "파일 크기 " + (blob.size / 1024 / 1024).toFixed(1) + "MB";
+    $id("result").className = "result show";
+    setTimeout(function () { $id("prog-wrap").className = "prog-wrap"; }, 800);
+    window.__silDone = { bytes: blob.size, ext: ext, outSec: outSec };
+  }
+
   async function runRemove() {
-    if (!monoData || !segments) return;
+    if (!segments) return;
     hideErr();
     $id("btn-go").disabled = true;
     try {
-      setProg(38, "무음을 잘라내는 중…");
-      await new Promise(function (r) { setTimeout(r, 30); });
-      var out = buildOutput();
-      var blob, ext;
-      try { blob = await encodeMp3(out, srcRate); ext = "mp3"; }
-      catch (e) { setProg(70, "MP3 도구를 못 불러와 WAV로 저장합니다…"); blob = encodeWav(out, srcRate); ext = "wav"; }
-      setProg(100, "완성!");
-      var url = URL.createObjectURL(blob);
-      $id("out-audio").src = url;
-      var a = $id("dl-a");
-      a.href = url;
-      a.download = srcName + "_무음제거." + ext;
-      a.textContent = "⬇️ " + ext.toUpperCase() + " 다운로드";
-      $id("out-size").textContent = "파일 크기 " + (blob.size / 1024 / 1024).toFixed(1) + "MB";
-      $id("result").className = "result show";
-      setTimeout(function () { $id("prog-wrap").className = "prog-wrap"; }, 800);
-      window.__silDone = { bytes: blob.size, ext: ext, outSec: out.length / srcRate };
+      if (bigWav) {
+        var blobB = await runRemoveBig();
+        var tot = 0;
+        for (var q = 0; q < segments.length; q++) tot += segments[q][1] - segments[q][0];
+        finishResult(blobB, "wav", tot / srcRate);
+      } else if (monoData) {
+        setProg(38, "무음을 잘라내는 중…");
+        await new Promise(function (r) { setTimeout(r, 30); });
+        var out = buildOutput();
+        var blob, ext;
+        try { blob = await encodeMp3(out, srcRate); ext = "mp3"; }
+        catch (e) { setProg(70, "MP3 도구를 못 불러와 WAV로 저장합니다…"); blob = encodeWav(out, srcRate); ext = "wav"; }
+        finishResult(blob, ext, out.length / srcRate);
+      }
     } catch (e) {
       showErr("처리 중 문제가 생겼습니다: " + e.message);
       $id("prog-wrap").className = "prog-wrap";
@@ -290,7 +451,7 @@
       var t = i / rate, inSpeech = (t % 4) < 2.5; // 2.5초 말 + 1.5초 무음 반복
       d[i] = inSpeech ? 0.3 * Math.sin(2 * Math.PI * 440 * t) : 0;
     }
-    monoData = d; srcRate = rate; srcName = "test";
+    monoData = d; srcRate = rate; srcName = "test"; bigWav = null; bigRuns = null;
     reAnalyze();
     return { segs: segments.length, silSec: silTotal / rate };
   };
