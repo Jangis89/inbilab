@@ -43,6 +43,11 @@ def get_speech_timestamps(audio, threshold=0.5, min_speech_ms=250, min_silence_m
         out = sess.run(None, {"input": x, "state": state, "sr": sr})
         state = out[1]
         probs.append(float(np.array(out[0]).reshape(-1)[0]))
+    import sys as _s
+    if probs:
+        _hi = sum(1 for _p in probs if _p >= threshold)
+        _lo = sum(1 for _p in probs if _p < 0.35)
+        _s.stderr.write("VADDBG n=%d win=%d pmin=%.3f pmax=%.3f pmean=%.3f hi=%d lo=%d" % (n, len(probs), min(probs), max(probs), sum(probs)/len(probs), _hi, _lo) + chr(10))
     neg = max(0.15, threshold - 0.15)
     min_speech = SR * min_speech_ms / 1000.0
     min_silence = SR * min_silence_ms / 1000.0
