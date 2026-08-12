@@ -12,8 +12,30 @@ import { readFile, unlink, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import http from "node:http";
+import { createWriteStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
 
 const exec = promisify(execFile);
+
+async function downloadToFile(fileUrl, dest, label) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 1200000);
+  try {
+    const res = await fetch(fileUrl, { signal: ctrl.signal });
+    if (!res.ok || !res.body) throw new Error("원본 다운로드 실패 HTTP " + res.status);
+    const total = Number(res.headers.get("content-length") || 0);
+    let got = 0, lastLog = Date.now();
+    const src = Readable.fromWeb(res.body);
+    src.on("data", (c) => {
+      got += c.length;
+      const now = Date.now();
+      if (now - lastLog > 15000) { lastLog = now; console.log("[다운로드] " + (label || "") + " " + Math.round(got / 1048576) + "MB" + (total ? "/" + Math.round(total / 1048576) + "MB" : "")); }
+    });
+    await pipeline(src, createWriteStream(dest));
+    console.log("[다운로드] 완료 " + (label || "") + " " + Math.round(got / 1048576) + "MB");
+  } finally { clearTimeout(timer); }
+}
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE;
@@ -989,7 +1011,7 @@ async function runDesilence(job) {
       const outPath = join(tmpDir, "out.mp4");
       const srcPath = join(tmpDir, "src.mkv");
       await setProjectStatus(proj.id, "desilence_running", "영상을 받아 오는 중…");
-      await exec("ffmpeg", ["-hide_banner","-nostats","-i", url, "-c","copy", srcPath, "-y"], { timeout: 2400000, maxBuffer: 16*1024*1024 });
+      await downloadToFile(url, srcPath, proj.id);
       await setProjectStatus(proj.id, "desilence_running", "무음 구간을 찾는 중…");
       const det = await exec("ffmpeg", ["-hide_banner","-nostats","-i", srcPath, "-af", ("silencedetect=noise=-40dB:d=" + dMin), "-f","null","-"], { timeout: 1500000, maxBuffer: 64*1024*1024 });
       const silences = parseSilence((det.stderr || "") + (det.stdout || ""), dur);
@@ -1047,11 +1069,23 @@ async function cleanupExpired() {
   } catch (e) { console.error("[정리] cleanupExpired 실패:", e.message); }
 }
 
+async function recoverStuck() {
+  try {
+    const cutoff = new Date(Date.now() - 5400000).toISOString();
+    const { data: stuck } = await sb.from("sc_render_jobs").select("id, project_id, job_type, started_at").eq("status", "running").lt("started_at", cutoff).limit(20);
+    for (const j of (stuck || [])) {
+      await sb.from("sc_render_jobs").update({ status: "failed", error: "처리 시간 초과(자동 복구)" }).eq("id", j.id).eq("status", "running");
+      if (j.job_type === "desilence") await setProjectStatus(j.project_id, "failed_desilence", "처리 시간이 초과되어 자동 중단되었습니다. 다시 시도해 주세요.");
+      console.log("[복구] 멈춘 작업 정리 job " + j.id);
+    }
+  } catch (e) { console.error("[복구] 오류:", e.message); }
+}
+
 async function loop() {
   lastPollAt = new Date().toISOString();
   try {
     if (!flagsEnsured) { await ensureFlags(); flagsEnsured = true; }
-    if (Date.now() - lastCleanup > 300000) { lastCleanup = Date.now(); cleanupExpired(); }
+    if (Date.now() - lastCleanup > 300000) { lastCleanup = Date.now(); cleanupExpired(); recoverStuck(); }
     const job = await claimJob();
     if (job) {
       console.log(`[작업] ${job.job_type} 시작 (job=${job.id}, 시도=${job.attempts + 1})`);
@@ -1073,7 +1107,8 @@ async function loop() {
           await finishJob(job.id, false, err.message);
           const failStatus = job.job_type === "transcribe" ? "failed_transcribe"
             : job.job_type === "analyze" ? "failed_analyze"
-            : job.job_type === "render" ? "failed_render" : "failed_probe";
+            : job.job_type === "render" ? "failed_render"
+            : job.job_type === "desilence" ? "failed_desilence" : "failed_probe";
           await setProjectStatus(job.project_id, failStatus, err.message.slice(0, 200));
         }
       }
