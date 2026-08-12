@@ -984,8 +984,10 @@ async function vadKeepRanges(srcPath, tmpDir, dur, dMin) {
   const minSilenceMs = Math.round(Math.max(0.05, Math.min(2, dMin)) * 1000);
   const padMs = Math.round(Math.min(0.08, Math.max(0.02, dMin * 0.3)) * 1000);
   const res = await exec("python3", ["/app/vad.py", wavPath, String(minSilenceMs), String(padMs)], { timeout: 1500000, maxBuffer: 64*1024*1024 });
+  if (res.stderr) console.log("[VADDBG] " + res.stderr.toString().trim().replace(/\n/g, " ").slice(0, 260));
   const parsed = JSON.parse((res.stdout || "").trim());
   const speech = parsed.speech || [];
+  console.log("[VADDBG] speech=" + speech.length + " minSil=" + minSilenceMs + " pad=" + padMs);
   if (!speech.length) return { keeps: [[0, dur]], cutTotal: 0 };
   const keeps = speech.map(function(s){ return [Math.max(0, s[0]), Math.min(dur, s[1])]; }).filter(function(s){ return s[1] > s[0]; });
   const kept = keeps.reduce(function(a, s){ return a + (s[1] - s[0]); }, 0);
