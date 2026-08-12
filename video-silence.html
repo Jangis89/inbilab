@@ -83,9 +83,10 @@
   function setProg(p,t){ $id("prog-wrap").className="prog-wrap show"; $id("prog-fill").style.width=p+"%"; $id("prog-txt").textContent=t; }
   $id("file-in").addEventListener("change", function(ev){ if(ev.target.files&&ev.target.files[0]) choose(ev.target.files[0]); });
   var d=$id("drop"); d.addEventListener("dragover",function(e){e.preventDefault();}); d.addEventListener("drop",function(e){e.preventDefault(); if(e.dataTransfer.files&&e.dataTransfer.files[0]) choose(e.dataTransfer.files[0]);});
-  function choose(file){
+  async function choose(file){
     hideErr(); $id("result").className="result"; $id("prog-wrap").className="prog-wrap";
     if (file.size > 8*1024*1024*1024){ showErr("영상이 너무 큽니다 (8GB 이하). 더 작은 파일로 넣어주세요."); return; }
+    try { var _b = await sb.rpc("desilence_busy"); if (!_b.error && (_b.data||0) >= 3) { showErr("지금은 다른 분들의 영상을 처리하는 중이에요. 1~2분 뒤에 다시 시도해 주세요. 🙏"); return; } } catch(e){}
     chosen = file;
     $id("vs-file").style.display="block"; $id("vs-file").textContent="선택한 영상: "+file.name+" ("+fmtSize(file.size)+")";
     showEta(file); startJob();
