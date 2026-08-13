@@ -1130,12 +1130,204 @@ async function recoverStuck() {
   } catch (e) { console.error("[복구] 오류:", e.message); }
 }
 
+
+// ================= 유튜브 대본 따기 (yt-dlp → Soniox 정밀 받아쓰기 → 화자 라벨) =================
+const SONIOX_KEY = String(process.env.SONIOX_API_KEY || "").trim();
+const SONIOX_BASE = "https://api.soniox.com/v1";
+
+async function ytDownloadAudio(videoId, destPath) {
+  const url = "https://www.youtube.com/watch?v=" + videoId;
+  await exec("yt-dlp", [
+    "-f", "bestaudio/best",
+    "-x", "--audio-format", "opus", "--audio-quality", "32K",
+    "--no-playlist", "--no-warnings", "--no-progress", "--socket-timeout", "30",
+    "--extractor-args", "youtube:player_client=android,web",
+    "-o", destPath,
+    url,
+  ], { timeout: 300000, maxBuffer: 64 * 1024 * 1024 });
+}
+
+async function sonioxUploadFile(path) {
+  const buf = await readFile(path);
+  const fd = new FormData();
+  fd.append("file", new Blob([buf]), "audio.opus");
+  const r = await fetch(SONIOX_BASE + "/files", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + SONIOX_KEY },
+    body: fd,
+  });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j || !j.id) throw new Error("Soniox 업로드 실패 HTTP " + r.status);
+  return j.id;
+}
+
+async function sonioxCreate(fileId) {
+  const r = await fetch(SONIOX_BASE + "/transcriptions", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + SONIOX_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "stt-async-v5",
+      file_id: fileId,
+      language_hints: ["ko"],
+      enable_speaker_diarization: true,
+    }),
+  });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j || !j.id) throw new Error("Soniox 변환생성 실패 HTTP " + r.status);
+  return j.id;
+}
+
+async function sonioxWait(id) {
+  const deadline = Date.now() + 240000;
+  while (Date.now() < deadline) {
+    await new Promise((res) => setTimeout(res, 3000));
+    const r = await fetch(SONIOX_BASE + "/transcriptions/" + id, { headers: { Authorization: "Bearer " + SONIOX_KEY } });
+    const j = await r.json().catch(() => null);
+    if (!r.ok) throw new Error("Soniox 상태확인 실패 HTTP " + r.status);
+    const st = j && j.status;
+    if (st === "completed") return;
+    if (st === "error") throw new Error("Soniox 처리 오류: " + ((j && j.error_message) || ""));
+  }
+  throw new Error("Soniox 시간 초과");
+}
+
+async function sonioxGetTokens(id) {
+  const r = await fetch(SONIOX_BASE + "/transcriptions/" + id + "/transcript", { headers: { Authorization: "Bearer " + SONIOX_KEY } });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j || !Array.isArray(j.tokens)) throw new Error("Soniox 결과 실패 HTTP " + r.status);
+  return j.tokens;
+}
+
+async function sonioxDeleteFile(fileId) {
+  try { await fetch(SONIOX_BASE + "/files/" + fileId, { method: "DELETE", headers: { Authorization: "Bearer " + SONIOX_KEY } }); } catch (e) {}
+}
+
+function ytMsToClock(ms) {
+  const s = Math.round(ms / 1000);
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+
+function sonioxTokensToLines(tokens) {
+  const out = [];
+  let cur = null;
+  for (const t of tokens) {
+    const text = String(t.text || "");
+    if (!text.trim()) continue;
+    const sp = (t.speaker !== undefined && t.speaker !== null && String(t.speaker) !== "") ? String(t.speaker) : "1";
+    const startMs = Number(t.start_ms || 0);
+    const endMs = Number(t.end_ms || startMs);
+    if (!cur || cur.speaker !== sp || (startMs - cur.endMs) > 1200) {
+      if (cur) out.push(cur);
+      cur = { speaker: sp, startMs: startMs, endMs: endMs, text: text };
+    } else {
+      cur.text += text;
+      cur.endMs = endMs;
+    }
+  }
+  if (cur) out.push(cur);
+  return out.map((l) => ({ ms: l.startMs, speaker_num: l.speaker, text: l.text.replace(/\s+/g, " ").trim() })).filter((l) => l.text);
+}
+
+const SPEAKER_MAP_PROMPT = `아래는 한 영상을 음성인식한 결과에서, 화자(말한 사람)별 대사 예시입니다. 각 화자번호가 '이야기 속 누구'인지 역할 이름을 붙여주세요.
+
+규칙:
+- 내용(호칭·맥락·말투)으로 역할을 추정하세요. 예: 나레이션, 아내, 남편, 시어머니, 처제, 할머니, 아들, 딸.
+- 상황을 설명하는 해설 말투는 "나레이션".
+- 확신이 없으면 "화자1","화자2"처럼 번호 그대로 두세요.
+
+JSON만 출력:
+{"map":{"화자번호":"역할이름"},"voice_type":"AI음성|사람나레이션|원본소리 중 하나","note":"특이사항 한 줄(없으면 빈 문자열)"}`;
+
+async function ytLabelSpeakerMap(lines) {
+  const bySp = {};
+  for (const l of lines) { const k = l.speaker_num || "1"; (bySp[k] = bySp[k] || []).push(l.text); }
+  const nums = Object.keys(bySp);
+  let sample = "";
+  for (const k of nums) sample += "화자" + k + ": " + bySp[k].slice(0, 6).join(" / ") + "\n";
+  try {
+    const r = await callGemini({
+      contents: [{ parts: [{ text: SPEAKER_MAP_PROMPT + "\n\n=== 화자별 대사 ===\n" + sample }] }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0, maxOutputTokens: 4096 },
+    });
+    const out = parseJsonLoose(geminiText(r.gj)) || {};
+    return { map: out.map || {}, voice_type: out.voice_type || "", note: out.note || "", singleSpeaker: nums.length <= 1 };
+  } catch (e) {
+    return { map: {}, voice_type: "", note: "", singleSpeaker: nums.length <= 1 };
+  }
+}
+
+async function runYtTranscript(job) {
+  if (!SONIOX_KEY) throw new Error("SONIOX_API_KEY 미설정");
+  const tmpDir = await mkdtemp(join(tmpdir(), "ib-yt-"));
+  const audioPath = join(tmpDir, "a.opus");
+  let fileId = null;
+  try {
+    await ytDownloadAudio(job.video_id, audioPath);
+    fileId = await sonioxUploadFile(audioPath);
+    const trId = await sonioxCreate(fileId);
+    await sonioxWait(trId);
+    const tokens = await sonioxGetTokens(trId);
+    const lines0 = sonioxTokensToLines(tokens);
+    if (!lines0.length) throw new Error("받아쓴 문장이 없습니다(무음/음악만)");
+    const { map, voice_type, note, singleSpeaker } = await ytLabelSpeakerMap(lines0);
+    const speakers = [];
+    const lines = lines0.map((l) => {
+      let role = map[l.speaker_num];
+      if (!role) role = singleSpeaker ? "나레이션" : ("화자" + (l.speaker_num || "1"));
+      if (!speakers.includes(role)) speakers.push(role);
+      return { t: ytMsToClock(l.ms), speaker: role, text: l.text };
+    });
+    return {
+      language: "한국어",
+      voice_type: voice_type || "원본소리",
+      speakers: speakers,
+      lines: lines,
+      onscreen: [],
+      note: (note ? note + " · " : "") + "정밀 받아쓰기(Soniox)",
+      engine: "soniox:stt-async-v5",
+    };
+  } finally {
+    if (fileId) await sonioxDeleteFile(fileId);
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function claimYtJob() {
+  const { data: rows } = await sb.from("yt_transcript_jobs")
+    .select("id, video_id, attempts").eq("status", "queued")
+    .order("created_at", { ascending: true }).limit(1);
+  if (!rows || !rows.length) return null;
+  const row = rows[0];
+  const { data: upd } = await sb.from("yt_transcript_jobs")
+    .update({ status: "running", started_at: new Date().toISOString() })
+    .eq("id", row.id).eq("status", "queued").select("id, video_id, attempts").single();
+  return upd || null;
+}
+
+async function tryYtTranscriptJob() {
+  let yj;
+  try { yj = await claimYtJob(); } catch (e) { return; }
+  if (!yj) return;
+  console.log("[대본따기] 시작 job=" + yj.id + " video=" + yj.video_id);
+  try {
+    const result = await runYtTranscript(yj);
+    await sb.from("yt_transcript_jobs").update({ status: "done", result: result, finished_at: new Date().toISOString() }).eq("id", yj.id);
+    console.log("[대본따기] 완료 job=" + yj.id + " 줄=" + ((result.lines || []).length));
+  } catch (err) {
+    console.error("[대본따기] 실패 job=" + yj.id + ":", err.message);
+    await sb.from("yt_transcript_jobs").update({ status: "error", error: String(err.message).slice(0, 400), finished_at: new Date().toISOString() }).eq("id", yj.id);
+  }
+}
+// ================= /유튜브 대본 따기 =================
+
+
 async function loop() {
   lastPollAt = new Date().toISOString();
   try {
     if (!flagsEnsured) { await ensureFlags(); flagsEnsured = true; }
     if (Date.now() - lastCleanup > 300000) { lastCleanup = Date.now(); cleanupExpired(); recoverStuck(); }
     const job = await claimJob();
+    if (!job) { await tryYtTranscriptJob(); }
     if (job) {
       console.log(`[작업] ${job.job_type} 시작 (job=${job.id}, 시도=${job.attempts + 1})`);
       try {
