@@ -43,6 +43,31 @@
   .wl-item.folded{padding:8px 14px;}
   .wl-item.folded .wl-head{margin-bottom:0;}
   .fold-btn{flex:0 0 auto;font-size:12px;padding:4px 10px;border-radius:8px;border:1px solid var(--line);background:#f8fafc;color:var(--sub);cursor:pointer;white-space:nowrap;}
+
+  /* --- 개선: 툴팁 --- */
+  .tip{position:relative;display:inline-block;margin-left:6px;vertical-align:middle;}
+  .tip .ic{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:var(--bg-soft);border:1px solid var(--line);color:var(--sub);font-size:12px;font-weight:700;cursor:pointer;user-select:none;}
+  .tip .pop{visibility:hidden;opacity:0;position:absolute;left:0;top:26px;z-index:30;width:min(320px,82vw);background:#111827;color:#fff;border-radius:10px;padding:11px 13px;font-size:12.5px;line-height:1.7;font-weight:400;box-shadow:0 10px 28px rgba(0,0,0,.22);transition:opacity .15s;text-align:left;}
+  .tip .pop b{color:#fcd34d;}
+  .tip:hover .pop,.tip.open .pop{visibility:visible;opacity:1;}
+  /* --- 개선: 처리 단계 --- */
+  .steps{display:flex;gap:6px;margin:0 0 9px;}
+  .steps .stp{flex:1;text-align:center;font-size:11.5px;color:var(--sub);padding:6px 3px;border-radius:8px;background:var(--bg-soft);border:1px solid var(--line);line-height:1.3;}
+  .steps .stp.on{background:#eff6ff;border-color:var(--blue);color:var(--blue);font-weight:700;}
+  .steps .stp.done{background:#f0fdf4;border-color:#bbf7d0;color:#16a34a;}
+  .wl-elapsed{font-size:12px;color:var(--sub);text-align:center;margin-top:6px;}
+  /* --- 개선: 길이 비교 막대 --- */
+  .cmp{margin:12px 0 4px;}
+  .cmp .crow{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12.5px;}
+  .cmp .lab{flex:0 0 46px;color:var(--sub);}
+  .cmp .track{flex:1;height:14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;overflow:hidden;}
+  .cmp .bar{height:100%;border-radius:999px;transition:width .4s;}
+  .cmp .bar.o{background:#94a3b8;} .cmp .bar.n{background:#16a34a;}
+  .cmp .val{flex:0 0 auto;color:var(--ink);font-weight:600;min-width:64px;text-align:right;}
+  .benefit{display:inline-block;background:#ecfdf5;color:#15803d;border:1px solid #bbf7d0;border-radius:999px;padding:2px 10px;font-size:12.5px;font-weight:700;}
+  .seg-note{font-size:12.5px;color:var(--sub);margin:8px 0 0;line-height:1.6;}
+  .pre-info{font-size:13px;color:var(--sub);margin:8px 0 0;text-align:center;}
+  @media(max-width:860px){ .steps .stp{font-size:10.5px;padding:5px 2px;} .cmp .val{min-width:54px;} }
 </style>
 </head>
 <body>
@@ -53,7 +78,7 @@
     <div class="devnote" id="devnote" style="display:none;">🔒 이 기능은 아직 <b>비공개(관리자 전용)</b>입니다. 공개하려면 작업실에서 스위치를 켜세요.</div>
     <p class="an-hint" style="font-size:14.5px;margin-bottom:14px;">동영상을 넣으면 <b>말 사이의 조용한 빈 구간을 찾아, 그 부분의 화면과 소리를 함께 잘라내</b> 빠릿한 영상으로 만들어 드립니다. 처리는 우리 전용 서버가 하며, 완성되면 다운로드 링크가 나옵니다. (지금은 3시간 이하 영상 지원)</p>
     <div style="margin:0 0 12px;font-size:14px;line-height:1.9;">
-      <span style="color:var(--sub);margin-right:6px;">무음을 얼마나 과감하게 자를까요?</span><br>
+      <span style="color:var(--sub);margin-right:2px;">무음을 얼마나 과감하게 자를까요?</span><span class="tip" id="sens-tip" onclick="this.classList.toggle('open')"><span class="ic">i</span><span class="pop">고른 시간(예: <b>0.25초</b>)<b>보다 긴</b> 조용한 구간만 잘라요. 짧은 숨·틈은 그대로 둬서 자연스러워요.<br><br>말인지 침묵인지는 <b>AI가 판단</b>하고, 자를 땐 말 앞뒤로 <b>살짝 여유</b>를 둡니다. 고른 초 기준은 그대로 지켜져요.</span></span><br>
       <label style="margin-right:12px;"><input type="radio" name="sens" value="0.15"> 빠르게(0.15초)</label>
       <label style="margin-right:12px;"><input type="radio" name="sens" value="0.25" checked> 보통(0.25초)</label>
       <label><input type="radio" name="sens" value="0.4"> 자연스럽게(0.4초)</label>
@@ -87,12 +112,19 @@
   var SENS_OPTS='<option value="0.15">빠르게(0.15초)</option><option value="0.25" selected>보통(0.25초)</option><option value="0.4">자연스럽게(0.4초)</option>';
   $id("file-in").addEventListener("change", function(ev){ if(ev.target.files&&ev.target.files.length) choose(ev.target.files); ev.target.value=""; });
   var dz=$id("drop"); dz.addEventListener("dragover",function(e){e.preventDefault();}); dz.addEventListener("drop",function(e){e.preventDefault(); if(e.dataTransfer.files&&e.dataTransfer.files.length) choose(e.dataTransfer.files);});
+  function readDuration(file){ return new Promise(function(res){ try{ var v=document.createElement("video"); v.preload="metadata"; v.onloadedmetadata=function(){ var d=v.duration||0; try{URL.revokeObjectURL(v.src);}catch(e){} res(d); }; v.onerror=function(){ res(0); }; v.src=URL.createObjectURL(file); }catch(e){ res(0); } }); }
   async function choose(fileList){
     hideErr(); var files=Array.prototype.slice.call(fileList);
     try{ var _b=await sb.rpc("desilence_busy"); if(!_b.error && (_b.data||0)>=3){ showErr("지금은 다른 분들의 영상을 처리하는 중이에요. 1~2분 뒤에 다시 시도해 주세요. 🙏"); return; } }catch(e){}
     var user=await getUser(); if(!user){ location.replace("login.html?next=video-silence.html"); return; }
     var min=curMin();
-    for(var i=0;i<files.length;i++){ await uploadOne(files[i], user, min, i+1, files.length); }
+    for(var i=0;i<files.length;i++){
+      var f=files[i];
+      var dur=await readDuration(f);
+      if(dur && dur>10800){ showErr("\""+f.name+"\"은(는) "+fmt(dur)+" 영상이라 지금은 처리할 수 없어요. (3시간 이하만 지원)"); continue; }
+      setUp(1, "["+(i+1)+"/"+files.length+"] "+f.name+" · "+(dur?fmt(dur)+" · ":"")+fmtSize(f.size)+" 준비 중…");
+      await uploadOne(f, user, min, i+1, files.length);
+    }
     setUp(-1,""); ensurePoll();
   }
   function uploadOne(file, user, min, idx, total){
@@ -125,7 +157,7 @@
   function makeRow(id, title){
     if(rows[id]) return rows[id];
     var w=document.createElement("div"); w.className="wl-item";
-    w.innerHTML='<div class="wl-head"><div class="wl-title"></div><button class="fold-btn">가리기</button></div><div class="wl-body"><div class="wl-prog"><div class="prog-bar"><div class="prog-fill wl-fill"></div></div><div class="prog-txt wl-txt">대기 중…</div></div><div class="wl-done" style="display:none;"><h4 style="margin:0 0 8px;">✅ 완성! 미리 보고 받으세요</h4><video class="wl-video" controls preload="metadata"></video><div class="stat-row"><div class="stat-c"><b class="s-o">-</b><span>원래</span></div><div class="stat-c"><b class="s-n">-</b><span>처리 후</span></div><div class="stat-c green"><b class="s-c">-</b><span>줄인 시간</span></div></div><div class="wl-note">⏳ 이 영상은 <b>24시간 뒤 자동 삭제</b>돼요. 미리 받아두세요.</div><div class="wl-act"><a class="dl-btn wl-dl" download>⬇️ 다운로드</a> <span class="recut-box">다시 자를까요? <select class="wl-sens">'+SENS_OPTS+'</select> <button class="recut-btn">✂️ 다시 자르기</button></span></div></div></div>';
+    w.innerHTML='<div class="wl-head"><div class="wl-title"></div><button class="fold-btn">가리기</button></div><div class="wl-body"><div class="wl-prog"><div class="steps"><div class="stp st1">① 소리 분석</div><div class="stp st2">② 조용한 곳 찾기</div><div class="stp st3">③ 잘라 이어붙이기</div></div><div class="prog-bar"><div class="prog-fill wl-fill"></div></div><div class="prog-txt wl-txt">대기 중…</div><div class="wl-elapsed"></div></div><div class="wl-done" style="display:none;"><h4 style="margin:0 0 8px;">✅ 완성! 미리 보고 받으세요</h4><video class="wl-video" controls preload="metadata"></video><div class="stat-row"><div class="stat-c"><b class="s-o">-</b><span>원래</span></div><div class="stat-c"><b class="s-n">-</b><span>처리 후</span></div><div class="stat-c green"><b class="s-c">-</b><span>줄인 시간</span></div></div><div class="cmp"><div class="crow"><span class="lab">원래</span><span class="track"><span class="bar o" style="width:100%"></span></span><span class="val cv-o">-</span></div><div class="crow"><span class="lab">처리 후</span><span class="track"><span class="bar n cv-nbar" style="width:100%"></span></span><span class="val cv-n">-</span></div></div><div class="seg-note wl-seg"></div><div class="wl-note">🔒 이 영상은 <b>24시간 뒤 자동 삭제</b>돼요(안전). 미리 받아두세요.</div><div class="wl-act"><a class="dl-btn wl-dl" download>⬇️ 다운로드</a> <span class="recut-box">다시 자를까요? <select class="wl-sens">'+SENS_OPTS+'</select> <button class="recut-btn">✂️ 다시 자르기</button></span></div></div></div>';
     w.querySelector(".wl-title").textContent=title;
     w.querySelector(".recut-btn").addEventListener("click", function(){ var m=parseFloat(w.querySelector(".wl-sens").value)||0.25; doRecut(id,m,w); });
     w.querySelector(".fold-btn").addEventListener("click", function(){ toggleFold(id,w); });
@@ -148,22 +180,52 @@
     var r=await sb.rpc(folded?"unhide_desilence":"hide_desilence",{ p_project:id });
     if(r.error){ setFold(w, folded); showErr("변경 실패: "+r.error.message); }
   }
+  function setSteps(w, active){
+    var s1=w.querySelector(".st1"), s2=w.querySelector(".st2"), s3=w.querySelector(".st3");
+    if(!s1) return;
+    s1.className="stp st1"; s2.className="stp st2"; s3.className="stp st3";
+    if(active===1){ s1.classList.add("on"); }
+    else if(active===3){ s1.classList.add("done"); s2.classList.add("done"); s3.classList.add("on"); }
+    else if(active===9){ s1.classList.add("done"); s2.classList.add("done"); s3.classList.add("done"); }
+  }
   function updateRow(w,p){
     var st=p.status||"", detail=p.status_detail||"";
     if(st==="desilence_done"){
       var info={}; try{ info=JSON.parse(detail); }catch(e){}
+      w.dataset.active="0";
       w.querySelector(".wl-prog").style.display="none"; w.querySelector(".wl-done").style.display="block";
-      w.querySelector(".s-o").textContent=fmt(info.orig_sec||0); w.querySelector(".s-n").textContent=fmt(info.new_sec||0); w.querySelector(".s-c").textContent="-"+fmt(info.cut_sec||0);
+      var orig=info.orig_sec||0, neu=info.new_sec||0, cut=info.cut_sec||0, spots=info.spots||0;
+      w.querySelector(".s-o").textContent=fmt(orig); w.querySelector(".s-n").textContent=fmt(neu); w.querySelector(".s-c").textContent="-"+fmt(cut);
+      var ratio=orig>0?Math.max(4,Math.round(neu/orig*100)):100;
+      var nb=w.querySelector(".cv-nbar"); if(nb) nb.style.width=ratio+"%";
+      var cvo=w.querySelector(".cv-o"), cvn=w.querySelector(".cv-n");
+      if(cvo) cvo.textContent=fmt(orig); if(cvn) cvn.textContent=fmt(neu);
+      var pctCut=orig>0?Math.round(cut/orig*100):0;
+      var seg=w.querySelector(".wl-seg");
+      if(seg){
+        if(cut<1){ seg.innerHTML="조용한 구간이 거의 없어 <b>거의 그대로</b> 뒀어요."; }
+        else { seg.innerHTML="조용한 구간을 정리해 <b>"+(spots||1)+"개 구간</b>으로 이어붙였어요. <span class=\"benefit\">약 "+pctCut+"% 짧아졌어요</span>"; }
+      }
       if(info.result_url){ var v=w.querySelector(".wl-video"); if(v.getAttribute("src")!==info.result_url){ v.setAttribute("src",info.result_url); } var a=w.querySelector(".wl-dl"); a.href=info.result_url; a.download=(w.querySelector(".wl-title").textContent||"영상").replace(/\.[^.]+$/,"")+"_무음제거.mp4"; }
     } else if(st.indexOf("failed")===0){
+      w.dataset.active="0";
       w.querySelector(".wl-done").style.display="none"; w.querySelector(".wl-prog").style.display="block"; w.querySelector(".wl-txt").textContent="처리 실패: "+(detail||"알 수 없는 오류");
+      setSteps(w,0);
     } else {
       w.querySelector(".wl-done").style.display="none"; w.querySelector(".wl-prog").style.display="block";
+      if(!w.dataset.start){ w.dataset.start=String(Date.now()); } w.dataset.active="1";
       var map={ uploaded:"서버가 영상을 확인하는 중…", probing:"서버가 영상을 확인하는 중…", desilence_running:(detail||"무음을 잘라내는 중…") };
       var pct=st==="desilence_running"?70:((st==="probing"||st==="uploaded")?40:20);
       w.querySelector(".wl-fill").style.width=pct+"%"; w.querySelector(".wl-txt").textContent=map[st]||detail||"처리 중…";
+      setSteps(w, st==="desilence_running"?3:1);
     }
   }
+  setInterval(function(){
+    Object.keys(rows).forEach(function(id){
+      var w=rows[id]; if(!w||w.dataset.active!=="1"||!w.dataset.start) return;
+      var el=w.querySelector(".wl-elapsed"); if(el) el.textContent="⏱ "+fmt((Date.now()-Number(w.dataset.start))/1000)+" 걸리는 중…";
+    });
+  }, 1000);
   async function pollAll(){
     var user=await getUser(); if(!user) return;
     var r=await sb.from("sc_projects").select("id,title,status,status_detail,hidden_at").eq("user_id",user.id).eq("objective","desilence").order("created_at",{ascending:false}).limit(12);
