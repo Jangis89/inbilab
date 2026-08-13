@@ -68,6 +68,26 @@
   .seg-note{font-size:12.5px;color:var(--sub);margin:8px 0 0;line-height:1.6;}
   .pre-info{font-size:13px;color:var(--sub);margin:8px 0 0;text-align:center;}
   @media(max-width:860px){ .steps .stp{font-size:10.5px;padding:5px 2px;} .cmp .val{min-width:54px;} }
+  /* --- 개선: 잘린 위치 지도 --- */
+  .cutmap-wrap{margin:10px 0 2px;}
+  .cutmap-lab{font-size:12px;color:var(--sub);margin-bottom:4px;}
+  .cutmap{display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid var(--line);background:#eef6f0;}
+  .cutmap i{flex:1 1 0;display:block;}
+  .cutmap-hint{font-size:11.5px;color:var(--sub);margin-top:3px;}
+  /* --- 개선: 원본/처리본 비교 듣기 --- */
+  .ab{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:2px 0 6px;}
+  .ab button{padding:5px 12px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--sub);cursor:pointer;font-size:12.5px;font-weight:600;font-family:inherit;}
+  .ab button.on{background:var(--blue);border-color:var(--blue);color:#fff;}
+  .ab .ab-msg{font-size:12px;color:var(--sub);}
+  /* --- 개선: 강도 비교 --- */
+  .cmp-str{margin:10px 0 0;font-size:12.5px;}
+  .cmp-str .cs-t{color:var(--sub);}
+  .cmp-str .cs-row{display:flex;gap:6px;margin-top:5px;}
+  .cmp-str .cs-c{flex:1;text-align:center;border:1px solid var(--line);border-radius:8px;padding:6px 3px;background:#fff;}
+  .cmp-str .cs-c b{display:block;font-size:13px;color:var(--ink);}
+  .cmp-str .cs-c.cur{border-color:var(--blue);background:#eff6ff;}
+  .cmp-str .cs-c span{font-size:11px;color:var(--sub);}
+  @media(max-width:860px){ .cutmap{height:26px;} .ab button{flex:1 1 42%;} }
 </style>
 </head>
 <body>
@@ -157,11 +177,42 @@
   function makeRow(id, title){
     if(rows[id]) return rows[id];
     var w=document.createElement("div"); w.className="wl-item";
-    w.innerHTML='<div class="wl-head"><div class="wl-title"></div><button class="fold-btn">가리기</button></div><div class="wl-body"><div class="wl-prog"><div class="steps"><div class="stp st1">① 소리 분석</div><div class="stp st2">② 조용한 곳 찾기</div><div class="stp st3">③ 잘라 이어붙이기</div></div><div class="prog-bar"><div class="prog-fill wl-fill"></div></div><div class="prog-txt wl-txt">대기 중…</div><div class="wl-elapsed"></div></div><div class="wl-done" style="display:none;"><h4 style="margin:0 0 8px;">✅ 완성! 미리 보고 받으세요</h4><video class="wl-video" controls preload="metadata"></video><div class="stat-row"><div class="stat-c"><b class="s-o">-</b><span>원래</span></div><div class="stat-c"><b class="s-n">-</b><span>처리 후</span></div><div class="stat-c green"><b class="s-c">-</b><span>줄인 시간</span></div></div><div class="cmp"><div class="crow"><span class="lab">원래</span><span class="track"><span class="bar o" style="width:100%"></span></span><span class="val cv-o">-</span></div><div class="crow"><span class="lab">처리 후</span><span class="track"><span class="bar n cv-nbar" style="width:100%"></span></span><span class="val cv-n">-</span></div></div><div class="seg-note wl-seg"></div><div class="wl-note">🔒 이 영상은 <b>24시간 뒤 자동 삭제</b>돼요(안전). 미리 받아두세요.</div><div class="wl-act"><a class="dl-btn wl-dl" download>⬇️ 다운로드</a> <span class="recut-box">다시 자를까요? <select class="wl-sens">'+SENS_OPTS+'</select> <button class="recut-btn">✂️ 다시 자르기</button></span></div></div></div>';
+    w.innerHTML='<div class="wl-head"><div class="wl-title"></div><button class="fold-btn">가리기</button></div><div class="wl-body"><div class="wl-prog"><div class="steps"><div class="stp st1">① 소리 분석</div><div class="stp st2">② 조용한 곳 찾기</div><div class="stp st3">③ 잘라 이어붙이기</div></div><div class="prog-bar"><div class="prog-fill wl-fill"></div></div><div class="prog-txt wl-txt">대기 중…</div><div class="wl-elapsed"></div></div><div class="wl-done" style="display:none;"><h4 style="margin:0 0 8px;">✅ 완성! 미리 보고 받으세요</h4><video class="wl-video" controls preload="metadata"></video><div class="ab"><button class="ab-n on" type="button">▶ 처리본으로 듣기</button><button class="ab-o" type="button">▶ 원본으로 듣기</button><span class="ab-msg"></span></div><div class="stat-row"><div class="stat-c"><b class="s-o">-</b><span>원래</span></div><div class="stat-c"><b class="s-n">-</b><span>처리 후</span></div><div class="stat-c green"><b class="s-c">-</b><span>줄인 시간</span></div></div><div class="cmp"><div class="crow"><span class="lab">원래</span><span class="track"><span class="bar o" style="width:100%"></span></span><span class="val cv-o">-</span></div><div class="crow"><span class="lab">처리 후</span><span class="track"><span class="bar n cv-nbar" style="width:100%"></span></span><span class="val cv-n">-</span></div></div><div class="cutmap-wrap" style="display:none;"><div class="cutmap-lab">잘린 위치 지도 <span style="color:#dc2626;">(빨간 곳</span>이 잘려나간 조용한 구간)</div><div class="cutmap"></div><div class="cutmap-hint"></div></div><div class="seg-note wl-seg"></div><div class="wl-note">🔒 이 영상은 <b>24시간 뒤 자동 삭제</b>돼요(안전). 미리 받아두세요.</div><div class="wl-act"><a class="dl-btn wl-dl" download>⬇️ 다운로드</a> <span class="recut-box">다시 자를까요? <select class="wl-sens">'+SENS_OPTS+'</select> <button class="recut-btn">✂️ 다시 자르기</button></span></div><div class="cmp-str"></div></div></div>';
     w.querySelector(".wl-title").textContent=title;
     w.querySelector(".recut-btn").addEventListener("click", function(){ var m=parseFloat(w.querySelector(".wl-sens").value)||0.25; doRecut(id,m,w); });
     w.querySelector(".fold-btn").addEventListener("click", function(){ toggleFold(id,w); });
+    w.querySelector(".ab-n").addEventListener("click", function(){ abListen(w,"n"); });
+    w.querySelector(".ab-o").addEventListener("click", function(){ abListen(w,"o"); });
     var wl=$id("worklist"); wl.insertBefore(w, wl.firstChild); rows[id]=w; return w;
+  }
+  async function abListen(w, which){
+    var v=w.querySelector(".wl-video"), msg=w.querySelector(".ab-msg");
+    var bn=w.querySelector(".ab-n"), bo=w.querySelector(".ab-o");
+    if(which==="n"){
+      if(w._resultUrl && v.getAttribute("src")!==w._resultUrl) v.setAttribute("src",w._resultUrl);
+      bn.classList.add("on"); bo.classList.remove("on"); msg.textContent=""; try{ v.play(); }catch(e){}
+      return;
+    }
+    msg.textContent="원본 불러오는 중…";
+    var sp=w.dataset.src||"";
+    if(!sp){ msg.textContent="원본 경로를 찾지 못했어요."; return; }
+    var r=await sb.storage.from("videos-source").createSignedUrl(sp, 3600);
+    if(r.error || !r.data || !r.data.signedUrl){ msg.textContent="원본이 24시간이 지나 만료됐어요 (처리본만 들을 수 있어요)."; bo.classList.remove("on"); bn.classList.add("on"); return; }
+    v.setAttribute("src", r.data.signedUrl);
+    bo.classList.add("on"); bn.classList.remove("on"); msg.textContent="원본을 재생합니다"; try{ v.play(); }catch(e){}
+  }
+  function renderCmpStr(w, curMinV){
+    var box=w.querySelector(".cmp-str"); if(!box) return;
+    var mem=w._cmp||{}; var opts=[["0.15","빠르게"],["0.25","보통"],["0.4","자연스럽게"]];
+    var tried=0; opts.forEach(function(o){ if(mem[o[0]]!=null) tried++; });
+    var cur=curMinV!=null?String(curMinV):"";
+    var row="";
+    opts.forEach(function(o){
+      var has=mem[o[0]]!=null; var cls="cs-c"+(cur===o[0]?" cur":"");
+      row+='<div class="'+cls+'"><b>'+(has?fmt(mem[o[0]]):"—")+'</b><span>'+o[1]+'</span></div>';
+    });
+    var tip=tried>=2?"강도별 처리 후 길이를 비교해 보세요.":"위 '다시 자르기'로 다른 강도를 만들면 여기에 길이가 채워져요.";
+    box.innerHTML='<div class="cs-t">💡 강도별 처리 후 길이 비교</div><div class="cs-row">'+row+'</div><div class="cs-t" style="margin-top:5px;">'+tip+'</div>';
   }
   async function doRecut(id,m,w){
     w.querySelector(".wl-done").style.display="none"; w.querySelector(".wl-prog").style.display="block"; w.querySelector(".wl-txt").textContent="다시 자르는 중…";
@@ -207,6 +258,17 @@
         else { seg.innerHTML="조용한 구간을 정리해 <b>"+(spots||1)+"개 구간</b>으로 이어붙였어요. <span class=\"benefit\">약 "+pctCut+"% 짧아졌어요</span>"; }
       }
       if(info.result_url){ var v=w.querySelector(".wl-video"); if(v.getAttribute("src")!==info.result_url){ v.setAttribute("src",info.result_url); } var a=w.querySelector(".wl-dl"); a.href=info.result_url; a.download=(w.querySelector(".wl-title").textContent||"영상").replace(/\.[^.]+$/,"")+"_무음제거.mp4"; }
+      w._resultUrl=info.result_url||"";
+      var cw=w.querySelector(".cutmap-wrap"), cm=w.querySelector(".cutmap");
+      if(cw && cm && info.cutmap && info.cutmap.length){
+        var html="";
+        for(var ci=0;ci<info.cutmap.length;ci++){ var cvv=Math.max(0,Math.min(100,info.cutmap[ci])); var col=cvv<=5?"transparent":("rgba(220,38,38,"+(0.22+cvv/100*0.78).toFixed(2)+")"); html+='<i style="background:'+col+'"></i>'; }
+        cm.innerHTML=html; cw.style.display="block";
+        var hint=w.querySelector(".cutmap-hint"); if(hint) hint.textContent="◀ 영상 시작 · 영상 끝 ▶ — 빨간 곳 "+(spots||0)+"군데를 잘라냈어요.";
+      }
+      if(!w._cmp) w._cmp={};
+      if(info.min!=null){ w._cmp[String(info.min)]=neu; }
+      renderCmpStr(w, info.min);
     } else if(st.indexOf("failed")===0){
       w.dataset.active="0";
       w.querySelector(".wl-done").style.display="none"; w.querySelector(".wl-prog").style.display="block"; w.querySelector(".wl-txt").textContent="처리 실패: "+(detail||"알 수 없는 오류");
@@ -228,10 +290,10 @@
   }, 1000);
   async function pollAll(){
     var user=await getUser(); if(!user) return;
-    var r=await sb.from("sc_projects").select("id,title,status,status_detail,hidden_at").eq("user_id",user.id).eq("objective","desilence").order("created_at",{ascending:false}).limit(12);
+    var r=await sb.from("sc_projects").select("id,title,status,status_detail,hidden_at,source_path").eq("user_id",user.id).eq("objective","desilence").order("created_at",{ascending:false}).limit(12);
     if(r.error||!r.data) return;
     var active=false;
-    r.data.forEach(function(p){ var w=rows[p.id]||makeRow(p.id,p.title); updateRow(w,p); setFold(w, !!p.hidden_at); $id("worklist").appendChild(w); if(p.status!=="desilence_done" && (p.status||"").indexOf("failed")!==0) active=true; });
+    r.data.forEach(function(p){ var w=rows[p.id]||makeRow(p.id,p.title); if(p.source_path) w.dataset.src=p.source_path; updateRow(w,p); setFold(w, !!p.hidden_at); $id("worklist").appendChild(w); if(p.status!=="desilence_done" && (p.status||"").indexOf("failed")!==0) active=true; });
     if(!active && pollTimer){ clearInterval(pollTimer); pollTimer=null; }
   }
   async function loadStats(){
