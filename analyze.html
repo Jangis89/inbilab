@@ -231,6 +231,7 @@
           <div class="tr-dl">
             <button class="main" onclick="dlTr()">📄 대본 다운로드 (.txt)</button>
             <button class="main" onclick="dlSrt()">🎬 자막 다운로드 (.srt · 캡컷용)</button>
+            <label style="font-size:12.5px;color:#64748b;display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="srt-spk"> 자막에 화자 이름 넣기</label>
             <button onclick="copyTr()">복사</button>
           </div>
         </div>
@@ -766,7 +767,7 @@
     }
     return out;
   }
-  function dlSrt() { dlFile("영상대본_자막.srt", trSrt(true)); }
+  function dlSrt() { var c = document.getElementById("srt-spk"); dlFile("영상대본_자막.srt", trSrt(c && c.checked)); }
 
   function trText() {
     if (!lastTranscript) return "";
