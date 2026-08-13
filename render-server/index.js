@@ -1139,12 +1139,17 @@ async function ytDownloadAudio(videoId, destPath) {
   const url = "https://www.youtube.com/watch?v=" + videoId;
   await exec("yt-dlp", [
     "-f", "bestaudio/best",
-    "-x", "--audio-format", "opus", "--audio-quality", "32K",
+    "-x", "--audio-format", "opus", "--audio-quality", "128K",
     "--no-playlist", "--no-warnings", "--no-progress", "--socket-timeout", "30",
     "--extractor-args", "youtube:player_client=android,web",
     "-o", destPath,
     url,
   ], { timeout: 300000, maxBuffer: 64 * 1024 * 1024 });
+}
+
+async function ytNormalizeAudio(src, dst) {
+  // 작은 소리를 또렷하게 + 저역 잡음 제거 → 받아쓰기 정확도 향상
+  await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-i", src, "-ac","1","-af","highpass=f=90,dynaudnorm=f=200:g=8","-c:a","libopus","-b:a","96k", dst, "-y"], { timeout: 300000, maxBuffer: 64 * 1024 * 1024 });
 }
 
 async function sonioxUploadFile(path) {
@@ -1260,9 +1265,11 @@ function ytLettersOnly(s) { return String(s || "").replace(/[^0-9A-Za-z가-힣]/
 
 const POLISH_PROMPT = `아래는 한 영상을 음성인식으로 정확히 받아쓴 대본입니다. 각 줄은 [화자번호 | 시각] 으로 시작합니다. 이 대본을 '보기 좋게' 다듬어 주세요. 단, 단어는 절대 바꾸지 마세요.
 
-절대 규칙:
-- 들리는 단어를 절대 바꾸거나, 추가하거나, 빼지 마세요. 받아쓴 단어를 그대로 두세요.
-- 오직 띄어쓰기와 문장부호(마침표·쉼표·물음표)만 한국어 맞춤법에 맞게 자연스럽게 정리하세요.
+규칙:
+- 음성인식이 비슷한 소리로 잘못 받아쓴 것이 문맥상 명백한 경우에만, 올바른 한국어 단어로 고치세요. 예: "그러리가"→"그럴리가", "머라고"→"뭐라고".
+- 그 외에는 들리는 단어를 그대로 두세요. 원래 없던 내용을 지어내거나, 문장을 요약하거나, 통째로 빼지 마세요.
+- 확실하지 않으면 고치지 말고 그대로 두세요.
+- 띄어쓰기와 문장부호(마침표·쉼표·물음표)는 한국어 맞춤법에 맞게 자연스럽게 정리하세요.
 - 각 줄이 '이야기 속 누구의 말인지' 역할 이름을 speaker에 붙인세요. 예: 해설, 아내, 남편, 시어머니, 처제, 할머니, 아들, 딸.
 - 상황을 설명하는 해설(상황 설명) 말투는 "해설".
 - 화자번호가 서로 섞여 있을 수 있으니, 번호보다 '내용과 맥락'으로 누구인지 판단하세요.
@@ -1314,7 +1321,10 @@ async function runYtTranscript(job) {
   let fileId = null;
   try {
     await ytDownloadAudio(job.video_id, audioPath);
-    fileId = await sonioxUploadFile(audioPath);
+    const normPath = join(tmpDir, "n.opus");
+    let upPath = audioPath;
+    try { await ytNormalizeAudio(audioPath, normPath); upPath = normPath; } catch (e) { console.warn("[대본따기] 소리 다듬기 실패, 원본 사용: " + ((e && e.message) || e)); }
+    fileId = await sonioxUploadFile(upPath);
     const trId = await sonioxCreate(fileId);
     await sonioxWait(trId);
     const tokens = await sonioxGetTokens(trId);
