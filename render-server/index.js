@@ -1225,14 +1225,14 @@ function sonioxTokensToLines(tokens) {
     }
   }
   if (cur) out.push(cur);
-  return out.map((l) => ({ ms: l.startMs, speaker_num: l.speaker, text: l.text.replace(/\s+/g, " ").trim() })).filter((l) => l.text);
+  return out.map((l) => ({ ms: l.startMs, end_ms: l.endMs, speaker_num: l.speaker, text: l.text.replace(/\s+/g, " ").trim() })).filter((l) => l.text);
 }
 
 const SPEAKER_MAP_PROMPT = `아래는 한 영상을 음성인식한 결과에서, 화자(말한 사람)별 대사 예시입니다. 각 화자번호가 '이야기 속 누구'인지 역할 이름을 붙여주세요.
 
 규칙:
-- 내용(호칭·맥락·말투)으로 역할을 추정하세요. 예: 나레이션, 아내, 남편, 시어머니, 처제, 할머니, 아들, 딸.
-- 상황을 설명하는 해설 말투는 "나레이션".
+- 내용(호칭·맥락·말투)으로 역할을 추정하세요. 예: 해설, 아내, 남편, 시어머니, 처제, 할머니, 아들, 딸.
+- 상황을 설명하는 해설(상황 설명) 말투는 "해설".
 - 확신이 없으면 "화자1","화자2"처럼 번호 그대로 두세요.
 
 JSON만 출력:
@@ -1263,8 +1263,8 @@ const POLISH_PROMPT = `아래는 한 영상을 음성인식으로 정확히 받�
 절대 규칙:
 - 들리는 단어를 절대 바꾸거나, 추가하거나, 빼지 마세요. 받아쓴 단어를 그대로 두세요.
 - 오직 띄어쓰기와 문장부호(마침표·쉼표·물음표)만 한국어 맞춤법에 맞게 자연스럽게 정리하세요.
-- 각 줄이 '이야기 속 누구의 말인지' 역할 이름을 speaker에 붙인세요. 예: 나레이션, 아내, 남편, 시어머니, 처제, 할머니, 아들, 딸.
-- 상황을 설명하는 해설 말투는 "나레이션".
+- 각 줄이 '이야기 속 누구의 말인지' 역할 이름을 speaker에 붙인세요. 예: 해설, 아내, 남편, 시어머니, 처제, 할머니, 아들, 딸.
+- 상황을 설명하는 해설(상황 설명) 말투는 "해설".
 - 화자번호가 서로 섞여 있을 수 있으니, 번호보다 '내용과 맥락'으로 누구인지 판단하세요.
 - 정말 모르겠으면 "화자1","화자2"처럼 두세요.
 - 줄의 순서·개수·시각(t)은 그대로 유지하세요.
@@ -1291,7 +1291,9 @@ async function ytPolishTranscript(lines0) {
     let role = (l.speaker && String(l.speaker).trim()) || ("화자" + ((lines0[i] && lines0[i].speaker_num) || "1"));
     if (!speakers.includes(role)) speakers.push(role);
     const t = (l.t && String(l.t)) || (lines0[i] ? ytMsToClock(lines0[i].ms) : "0:00");
-    return { t: t, speaker: role, text: String(l.text || "").trim() };
+    const ms = lines0[i] ? lines0[i].ms : 0;
+    const end_ms = lines0[i] ? (lines0[i].end_ms || lines0[i].ms) : 0;
+    return { t: t, ms: ms, end_ms: end_ms, speaker: role, text: String(l.text || "").trim() };
   }).filter((l) => l.text);
   if (!lines.length) return null;
   return {
@@ -1325,9 +1327,9 @@ async function runYtTranscript(job) {
     const speakers = [];
     const lines = lines0.map((l) => {
       let role = map[l.speaker_num];
-      if (!role) role = singleSpeaker ? "나레이션" : ("화자" + (l.speaker_num || "1"));
+      if (!role) role = singleSpeaker ? "해설" : ("화자" + (l.speaker_num || "1"));
       if (!speakers.includes(role)) speakers.push(role);
-      return { t: ytMsToClock(l.ms), speaker: role, text: l.text };
+      return { t: ytMsToClock(l.ms), ms: l.ms, end_ms: (l.end_ms || l.ms), speaker: role, text: l.text };
     });
     return {
       language: "한국어",
