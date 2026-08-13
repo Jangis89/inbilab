@@ -54,9 +54,8 @@
     <p class="an-hint" style="font-size:14.5px;margin-bottom:14px;">동영상을 넣으면 <b>말 사이의 조용한 빈 구간을 찾아, 그 부분의 화면과 소리를 함께 잘라내</b> 빠릿한 영상으로 만들어 드립니다. 처리는 우리 전용 서버가 하며, 완성되면 다운로드 링크가 나옵니다. (지금은 3시간 이하 영상 지원)</p>
     <div style="margin:0 0 12px;font-size:14px;line-height:1.9;">
       <span style="color:var(--sub);margin-right:6px;">무음을 얼마나 과감하게 자를까요?</span><br>
-      <label style="margin-right:12px;"><input type="radio" name="sens" value="0.1"> 매우 과감(0.1초)</label>
-      <label style="margin-right:12px;"><input type="radio" name="sens" value="0.15" checked> 과감(0.15초)</label>
-      <label style="margin-right:12px;"><input type="radio" name="sens" value="0.25"> 보통(0.25초)</label>
+      <label style="margin-right:12px;"><input type="radio" name="sens" value="0.15"> 빠르게(0.15초)</label>
+      <label style="margin-right:12px;"><input type="radio" name="sens" value="0.25" checked> 보통(0.25초)</label>
       <label><input type="radio" name="sens" value="0.4"> 자연스럽게(0.4초)</label>
     </div>
     <div class="drop" id="drop" onclick="pick()">
@@ -84,8 +83,8 @@
   function showErr(m){ var e=$id("vs-err"); e.textContent=m; e.className="vs-err show"; }
   function hideErr(){ $id("vs-err").className="vs-err"; }
   function setUp(p,t){ var w=$id("up-wrap"); if(p<0){ w.className="prog-wrap"; return; } w.className="prog-wrap show"; $id("up-fill").style.width=p+"%"; $id("up-txt").textContent=t; }
-  function curMin(){ var s=document.querySelector('input[name=sens]:checked'); return s?parseFloat(s.value):0.15; }
-  var SENS_OPTS='<option value="0.1">매우 과감(0.1초)</option><option value="0.15" selected>과감(0.15초)</option><option value="0.25">보통(0.25초)</option><option value="0.4">자연스럽게(0.4초)</option>';
+  function curMin(){ var s=document.querySelector('input[name=sens]:checked'); return s?parseFloat(s.value):0.25; }
+  var SENS_OPTS='<option value="0.15">빠르게(0.15초)</option><option value="0.25" selected>보통(0.25초)</option><option value="0.4">자연스럽게(0.4초)</option>';
   $id("file-in").addEventListener("change", function(ev){ if(ev.target.files&&ev.target.files.length) choose(ev.target.files); ev.target.value=""; });
   var dz=$id("drop"); dz.addEventListener("dragover",function(e){e.preventDefault();}); dz.addEventListener("drop",function(e){e.preventDefault(); if(e.dataTransfer.files&&e.dataTransfer.files.length) choose(e.dataTransfer.files);});
   async function choose(fileList){
@@ -128,7 +127,7 @@
     var w=document.createElement("div"); w.className="wl-item";
     w.innerHTML='<div class="wl-head"><div class="wl-title"></div><button class="fold-btn">가리기</button></div><div class="wl-body"><div class="wl-prog"><div class="prog-bar"><div class="prog-fill wl-fill"></div></div><div class="prog-txt wl-txt">대기 중…</div></div><div class="wl-done" style="display:none;"><h4 style="margin:0 0 8px;">✅ 완성! 미리 보고 받으세요</h4><video class="wl-video" controls preload="metadata"></video><div class="stat-row"><div class="stat-c"><b class="s-o">-</b><span>원래</span></div><div class="stat-c"><b class="s-n">-</b><span>처리 후</span></div><div class="stat-c green"><b class="s-c">-</b><span>줄인 시간</span></div></div><div class="wl-note">⏳ 이 영상은 <b>24시간 뒤 자동 삭제</b>돼요. 미리 받아두세요.</div><div class="wl-act"><a class="dl-btn wl-dl" download>⬇️ 다운로드</a> <span class="recut-box">다시 자를까요? <select class="wl-sens">'+SENS_OPTS+'</select> <button class="recut-btn">✂️ 다시 자르기</button></span></div></div></div>';
     w.querySelector(".wl-title").textContent=title;
-    w.querySelector(".recut-btn").addEventListener("click", function(){ var m=parseFloat(w.querySelector(".wl-sens").value)||0.15; doRecut(id,m,w); });
+    w.querySelector(".recut-btn").addEventListener("click", function(){ var m=parseFloat(w.querySelector(".wl-sens").value)||0.25; doRecut(id,m,w); });
     w.querySelector(".fold-btn").addEventListener("click", function(){ toggleFold(id,w); });
     var wl=$id("worklist"); wl.insertBefore(w, wl.firstChild); rows[id]=w; return w;
   }
