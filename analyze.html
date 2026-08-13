@@ -230,6 +230,7 @@
           <div class="tr-on" id="tr-on" style="display:none;"></div>
           <div class="tr-dl">
             <button class="main" onclick="dlTr()">📄 대본 다운로드 (.txt)</button>
+            <button class="main" onclick="dlSrt()">🎬 자막 다운로드 (.srt · 캡컷용)</button>
             <button onclick="copyTr()">복사</button>
           </div>
         </div>
@@ -726,15 +727,15 @@
   function renderTranscript(t, model) {
     const meta = [];
     if (t.language) meta.push("언어: " + t.language);
-    if (t.voice_type) meta.push("음성: " + t.voice_type);
-    if (t.speakers && t.speakers.length) meta.push("화자: " + t.speakers.join(", "));
+    if (t.voice_type) meta.push("음성: " + fixRole(t.voice_type));
+    if (t.speakers && t.speakers.length) meta.push("화자: " + t.speakers.map(fixRole).join(", "));
     if (t.note) meta.push(t.note);
     if (model) meta.push(modelLabel(model, "추출"));
     $id("tr-meta").textContent = meta.join(" · ");
     $id("tr-lines").innerHTML = (t.lines || []).map((l) => `
       <div class="tr-line">
         <div class="tm">${escapeHtml(l.t || "")}</div>
-        <div class="tx">${l.speaker ? '<b style="color:#2563eb">' + escapeHtml(l.speaker) + '</b> ' : ''}${escapeHtml(l.text || "")}</div>
+        <div class="tx">${l.speaker ? '<b style="color:#2563eb">' + escapeHtml(fixRole(l.speaker)) + '</b> : ' : ''}${escapeHtml(l.text || "")}</div>
       </div>`).join("") || '<div class="tr-line"><div class="tx">추출된 대사가 없습니다.</div></div>';
     const on = t.onscreen || [];
     const onEl = $id("tr-on");
@@ -746,22 +747,43 @@
     }
   }
 
+  function fixRole(s) { return String(s == null ? "" : s).replace(/나레이션/g, "해설"); }
+  function srtTime(ms) { ms = Math.max(0, Math.round(Number(ms) || 0)); var h = Math.floor(ms / 3600000); ms -= h * 3600000; var m = Math.floor(ms / 60000); ms -= m * 60000; var s = Math.floor(ms / 1000); ms -= s * 1000; function p(n, w) { n = String(n); while (n.length < w) n = "0" + n; return n; } return p(h, 2) + ":" + p(m, 2) + ":" + p(s, 2) + "," + p(ms, 3); }
+  function clockToMs(t) { if (t == null) return 0; var a = String(t).split(":").map(Number); var s = 0; for (var i = 0; i < a.length; i++) { s = s * 60 + (a[i] || 0); } return s * 1000; }
+  function trSrt(withSpeaker) {
+    var lines = (lastTranscript && lastTranscript.lines) || [];
+    var out = "";
+    for (var i = 0; i < lines.length; i++) {
+      var l = lines[i];
+      var start = (l.ms != null) ? Number(l.ms) : clockToMs(l.t);
+      var end;
+      if (l.end_ms != null && Number(l.end_ms) > start) end = Number(l.end_ms);
+      else if (i + 1 < lines.length) { var nx = lines[i + 1]; end = (nx.ms != null ? Number(nx.ms) : clockToMs(nx.t)); }
+      else end = start + 2500;
+      if (end <= start) end = start + 1200;
+      var who = (withSpeaker && l.speaker) ? (fixRole(l.speaker) + " : ") : "";
+      out += (i + 1) + "\n" + srtTime(start) + " --> " + srtTime(end) + "\n" + who + (l.text || "") + "\n\n";
+    }
+    return out;
+  }
+  function dlSrt() { dlFile("영상대본_자막.srt", trSrt(true)); }
+
   function trText() {
     if (!lastTranscript) return "";
-    return (lastTranscript.lines || []).map((l) => (l.speaker ? "[" + l.speaker + "] " : "") + (l.text || "")).join("\n");
+    return (lastTranscript.lines || []).map((l) => (l.speaker ? fixRole(l.speaker) + " : " : "") + (l.text || "")).join("\n");
   }
 
   function trTextTimed() {
     if (!lastTranscript) return "";
-    return (lastTranscript.lines || []).map((l) => (l.t ? "[" + l.t + "] " : "") + (l.speaker ? l.speaker + ": " : "") + (l.text || "")).join("\n");
+    return (lastTranscript.lines || []).map((l) => (l.t ? "[" + l.t + "] " : "") + (l.speaker ? fixRole(l.speaker) + ": " : "") + (l.text || "")).join("\n");
   }
 
   function dlTr() {
     const t = lastTranscript || {};
     let out = "[인비랩 대본 따기]\n\n";
     if (t.language) out += "언어: " + t.language + "\n";
-    if (t.voice_type) out += "음성: " + t.voice_type + "\n";
-    if (t.speakers && t.speakers.length) out += "화자: " + t.speakers.join(", ") + "\n";
+    if (t.voice_type) out += "음성: " + fixRole(t.voice_type) + "\n";
+    if (t.speakers && t.speakers.length) out += "화자: " + t.speakers.map(fixRole).join(", ") + "\n";
     if (t.note) out += "참고: " + t.note + "\n";
     out += "\n== 대본 ==\n" + trText() + "\n";
     const on = t.onscreen || [];
