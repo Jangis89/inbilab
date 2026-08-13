@@ -703,13 +703,14 @@
     const meta = [];
     if (t.language) meta.push("언어: " + t.language);
     if (t.voice_type) meta.push("음성: " + t.voice_type);
+    if (t.speakers && t.speakers.length) meta.push("화자: " + t.speakers.join(", "));
     if (t.note) meta.push(t.note);
     if (model) meta.push(modelLabel(model, "추출"));
     $id("tr-meta").textContent = meta.join(" · ");
     $id("tr-lines").innerHTML = (t.lines || []).map((l) => `
       <div class="tr-line">
         <div class="tm">${escapeHtml(l.t || "")}</div>
-        <div class="tx">${escapeHtml(l.text || "")}</div>
+        <div class="tx">${l.speaker ? '<b style="color:#2563eb">' + escapeHtml(l.speaker) + '</b> ' : ''}${escapeHtml(l.text || "")}</div>
       </div>`).join("") || '<div class="tr-line"><div class="tx">추출된 대사가 없습니다.</div></div>';
     const on = t.onscreen || [];
     const onEl = $id("tr-on");
@@ -723,12 +724,12 @@
 
   function trText() {
     if (!lastTranscript) return "";
-    return (lastTranscript.lines || []).map((l) => l.text || "").join("\n");
+    return (lastTranscript.lines || []).map((l) => (l.speaker ? "[" + l.speaker + "] " : "") + (l.text || "")).join("\n");
   }
 
   function trTextTimed() {
     if (!lastTranscript) return "";
-    return (lastTranscript.lines || []).map((l) => (l.t ? "[" + l.t + "] " : "") + (l.text || "")).join("\n");
+    return (lastTranscript.lines || []).map((l) => (l.t ? "[" + l.t + "] " : "") + (l.speaker ? l.speaker + ": " : "") + (l.text || "")).join("\n");
   }
 
   function dlTr() {
@@ -736,6 +737,7 @@
     let out = "[인비랩 대본 따기]\n\n";
     if (t.language) out += "언어: " + t.language + "\n";
     if (t.voice_type) out += "음성: " + t.voice_type + "\n";
+    if (t.speakers && t.speakers.length) out += "화자: " + t.speakers.join(", ") + "\n";
     if (t.note) out += "참고: " + t.note + "\n";
     out += "\n== 대본 ==\n" + trText() + "\n";
     const on = t.onscreen || [];
