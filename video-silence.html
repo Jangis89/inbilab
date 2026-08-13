@@ -46,8 +46,9 @@
 
   /* --- 개선: 툴팁 --- */
   .tip{position:relative;display:inline-block;margin-left:6px;vertical-align:middle;}
-  .tip .ic{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:var(--bg-soft);border:1px solid var(--line);color:var(--sub);font-size:12px;font-weight:700;cursor:pointer;user-select:none;}
-  .tip .pop{visibility:hidden;opacity:0;position:absolute;left:0;top:26px;z-index:30;width:min(320px,82vw);background:#111827;color:#fff;border-radius:10px;padding:11px 13px;font-size:12.5px;line-height:1.7;font-weight:400;box-shadow:0 10px 28px rgba(0,0,0,.22);transition:opacity .15s;text-align:left;}
+  .tip .ic{display:inline-flex;align-items:center;gap:3px;padding:3px 10px;border-radius:999px;background:#eff6ff;border:1px solid var(--blue);color:var(--blue);font-size:12px;font-weight:700;cursor:pointer;user-select:none;white-space:nowrap;}
+  .tip .ic:hover{background:var(--blue);color:#fff;}
+  .tip .pop{visibility:hidden;opacity:0;position:absolute;left:0;top:30px;z-index:30;width:min(360px,88vw);background:#111827;color:#fff;border-radius:10px;padding:12px 14px;font-size:12.5px;line-height:1.65;font-weight:400;box-shadow:0 10px 28px rgba(0,0,0,.22);transition:opacity .15s;text-align:left;}
   .tip .pop b{color:#fcd34d;}
   .tip:hover .pop,.tip.open .pop{visibility:visible;opacity:1;}
   /* --- 개선: 처리 단계 --- */
@@ -56,6 +57,7 @@
   .steps .stp.on{background:#eff6ff;border-color:var(--blue);color:var(--blue);font-weight:700;}
   .steps .stp.done{background:#f0fdf4;border-color:#bbf7d0;color:#16a34a;}
   .wl-elapsed{font-size:12px;color:var(--sub);text-align:center;margin-top:6px;}
+  .wl-eta{font-size:12.5px;color:#3730a3;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.6;}
   /* --- 개선: 길이 비교 막대 --- */
   .cmp{margin:12px 0 4px;}
   .cmp .crow{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12.5px;}
@@ -98,7 +100,7 @@
     <div class="devnote" id="devnote" style="display:none;">🔒 이 기능은 아직 <b>비공개(관리자 전용)</b>입니다. 공개하려면 작업실에서 스위치를 켜세요.</div>
     <p class="an-hint" style="font-size:14.5px;margin-bottom:14px;">동영상을 넣으면 <b>말 사이의 조용한 빈 구간을 찾아, 그 부분의 화면과 소리를 함께 잘라내</b> 빠릿한 영상으로 만들어 드립니다. 처리는 우리 전용 서버가 하며, 완성되면 다운로드 링크가 나옵니다. (지금은 3시간 이하 영상 지원)</p>
     <div style="margin:0 0 12px;font-size:14px;line-height:1.9;">
-      <span style="color:var(--sub);margin-right:2px;">무음을 얼마나 과감하게 자를까요?</span><span class="tip" id="sens-tip" onclick="this.classList.toggle('open')"><span class="ic">i</span><span class="pop">고른 시간(예: <b>0.25초</b>)<b>보다 긴</b> 조용한 구간만 잘라요. 짧은 숨·틈은 그대로 둬서 자연스러워요.<br><br>말인지 침묵인지는 <b>AI가 판단</b>하고, 자를 땐 말 앞뒤로 <b>살짝 여유</b>를 둡니다. 고른 초 기준은 그대로 지켜져요.</span></span><br>
+      <span style="color:var(--sub);margin-right:2px;">무음을 얼마나 과감하게 자를까요?</span><span class="tip" id="sens-tip" onclick="this.classList.toggle('open')"><span class="ic">ⓘ 설명보기</span><span class="pop"><b>빠르게(0.15초)</b> — 0.15초보다 긴 조용한 곳을 모두 잘라요. 가장 많이 줄어 영상이 빠릿해지지만, 짧은 숨·틈까지 잘려 조금 급하게 느껴질 수 있어요.<br><br><b>보통(0.25초)</b> — 속도와 자연스러움의 균형. 대부분의 영상에 무난해요. <b>(추천)</b><br><br><b>자연스럽게(0.4초)</b> — 0.4초보다 긴 확실한 침묵만 잘라요. 덜 줄어들지만 말의 호흡·여유가 남아 가장 자연스러워요.<br><br>말인지 침묵인지는 <b>AI가 판단</b>하고, 자를 땐 앞뒤로 <b>살짝 여유</b>를 둡니다. 고른 초 기준은 그대로 지켜져요.</span></span><br>
       <label style="margin-right:12px;"><input type="radio" name="sens" value="0.15"> 빠르게(0.15초)</label>
       <label style="margin-right:12px;"><input type="radio" name="sens" value="0.25" checked> 보통(0.25초)</label>
       <label><input type="radio" name="sens" value="0.4"> 자연스럽게(0.4초)</label>
@@ -125,6 +127,8 @@
   function pick(){ document.getElementById("file-in").click(); }
   function fmt(sec){ sec=Math.max(0,Math.round(sec)); var m=Math.floor(sec/60), s=sec%60; return m>0?(m+"분 "+s+"초"):(s+"초"); }
   function fmtSize(b){ return (b/1048576).toFixed(1)+"MB"; }
+  function hm(m){ if(m<60) return m+"분"; var hh=Math.floor(m/60), mm=m%60; return mm?(hh+"시간 "+mm+"분"):(hh+"시간"); }
+  function estText(dur){ if(!dur||dur<=0) return ""; function rnd(m){ return m>=20?Math.max(5,Math.round(m/5)*5):Math.max(1,m); } var lo=rnd(Math.round(dur/60)), hi=rnd(Math.round(dur/60*2)); if(hi<=lo) hi=lo+(lo>=20?5:1); return "약 "+hm(lo)+"~"+hm(hi); }
   function showErr(m){ var e=$id("vs-err"); e.textContent=m; e.className="vs-err show"; }
   function hideErr(){ $id("vs-err").className="vs-err"; }
   function setUp(p,t){ var w=$id("up-wrap"); if(p<0){ w.className="prog-wrap"; return; } w.className="prog-wrap show"; $id("up-fill").style.width=p+"%"; $id("up-txt").textContent=t; }
@@ -143,11 +147,11 @@
       var dur=await readDuration(f);
       if(dur && dur>10800){ showErr("\""+f.name+"\"은(는) "+fmt(dur)+" 영상이라 지금은 처리할 수 없어요. (3시간 이하만 지원)"); continue; }
       setUp(1, "["+(i+1)+"/"+files.length+"] "+f.name+" · "+(dur?fmt(dur)+" · ":"")+fmtSize(f.size)+" 준비 중…");
-      await uploadOne(f, user, min, i+1, files.length);
+      await uploadOne(f, user, min, i+1, files.length, dur);
     }
     setUp(-1,""); ensurePoll();
   }
-  function uploadOne(file, user, min, idx, total){
+  function uploadOne(file, user, min, idx, total, estdur){
     return new Promise(function(resolve){
       if(file.size>8*1024*1024*1024){ showErr("영상 "+file.name+"이 너무 큽니다 (8GB 이하)."); resolve(); return; }
       var ext=(file.name.split(".").pop()||"mp4").toLowerCase();
@@ -166,7 +170,7 @@
             setUp(99, "["+idx+"/"+total+"] 등록 중…");
             var ins=await sb.from("sc_projects").insert({ user_id:user.id, title:file.name, source_path:objectName, source_bytes:file.size, objective:"desilence", desilence_min:min, rights_agreed_at:new Date().toISOString() }).select("id,title,status").single();
             if(ins.error){ showErr("등록 오류: "+ins.error.message); resolve(); return; }
-            makeRow(ins.data.id, ins.data.title); resolve();
+            var nw=makeRow(ins.data.id, ins.data.title); if(estdur && nw) nw.dataset.estdur=String(Math.round(estdur)); resolve();
           }
         });
         upload.start();
@@ -177,7 +181,7 @@
   function makeRow(id, title){
     if(rows[id]) return rows[id];
     var w=document.createElement("div"); w.className="wl-item";
-    w.innerHTML='<div class="wl-head"><div class="wl-title"></div><button class="fold-btn">가리기</button></div><div class="wl-body"><div class="wl-prog"><div class="steps"><div class="stp st1">① 소리 분석</div><div class="stp st2">② 조용한 곳 찾기</div><div class="stp st3">③ 잘라 이어붙이기</div></div><div class="prog-bar"><div class="prog-fill wl-fill"></div></div><div class="prog-txt wl-txt">대기 중…</div><div class="wl-elapsed"></div></div><div class="wl-done" style="display:none;"><h4 style="margin:0 0 8px;">✅ 완성! 미리 보고 받으세요</h4><video class="wl-video" controls preload="metadata"></video><div class="ab"><button class="ab-n on" type="button">▶ 처리본으로 듣기</button><button class="ab-o" type="button">▶ 원본으로 듣기</button><span class="ab-msg"></span></div><div class="stat-row"><div class="stat-c"><b class="s-o">-</b><span>원래</span></div><div class="stat-c"><b class="s-n">-</b><span>처리 후</span></div><div class="stat-c green"><b class="s-c">-</b><span>줄인 시간</span></div></div><div class="cmp"><div class="crow"><span class="lab">원래</span><span class="track"><span class="bar o" style="width:100%"></span></span><span class="val cv-o">-</span></div><div class="crow"><span class="lab">처리 후</span><span class="track"><span class="bar n cv-nbar" style="width:100%"></span></span><span class="val cv-n">-</span></div></div><div class="cutmap-wrap" style="display:none;"><div class="cutmap-lab">잘린 위치 지도 <span style="color:#dc2626;">(빨간 곳</span>이 잘려나간 조용한 구간)</div><div class="cutmap"></div><div class="cutmap-hint"></div></div><div class="seg-note wl-seg"></div><div class="wl-note">🔒 이 영상은 <b>24시간 뒤 자동 삭제</b>돼요(안전). 미리 받아두세요.</div><div class="wl-act"><a class="dl-btn wl-dl" download>⬇️ 다운로드</a> <span class="recut-box">다시 자를까요? <select class="wl-sens">'+SENS_OPTS+'</select> <button class="recut-btn">✂️ 다시 자르기</button></span></div><div class="cmp-str"></div></div></div>';
+    w.innerHTML='<div class="wl-head"><div class="wl-title"></div><button class="fold-btn">가리기</button></div><div class="wl-body"><div class="wl-prog"><div class="steps"><div class="stp st1">① 소리 분석</div><div class="stp st2">② 조용한 곳 찾기</div><div class="stp st3">③ 잘라 이어붙이기</div></div><div class="prog-bar"><div class="prog-fill wl-fill"></div></div><div class="prog-txt wl-txt">대기 중…</div><div class="wl-elapsed"></div><div class="wl-eta"></div></div><div class="wl-done" style="display:none;"><h4 style="margin:0 0 8px;">✅ 완성! 미리 보고 받으세요</h4><video class="wl-video" controls preload="metadata"></video><div class="ab"><button class="ab-n on" type="button">▶ 처리본으로 듣기</button><button class="ab-o" type="button">▶ 원본으로 듣기</button><span class="ab-msg"></span></div><div class="stat-row"><div class="stat-c"><b class="s-o">-</b><span>원래</span></div><div class="stat-c"><b class="s-n">-</b><span>처리 후</span></div><div class="stat-c green"><b class="s-c">-</b><span>줄인 시간</span></div></div><div class="cutmap-wrap" style="display:none;"><div class="cutmap-lab">잘린 위치 지도 <span style="color:#dc2626;">(빨간 곳</span>이 잘려나간 조용한 구간)</div><div class="cutmap"></div><div class="cutmap-hint"></div></div><div class="seg-note wl-seg"></div><div class="wl-note">🔒 이 영상은 <b>24시간 뒤 자동 삭제</b>돼요(안전). 미리 받아두세요.</div><div class="wl-act"><a class="dl-btn wl-dl" download>⬇️ 다운로드</a> <span class="recut-box">다시 자를까요? <select class="wl-sens">'+SENS_OPTS+'</select> <button class="recut-btn">✂️ 다시 자르기</button></span></div><div class="cmp-str"></div></div></div>';
     w.querySelector(".wl-title").textContent=title;
     w.querySelector(".recut-btn").addEventListener("click", function(){ var m=parseFloat(w.querySelector(".wl-sens").value)||0.25; doRecut(id,m,w); });
     w.querySelector(".fold-btn").addEventListener("click", function(){ toggleFold(id,w); });
@@ -280,6 +284,8 @@
       var pct=st==="desilence_running"?70:((st==="probing"||st==="uploaded")?40:20);
       w.querySelector(".wl-fill").style.width=pct+"%"; w.querySelector(".wl-txt").textContent=map[st]||detail||"처리 중…";
       setSteps(w, st==="desilence_running"?3:1);
+      var eta=w.querySelector(".wl-eta");
+      if(eta){ var et=estText(Number(w.dataset.estdur||0)); eta.innerHTML="🔔 <b>정상적으로 처리 중이에요.</b>"+(et?" 예상 완료까지 <b>"+et+"</b> 정도 걸려요.":" 영상이 길수록 시간이 좀 걸려요.")+"<br>이 창을 닫아도 서버가 계속 처리하니, <b>다른 일 보시다가 나중에 다시 오면</b> 완성돼 있어요."; }
     }
   }
   setInterval(function(){
