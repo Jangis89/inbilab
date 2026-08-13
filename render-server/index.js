@@ -1085,7 +1085,7 @@ async function runDesilence(job) {
       const { data: rsigned, error: rse } = await sb.storage.from("videos-clips").createSignedUrl(clipPath, 86400);
       if (rse) throw new Error("결과 링크 생성 실패: " + rse.message);
       const newDur = Math.max(0, dur - cutTotal);
-      const detail = JSON.stringify({ result_url: rsigned.signedUrl, orig_sec: Math.round(dur), new_sec: Math.round(newDur), cut_sec: Math.round(cutTotal), spots: keeps.length });
+      const detail = JSON.stringify({ result_url: rsigned.signedUrl, orig_sec: Math.round(dur), new_sec: Math.round(newDur), cut_sec: Math.round(cutTotal), spots: keeps.length, min: dMin, cutmap: (function(){var NB=100,cb=new Array(NB).fill(0);for(var i=0;i<keeps.length;i++){var a=Math.max(0,keeps[i][0]),b=Math.min(dur,keeps[i][1]);if(b<=a)continue;var lo=Math.floor(a/dur*NB),hi=Math.ceil(b/dur*NB);for(var bi=lo;bi<hi&&bi<NB;bi++){var bs=bi/NB*dur,be=(bi+1)/NB*dur;cb[bi]+=Math.max(0,Math.min(b,be)-Math.max(a,bs));}}var bl=dur/NB;return cb.map(function(k){return Math.max(0,Math.min(100,Math.round((1-k/bl)*100)));});})() });
       await sb.from("sc_projects").update({ status: "desilence_done", status_detail: detail, updated_at: new Date().toISOString() }).eq("id", proj.id);
       /* 원본과 완성본은 24시간 뒤 cleanupExpired에서 함께 삭제 (그 사이 다시 자르기 가능) */
       try { await sb.from("sc_usage_log").insert({ project_id: proj.id, kind: "desilence", duration_sec: dur, meta: { cut_sec: Math.round(cutTotal) } }); } catch (e) {}
