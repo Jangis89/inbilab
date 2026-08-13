@@ -671,25 +671,31 @@
     btn.disabled = true;
     load.className = "an-load show";
     let sec = 0;
-    $id("tr-load-txt").textContent = "AI가 영상을 듣고 받아 적고 있습니다… (0초)";
-    trTimer = setInterval(() => { sec++; $id("tr-load-txt").textContent = "AI가 영상을 듣고 받아 적고 있습니다… (" + sec + "초)"; }, 1000);
+    $id("tr-load-txt").textContent = "정밀 받아쓰기 중… (0초)";
+    trTimer = setInterval(() => { sec++; $id("tr-load-txt").textContent = "정밀 받아쓰기 중… (" + sec + "초)"; }, 1000);
     try {
-      const { data } = await sb.auth.getSession();
-      const token = data && data.session ? data.session.access_token : "";
-      const r = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
-        body: JSON.stringify({ feature: "transcript", action: "transcript", video_url: "https://www.youtube.com/watch?v=" + lastVideoId, model_pref: modelPref() }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.ok) {
-        err.textContent = "대본 추출 실패: " + (j.error || "HTTP " + r.status) + (j.detail ? " — " + j.detail : "");
-        err.className = "an-err show";
-      } else {
-        lastTranscript = j.transcript;
-        renderTranscript(j.transcript, j.model);
-        $id("tr-res").className = "tr-res show";
+      let tr = null, usedModel = null;
+      try { tr = await ytTranscribeViaWorker(); } catch (e) { tr = null; }
+      if (!tr) {
+        $id("tr-load-txt").textContent = "받아 적는 중… (" + sec + "초)";
+        const { data } = await sb.auth.getSession();
+        const token = data && data.session ? data.session.access_token : "";
+        const r = await fetch("/api/ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+          body: JSON.stringify({ feature: "transcript", action: "transcript", video_url: "https://www.youtube.com/watch?v=" + lastVideoId, model_pref: modelPref() }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) {
+          err.textContent = "대본 추출 실패: " + (j.error || "HTTP " + r.status) + (j.detail ? " — " + j.detail : "");
+          err.className = "an-err show";
+          clearInterval(trTimer); load.className = "an-load"; btn.disabled = false; return;
+        }
+        tr = j.transcript; usedModel = j.model;
       }
+      lastTranscript = tr;
+      renderTranscript(tr, usedModel);
+      $id("tr-res").className = "tr-res show";
     } catch (e) {
       err.textContent = "요청이 실패했습니다: " + e.message;
       err.className = "an-err show";
@@ -697,6 +703,24 @@
     clearInterval(trTimer);
     load.className = "an-load";
     btn.disabled = false;
+  }
+
+  async function ytTranscribeViaWorker() {
+    const vid = lastVideoId;
+    if (!vid) throw new Error("no video");
+    const ins = await sb.from("yt_transcript_jobs").insert({ video_id: vid }).select("id").single();
+    if (ins.error || !ins.data) throw new Error("작업 생성 실패");
+    const jobId = ins.data.id;
+    const deadline = Date.now() + 180000;
+    while (Date.now() < deadline) {
+      await new Promise((res) => setTimeout(res, 2500));
+      const q = await sb.from("yt_transcript_jobs").select("status,result,error").eq("id", jobId).single();
+      if (q.error) continue;
+      const st = q.data.status;
+      if (st === "done" && q.data.result) return q.data.result;
+      if (st === "error") throw new Error(q.data.error || "정밀 대본 실패");
+    }
+    throw new Error("정밀 대본 시간 초과");
   }
 
   function renderTranscript(t, model) {
