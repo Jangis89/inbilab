@@ -1060,9 +1060,9 @@ async function runDesilence(job) {
           const s0 = Math.round(keeps[i][0] * srcFps) / srcFps;
           const e0 = Math.round(keeps[i][1] * srcFps) / srcFps;
           const segDur = Math.max(1 / srcFps, e0 - s0);
-          const vPath = join(tmpDir, "v_" + String(i).padStart(5, "0") + ".mp4");
+          const vPath = join(tmpDir, "v_" + String(i).padStart(5, "0") + ".ts");
           const aPath = join(tmpDir, "a_" + String(i).padStart(5, "0") + ".wav");
-          await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-ss", s0.toFixed(3), "-t", segDur.toFixed(3), "-i", srcPath, "-an","-c:v","libx264","-preset","medium","-crf","16","-pix_fmt","yuv420p","-r", String(srcFps), "-vsync","cfr","-video_track_timescale", vts, vPath, "-vn","-c:a","pcm_s16le", aPath, "-y"], { timeout: 600000, maxBuffer: 32*1024*1024 });
+          await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-ss", s0.toFixed(3), "-t", segDur.toFixed(3), "-i", srcPath, "-an","-c:v","libx264","-preset","medium","-crf","16","-pix_fmt","yuv420p","-r", String(srcFps), "-vsync","cfr","-f","mpegts", vPath, "-vn","-c:a","pcm_s16le", aPath, "-y"], { timeout: 600000, maxBuffer: 32*1024*1024 });
           vlist += "file " + Q + vPath + Q + NL;
           alist += "file " + Q + aPath + Q + NL;
           if (i % 12 === 0) { await setJobProgress(job.id, Math.min(80, 40 + Math.round((i / keeps.length) * 40))); }
@@ -1071,7 +1071,7 @@ async function runDesilence(job) {
         await writeFile(join(tmpDir, "alist.txt"), alist, "utf8");
         const vidPath = join(tmpDir, "vid.mp4");
         const audPath = join(tmpDir, "aud.m4a");
-        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-f","concat","-safe","0","-i", join(tmpDir, "vlist.txt"), "-an","-c:v","copy", vidPath, "-y"], { timeout: 1800000, maxBuffer: 128*1024*1024 });
+        await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-f","concat","-safe","0","-i", join(tmpDir, "vlist.txt"), "-an","-c:v","copy","-video_track_timescale", vts, "-movflags","+faststart", vidPath, "-y"], { timeout: 1800000, maxBuffer: 128*1024*1024 });
         await setJobProgress(job.id, 84);
         await exec("ffmpeg", ["-hide_banner","-nostats","-loglevel","error","-f","concat","-safe","0","-i", join(tmpDir, "alist.txt"), "-c:a","aac","-b:a","256k", audPath, "-y"], { timeout: 1800000, maxBuffer: 128*1024*1024 });
         await setJobProgress(job.id, 88);
