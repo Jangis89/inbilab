@@ -1256,6 +1256,55 @@ async function ytLabelSpeakerMap(lines) {
   }
 }
 
+function ytLettersOnly(s) { return String(s || "").replace(/[^0-9A-Za-z가-힣]/g, ""); }
+
+const POLISH_PROMPT = `아래는 한 영상을 음성인식으로 정확히 받아쓴 대본입니다. 각 줄은 [화자번호 | 시각] 으로 시작합니다. 이 대본을 '보기 좋게' 다듬어 주세요. 단, 단어는 절대 바꾸지 마세요.
+
+절대 규칙:
+- 들리는 단어를 절대 바꾸거나, 추가하거나, 빼지 마세요. 받아쓴 단어를 그대로 두세요.
+- 오직 띄어쓰기와 문장부호(마침표·쉼표·물음표)만 한국어 맞춤법에 맞게 자연스럽게 정리하세요.
+- 각 줄이 '이야기 속 누구의 말인지' 역할 이름을 speaker에 붙인세요. 예: 나레이션, 아내, 남편, 시어머니, 처제, 할머니, 아들, 딸.
+- 상황을 설명하는 해설 말투는 "나레이션".
+- 화자번호가 서로 섞여 있을 수 있으니, 번호보다 '내용과 맥락'으로 누구인지 판단하세요.
+- 정말 모르겠으면 "화자1","화자2"처럼 두세요.
+- 줄의 순서·개수·시각(t)은 그대로 유지하세요.
+
+JSON만 출력:
+{"language":"한국어","voice_type":"AI음성|사람나레이션|원본소리 중 하나","speakers":["등장 화자 목록"],"lines":[{"t":"0:03","speaker":"역할 이름","text":"다듬은 문장"}],"note":"특이사항 한 줄(없으면 빈 문자열)"}`;
+
+async function ytPolishTranscript(lines0) {
+  const body = lines0.map((l) => "[화자" + (l.speaker_num || "1") + " | " + ytMsToClock(l.ms) + "] " + l.text).join("\n");
+  const r = await callGemini({
+    contents: [{ parts: [{ text: POLISH_PROMPT + "\n\n=== 받아쓴 대본 ===\n" + body }] }],
+    generationConfig: { responseMimeType: "application/json", temperature: 0, maxOutputTokens: 65536 },
+  });
+  const out = parseJsonLoose(geminiText(r.gj));
+  if (!out || !Array.isArray(out.lines) || !out.lines.length) return null;
+  // 단어 보존 검증: 글자(공백·문장부호 제외)만 비교 — 요약·누락 방지
+  const inL = ytLettersOnly(lines0.map((l) => l.text).join(""));
+  const outL = ytLettersOnly(out.lines.map((l) => l.text || "").join(""));
+  if (!inL.length) return null;
+  const ratio = outL.length / inL.length;
+  if (ratio < 0.9 || ratio > 1.12) { console.warn("[대본따기] 다듬기 폐기: 글자수비율 " + ratio.toFixed(3)); return null; }
+  const speakers = [];
+  const lines = out.lines.map((l, i) => {
+    let role = (l.speaker && String(l.speaker).trim()) || ("화자" + ((lines0[i] && lines0[i].speaker_num) || "1"));
+    if (!speakers.includes(role)) speakers.push(role);
+    const t = (l.t && String(l.t)) || (lines0[i] ? ytMsToClock(lines0[i].ms) : "0:00");
+    return { t: t, speaker: role, text: String(l.text || "").trim() };
+  }).filter((l) => l.text);
+  if (!lines.length) return null;
+  return {
+    language: "한국어",
+    voice_type: out.voice_type || "원본소리",
+    speakers: speakers,
+    lines: lines,
+    onscreen: [],
+    note: (out.note ? out.note + " · " : "") + "정밀 받아쓰기(Soniox)",
+    engine: "soniox:stt-async-v5+polish",
+  };
+}
+
 async function runYtTranscript(job) {
   if (!SONIOX_KEY) throw new Error("SONIOX_API_KEY 미설정");
   const tmpDir = await mkdtemp(join(tmpdir(), "ib-yt-"));
@@ -1269,6 +1318,9 @@ async function runYtTranscript(job) {
     const tokens = await sonioxGetTokens(trId);
     const lines0 = sonioxTokensToLines(tokens);
     if (!lines0.length) throw new Error("받아쓴 문장이 없습니다(무음/음악만)");
+    let out = null;
+    try { out = await ytPolishTranscript(lines0); } catch (e) { out = null; }
+    if (out) return out;
     const { map, voice_type, note, singleSpeaker } = await ytLabelSpeakerMap(lines0);
     const speakers = [];
     const lines = lines0.map((l) => {
