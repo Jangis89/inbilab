@@ -194,10 +194,18 @@ function rasterize(clusters, w, h) {
 
 // ---------- Replicate ----------
 let wmVersion = null;
+let rGate = Promise.resolve();
 async function rFetch(path, opt) {
-  const res = await fetch(R_API + path, { ...opt, headers: { Authorization: "Bearer " + REPLICATE_TOKEN, ...((opt || {}).headers || {}) } });
-  if (!res.ok) throw new Error("Replicate " + path + " HTTP " + res.status + " " + (await res.text()).slice(0, 200));
-  return res.json();
+  if (opt && opt.method === "POST" && path === "/predictions") {
+    const prev = rGate; let go; rGate = new Promise((r) => (go = r));
+    await prev; setTimeout(go, 1500);
+  }
+  for (let a = 0; ; a++) {
+    const res = await fetch(R_API + path, { ...opt, headers: { Authorization: "Bearer " + REPLICATE_TOKEN, ...((opt || {}).headers || {}) } });
+    if (res.status === 429 && a < 10) { await res.text().catch(() => {}); await new Promise((r) => setTimeout(r, 20000)); continue; }
+    if (!res.ok) throw new Error("Replicate " + path + " HTTP " + res.status + " " + (await res.text()).slice(0, 200));
+    return res.json();
+  }
 }
 async function getVersion() {
   if (wmVersion) return wmVersion;
