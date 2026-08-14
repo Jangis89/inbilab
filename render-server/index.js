@@ -190,6 +190,7 @@ async function runProbe(job) {
 
   // 소리가 있는 영상이면 다음 단계(전사)를 자동 예약
   if ((proj.objective || "") === "desilence") await enqueueJob(proj.id, "desilence");
+  else if ((proj.objective || "") === "wm_remove") await enqueueJob(proj.id, "wmremove");
   else if (audio) await enqueueJob(proj.id, "transcribe");
   else console.log(`[probe] p=${proj.id} 오디오 없음 — 전사 건너뜀`);
 }
