@@ -44,6 +44,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
+VERSION = "v13"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -310,13 +311,14 @@ def glyph_labels(frame, ref=None):
         tot = sum(i2["area"] for i2 in its)
         fill = tot / max(1, gw * gh)
         wr_avg = sum(i2["wr"] * i2["area"] for i2 in its) / max(1, tot)
+        hue_avg = sum(i2["hue"] * i2["area"] for i2 in its) / max(1, tot)
         # 그룹 판정: 크기·모양·성긂·테두리
         if not (5000 <= gw * gh <= 260000): continue        # 전체 덩어리 크기 (한 글자 100px급 이상)
         if min(gw, gh) < 44 or max(gw, gh) > 520: continue
         if not (0.08 <= fill <= 0.50): continue             # 글자는 성글다 (옷·물체는 꽉 참)
         if wr_avg < 0.25: continue                          # 흰 테두리가 충분히 둘러야 함
         if tot < 2500: continue
-        groups.append({"x0": gx0, "x1": gx1, "y0": gy0, "y1": gy1,
+        groups.append({"x0": gx0, "x1": gx1, "y0": gy0, "y1": gy1, "hue": hue_avg,
                        "items": [{"mask": i2["mask"]} for i2 in its], "dark": whitem})
     return groups[:4]
 
@@ -550,6 +552,26 @@ def _box_iou(a, b):
     aa = (a[2] - a[0]) * (a[3] - a[1]); bb = (b[2] - b[0]) * (b[3] - b[1])
     return inter / max(1, aa + bb - inter)
 
+def _zone_fill(frame, z):
+    """등록된 라벨 구역 안에서 라벨 색(±14 색상창)과 같은 픽셀을 통째로 마스킹.
+    물줄기·김이 글자를 가려 조각 감지가 끊겨도 글자색 잔해가 남지 않게 한다."""
+    x0, y0, x1, y1 = z["box"]
+    h, w = frame.shape[:2]
+    x0 = max(0, int(x0) - 8); y0 = max(0, int(y0) - 8)
+    x1 = min(w - 1, int(x1) + 8); y1 = min(h - 1, int(y1) + 8)
+    sub = frame[y0:y1 + 1, x0:x1 + 1]
+    hsv = cv2.cvtColor(sub, cv2.COLOR_RGB2HSV)
+    Hh = hsv[..., 0].astype(np.int16); S = hsv[..., 1]; V = hsv[..., 2]
+    cd = np.minimum(np.abs(Hh - int(z["hue"])), 180 - np.abs(Hh - int(z["hue"])))
+    m = ((S > 50) & (V > 120) & (cd <= 14)).astype(np.uint8)
+    if int(m.sum()) < 400: return None
+    full = np.zeros((h, w), np.uint8)
+    full[y0:y1 + 1, x0:x1 + 1] = m
+    whitem = np.zeros((h, w), np.uint8)
+    whitem[y0:y1 + 1, x0:x1 + 1] = ((V > 185) & (S < 70)).astype(np.uint8)
+    return {"x0": x0, "y0": y0, "x1": x1, "y1": y1,
+            "items": [{"mask": full.astype(bool)}], "dark": whitem}
+
 def build_subtitle_masks(band_frames, N, with_labels=True):
     """프레임별 클러스터(자막 줄+장식 글자) → 시간 안정성(±6 중 5) → ±6 링 합집합 마스크 목록.
     장식 글자는 2단계: (1) 정지 통과 감지로 '라벨 구역·시간대' 등록(오탐 방지) →
@@ -559,13 +581,13 @@ def build_subtitle_masks(band_frames, N, with_labels=True):
         j = i - 12 if i >= 12 else min(N - 1, i + 12)
         return band_frames[j] if j != i else None
     # 1단계: 라벨 구역 등록 (3프레임 간격 스캔)
-    hits = []   # (frame_i, box)
+    hits = []   # (frame_i, box, hue)
     if with_labels:
         for i in range(0, N, 3):
             for g in glyph_labels(band_frames[i], _ref(i)):
-                hits.append((i, (g["x0"], g["y0"], g["x1"], g["y1"])))
-    zones = []  # {"box":(..), "cnt":n, "lo":f, "hi":f}
-    for fi, b in hits:
+                hits.append((i, (g["x0"], g["y0"], g["x1"], g["y1"]), g["hue"]))
+    zones = []  # {"box":(..), "cnt":n, "lo":f, "hi":f, "hues":[..]}
+    for fi, b, hu in hits:
         put = None
         for z in zones:
             if _box_iou(z["box"], b) > 0.4: put = z; break
@@ -574,9 +596,12 @@ def build_subtitle_masks(band_frames, N, with_labels=True):
             put["lo"] = min(put["lo"], fi); put["hi"] = max(put["hi"], fi)
             put["box"] = (min(put["box"][0], b[0]), min(put["box"][1], b[1]),
                           max(put["box"][2], b[2]), max(put["box"][3], b[3]))
+            put["hues"].append(hu)
         else:
-            zones.append({"box": b, "cnt": 1, "lo": fi, "hi": fi})
+            zones.append({"box": b, "cnt": 1, "lo": fi, "hi": fi, "hues": [hu]})
     zones = [z for z in zones if z["cnt"] >= 4]
+    for z in zones:
+        z["hue"] = sorted(z["hues"])[len(z["hues"]) // 2]   # 구역 대표 색상(중앙값)
     # 2단계: 프레임별 클러스터 (자막 줄 + 구역 안 라벨)
     per = []
     for i, f in enumerate(band_frames):
@@ -586,6 +611,8 @@ def build_subtitle_masks(band_frames, N, with_labels=True):
                 for g in glyph_labels(f, None):
                     if _box_iou((g["x0"], g["y0"], g["x1"], g["y1"]), z["box"]) > 0.3:
                         cl.append(g)
+                zf = _zone_fill(f, z)   # 구역 안 글자색 픽셀 통째 마스킹 (물·김에 가려진 조각 커버)
+                if zf is not None: cl.append(zf)
                 break
         per.append(cl)
     def stable(i, box):
@@ -933,10 +960,11 @@ def phase_plan(proj, tmp):
         return {"note": "no_target"}
     plan = {"W": W, "H": H, "fps": info["fps"], "N": N, "audio": info["audio"],
             "mode": mode, "tier": proj.get("wm_tier") or "std", "cfr": cfr,
-            "regions": plan_regions, "chunks": all_chunks}
+            "ver": VERSION, "regions": plan_regions, "chunks": all_chunks}
     tmp_upload(f"wmtmp/{pid}/plan.json", json.dumps(plan).encode(), "application/json")
     sw.mark("plan_up")
-    return {"phase": "plan", "chunks": len(all_chunks), "regions": len(plan_regions), "tms": sw.out()}
+    return {"phase": "plan", "chunks": len(all_chunks), "regions": len(plan_regions),
+            "ver": VERSION, "tms": sw.out()}
 
 # ---------------- 단계: 작업 (part k / parts) — v2: 이어진 구간 배정 + 단일 해독 ----------------
 def phase_work(proj, tmp, part, parts):
@@ -1120,7 +1148,8 @@ def phase_finish(proj, tmp, t0, parts, tms_in=None):
     tms = dict(tms_in or {})
     tms["finish"] = sw.out()
     detail = {"url": url_out, "mode": mode, "tier": plan.get("tier") or "std",
-              "regions": [r["kind"] for r in plan["regions"]], "sec": sec, "gpu": "runpod", "tms": tms}
+              "regions": [r["kind"] for r in plan["regions"]], "sec": sec, "gpu": "runpod",
+              "ver": VERSION, "plan_ver": plan.get("ver"), "tms": tms}
     set_proj(pid, "wm_done", detail)
     tmp_delete(f"wmtmp/{pid}", tmp_names)
     print("[gpu-wm] 완료(v2)", pid, json.dumps({**detail, "url": "(생략)"}, ensure_ascii=False))
