@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#2563eb">
+<link rel="icon" type="image/png" sizes="48x48" href="/assets/icons/favicon-48.png">
+<title>자막·워터마크 제거 — 인비랩</title>
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  .devnote{background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:9px 14px;font-size:13px;color:#854d0e;margin-bottom:16px;}
+  .quota{display:inline-block;background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;border-radius:999px;padding:4px 14px;font-size:13.5px;font-weight:700;margin-bottom:12px;}
+  .quota.warn{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}
+  .tabs{display:flex;gap:8px;margin:14px 0 10px;}
+  .tab{flex:1;text-align:center;padding:12px 8px;border:2px solid var(--line);border-radius:12px;background:#fff;cursor:pointer;font-weight:700;font-size:14.5px;color:var(--sub);}
+  .tab.on{border-color:var(--blue);background:#eff6ff;color:var(--blue);}
+  .tab small{display:block;font-weight:400;font-size:12px;margin-top:3px;}
+  .tiers{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0 14px;}
+  .tier{border:2px solid var(--line);border-radius:12px;padding:10px 8px;text-align:center;cursor:pointer;background:#fff;}
+  .tier.on{border-color:var(--blue);background:#eff6ff;}
+  .tier b{display:block;font-size:14.5px;} .tier span{font-size:11.5px;color:var(--sub);line-height:1.5;display:block;margin-top:3px;}
+  @media(max-width:640px){ .tiers{grid-template-columns:1fr;} }
+  .drop{border:2px dashed var(--line);border-radius:16px;padding:30px 20px;text-align:center;background:var(--bg-soft);cursor:pointer;margin-bottom:12px;}
+  .drop:hover{border-color:var(--blue);} .drop b{color:var(--blue);} .drop .sub{font-size:13.5px;color:var(--sub);margin-top:6px;}
+  .editor{display:none;margin:12px 0;} .editor.show{display:block;}
+  .ed-hint{font-size:13.5px;color:var(--sub);margin-bottom:8px;line-height:1.7;}
+  .ed-wrap{position:relative;display:inline-block;max-width:100%;border-radius:12px;overflow:hidden;border:1px solid var(--line);}
+  #ed-canvas{display:block;max-width:100%;touch-action:none;cursor:crosshair;}
+  .ed-act{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;}
+  .ed-btn{padding:8px 14px;border-radius:10px;border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer;font-size:13.5px;font-weight:600;}
+  .ed-cnt{font-size:13px;color:var(--sub);align-self:center;}
+  .consent{font-size:13.5px;color:var(--sub);margin:10px 0;line-height:1.7;}
+  .go-btn{width:100%;padding:15px;border:none;border-radius:12px;background:var(--blue);color:#fff;font-size:16.5px;font-weight:800;cursor:pointer;font-family:inherit;}
+  .go-btn:disabled{opacity:.5;cursor:not-allowed;}
+  .prog-wrap{display:none;margin:14px 0;} .prog-wrap.show{display:block;}
+  .prog-bar{height:14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;overflow:hidden;}
+  .prog-fill{height:100%;width:0%;background:var(--blue);transition:width .3s;}
+  .prog-txt{font-size:14px;color:var(--sub);margin-top:8px;text-align:center;}
+  .vs-err{display:none;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:12px;padding:12px 15px;margin:12px 0;font-size:14px;} .vs-err.show{display:block;}
+  .wl-item{border:1px solid var(--line);border-radius:14px;padding:14px;margin:12px 0;background:#fff;}
+  .wl-title{font-weight:700;font-size:14.5px;word-break:keep-all;}
+  .wl-video{width:100%;max-height:420px;border-radius:10px;background:#000;margin:6px 0;}
+  .wl-note{background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:8px 10px;font-size:13px;margin:8px 0;line-height:1.7;}
+  .steps{display:flex;gap:6px;margin:10px 0 8px;}
+  .steps .stp{flex:1;text-align:center;font-size:11.5px;color:var(--sub);padding:6px 3px;border-radius:8px;background:var(--bg-soft);border:1px solid var(--line);line-height:1.3;}
+  .steps .stp.on{background:#eff6ff;border-color:var(--blue);color:var(--blue);font-weight:700;}
+  .steps .stp.done{background:#f0fdf4;border-color:#bbf7d0;color:#16a34a;}
+  .wl-msg{font-size:13.5px;color:var(--sub);text-align:center;margin:6px 0;}
+  .wl-eta{font-size:12.5px;color:#3730a3;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.6;}
+  .dl-btn{display:inline-block;padding:12px 22px;border-radius:12px;background:#16a34a;color:#fff;font-size:15px;font-weight:800;text-decoration:none;cursor:pointer;}
+  .adm{display:none;background:#f8fafc;border:1px dashed var(--line);border-radius:12px;padding:14px;margin:18px 0;}
+  .adm h3{font-size:15px;margin-bottom:8px;}
+  .adm input{width:90px;padding:8px;border:1px solid var(--line);border-radius:8px;font-size:14px;}
+  .adm button{padding:8px 16px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-weight:700;cursor:pointer;margin-left:8px;}
+  .adm .ok{color:#16a34a;font-size:13px;margin-left:8px;}
+</style>
+</head>
+<body>
+<div id="site-header"></div>
+<main class="page">
+  <div class="wrap" style="max-width:820px;">
+    <h1 class="page-title">자막·워터마크 제거 🧽</h1>
+    <div class="devnote" id="devnote" style="display:none;">🔒 이 기능은 아직 <b>비공개(관리자 전용)</b>입니다.</div>
+    <p style="font-size:14.5px;margin-bottom:10px;line-height:1.8;">영상 속 <b>박힌 자막(가운데·아래)이나 모서리 워터마크</b>를 AI가 지우고, 그 자리를 자연스러운 배경으로 채워 드립니다. <b>지운 자리 외의 화면은 원본 화질 그대로</b> 유지돼요. (15분 이하 영상 지원)</p>
+    <div class="quota" id="quota">이번 달 사용량 확인 중…</div>
+
+    <div class="tabs">
+      <div class="tab on" id="tab-auto" onclick="setMode('auto')">🤖 AI 자동<small>자막·워터마크를 알아서 찾아 지움</small></div>
+      <div class="tab" id="tab-manual" onclick="setMode('manual')">✍️ 직접 지정<small>지울 곳을 네모로 그려서 확실하게</small></div>
+    </div>
+
+    <div class="tiers">
+      <div class="tier" id="tier-fast" onclick="setTier('fast')"><b>⚡ 빠름</b><span>제일 빠르고 저렴<br>지운 자리가 살짝 부드러움</span></div>
+      <div class="tier on" id="tier-std" onclick="setTier('std')"><b>⚖️ 표준 (추천)</b><span>속도·품질 균형<br>대부분 이걸로 충분</span></div>
+      <div class="tier" id="tier-hq" onclick="setTier('hq')"><b>💎 고화질</b><span>가장 정밀한 복원<br>느리지만 중요 영상용</span></div>
+    </div>
+
+    <div class="drop" id="drop" onclick="pick()">
+      🎬 <b>여기를 눌러 동영상 선택</b> (또는 끌어다 놓기)
+      <div class="sub" id="drop-sub">1개씩 · 15분 이하 · 8GB 이하</div>
+    </div>
+    <input type="file" id="file" accept="video/*" style="display:none;">
+
+    <div class="editor" id="editor">
+      <div class="ed-hint">🖱️ 아래 화면에서 <b>지울 부분을 마우스로 끌어 네모를 그려주세요.</b> (최대 4개 — 자막칸, 로고 등) 잘못 그렸으면 [모두 지우기]를 누르고 다시 그리면 됩니다.</div>
+      <div class="ed-wrap"><canvas id="ed-canvas"></canvas></div>
+      <div class="ed-act">
+        <button class="ed-btn" onclick="clearRects()">🗑 모두 지우기</button>
+        <span class="ed-cnt" id="ed-cnt">그린 네모: 0개</span>
+      </div>
+    </div>
+
+    <div class="consent"><label><input type="checkbox" id="rights"> 이 영상을 처리할 권리가 나에게 있음을 확인합니다.</label></div>
+    <button class="go-btn" id="go" onclick="start()" disabled>영상을 선택해 주세요</button>
+
+    <div class="prog-wrap" id="prog"><div class="prog-bar"><div class="prog-fill" id="prog-fill"></div></div><div class="prog-txt" id="prog-txt"></div></div>
+    <div class="vs-err" id="err"></div>
+
+    <div class="adm" id="adm-panel">
+      <h3>👑 관리자 설정</h3>
+      <div style="font-size:13.5px;">월 무료 편수: <input type="number" id="adm-free" min="0" max="999"> <button onclick="saveFree()">저장</button><span class="ok" id="adm-ok"></span></div>
+      <div style="font-size:12.5px;color:var(--sub);margin-top:6px;">수강생 1명이 한 달에 무료로 쓸 수 있는 편수입니다. 소진한 수강생은 다음 달까지 사용할 수 없어요.</div>
+    </div>
+
+    <h2 style="font-size:17px;margin:22px 0 4px;">내 작업</h2>
+    <div id="worklist"></div>
+  </div>
+</main>
+<div id="site-footer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.1.0/dist/tus.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+<script>
+  var cfg = window.INBILAB_CONFIG || {};
+  var pollTimer=null, rows={};
+  var MODE="auto", TIER="std";
+  var curFile=null, rects=[], vidW=0, vidH=0;
+  var FREE_N=3, USED=0, IS_ADMIN=false;
+
+  function setMode(m){ MODE=m;
+    $id("tab-auto").classList.toggle("on",m==="auto");
+    $id("tab-manual").classList.toggle("on",m==="manual");
+    refreshEditor(); refreshGo();
+  }
+  function setTier(t){ TIER=t;
+    ["fast","std","hq"].forEach(function(k){ $id("tier-"+k).classList.toggle("on",k===t); });
+  }
+  function showErr(m){ var e=$id("err"); e.textContent=m; e.classList.add("show"); setTimeout(function(){e.classList.remove("show");},8000); }
+  function setUp(p,t){ var w=$id("prog"); if(p<0){w.classList.remove("show");return;} w.classList.add("show"); $id("prog-fill").style.width=Math.max(1,p)+"%"; $id("prog-txt").textContent=t; }
+  function fmtSize(b){ return b>1073741824?(b/1073741824).toFixed(1)+"GB":Math.round(b/1048576)+"MB"; }
+  function fmt(s){ s=Math.round(s); var m=Math.floor(s/60); return m+"분 "+(s%60)+"초"; }
+
+  function pick(){ $id("file").click(); }
+  $id("file") && ($id("file").onchange=function(){ if(this.files&&this.files[0]) onFile(this.files[0]); });
+  var dp=$id("drop");
+  dp.addEventListener("dragover",function(e){e.preventDefault();});
+  dp.addEventListener("drop",function(e){e.preventDefault(); if(e.dataTransfer.files&&e.dataTransfer.files[0]) onFile(e.dataTransfer.files[0]);});
+
+  function readDuration(f){ return new Promise(function(res){ var v=document.createElement("video"); v.preload="metadata";
+    v.onloadedmetadata=function(){ res(v.duration||0); URL.revokeObjectURL(v.src); };
+    v.onerror=function(){ res(0); }; v.src=URL.createObjectURL(f); }); }
+
+  async function onFile(f){
+    if(f.size>8*1024*1024*1024){ showErr("영상이 너무 큽니다 (8GB 이하)."); return; }
+    var dur=await readDuration(f);
+    if(dur&&dur>900){ showErr("\""+f.name+"\"은(는) "+fmt(dur)+" 영상이라 처리할 수 없어요. (15분 이하만 지원)"); return; }
+    curFile=f; rects=[];
+    $id("drop-sub").innerHTML="선택됨: <b>"+escapeHtml(f.name)+"</b> · "+(dur?fmt(dur)+" · ":"")+fmtSize(f.size);
+    await loadFrame(f); refreshEditor(); refreshGo();
+  }
+  function refreshGo(){
+    var g=$id("go");
+    if(!curFile){ g.disabled=true; g.textContent="영상을 선택해 주세요"; return; }
+    if(USED>=FREE_N && !IS_ADMIN){ g.disabled=true; g.textContent="이번 달 무료 편수를 모두 사용했어요"; return; }
+    g.disabled=false;
+    g.textContent = MODE==="manual" ? "🧽 그린 네모 부분 지우기 시작" : "🧽 AI 자동으로 지우기 시작";
+  }
+  function refreshEditor(){ var ed=$id("editor"); if(MODE==="manual"&&curFile){ ed.classList.add("show"); } else ed.classList.remove("show"); }
+
+  // ---------- 직접 지정: 첫 화면 + 네모 그리기 ----------
+  var edImg=null;
+  function loadFrame(f){ return new Promise(function(res){
+    var v=document.createElement("video"); v.preload="auto"; v.muted=true;
+    v.src=URL.createObjectURL(f);
+    v.onloadeddata=function(){ v.currentTime=Math.min(0.5,(v.duration||1)/2); };
+    v.onseeked=function(){
+      vidW=v.videoWidth; vidH=v.videoHeight;
+      var c=$id("ed-canvas"); var maxW=760; var scale=Math.min(1,maxW/vidW);
+      c.width=Math.round(vidW*scale); c.height=Math.round(vidH*scale);
+      var x=c.getContext("2d"); x.drawImage(v,0,0,c.width,c.height);
+      edImg=x.getImageData(0,0,c.width,c.height);
+      URL.revokeObjectURL(v.src); res();
+    };
+    v.onerror=function(){ res(); };
+  }); }
+  function redraw(){
+    var c=$id("ed-canvas"); if(!edImg) return; var x=c.getContext("2d");
+    x.putImageData(edImg,0,0);
+    x.lineWidth=3; x.strokeStyle="#ef4444"; x.fillStyle="rgba(239,68,68,.25)";
+    rects.forEach(function(r){ x.fillRect(r.x*c.width,r.y*c.height,r.w*c.width,r.h*c.height); x.strokeRect(r.x*c.width,r.y*c.height,r.w*c.width,r.h*c.height); });
+    if(dragCur){ x.setLineDash([6,4]); x.strokeRect(dragCur.x,dragCur.y,dragCur.w,dragCur.h); x.setLineDash([]); }
+    $id("ed-cnt").textContent="그린 네모: "+rects.length+"개";
+  }
+  function clearRects(){ rects=[]; dragCur=null; redraw(); }
+  var dragStart=null, dragCur=null;
+  (function(){
+    var c=$id("ed-canvas");
+    function pos(e){ var b=c.getBoundingClientRect(); var t=e.touches?e.touches[0]:e;
+      return { x:(t.clientX-b.left)*(c.width/b.width), y:(t.clientY-b.top)*(c.height/b.height) }; }
+    function down(e){ if(!edImg||rects.length>=4) return; e.preventDefault(); dragStart=pos(e); dragCur=null; }
+    function move(e){ if(!dragStart) return; e.preventDefault(); var p=pos(e);
+      dragCur={x:Math.min(dragStart.x,p.x),y:Math.min(dragStart.y,p.y),w:Math.abs(p.x-dragStart.x),h:Math.abs(p.y-dragStart.y)}; redraw(); }
+    function up(e){ if(!dragStart) return; e.preventDefault();
+      if(dragCur&&dragCur.w>10&&dragCur.h>10){ rects.push({x:dragCur.x/c.width,y:dragCur.y/c.height,w:dragCur.w/c.width,h:dragCur.h/c.height}); }
+      dragStart=null; dragCur=null; redraw(); }
+    c.addEventListener("mousedown",down); c.addEventListener("mousemove",move); window.addEventListener("mouseup",up);
+    c.addEventListener("touchstart",down,{passive:false}); c.addEventListener("touchmove",move,{passive:false}); c.addEventListener("touchend",up,{passive:false});
+  })();
+
+  // ---------- 시작 ----------
+  async function start(){
+    if(!curFile) return;
+    if(!$id("rights").checked){ showErr("영상 처리 권리 확인에 체크해 주세요."); return; }
+    if(MODE==="manual"&&rects.length===0){ showErr("지울 부분을 네모로 하나 이상 그려주세요."); return; }
+    if(USED>=FREE_N&&!IS_ADMIN){ showErr("이번 달 무료 편수를 모두 사용했어요. 관리자에게 문의해 주세요."); return; }
+    var user=await getUser(); if(!user){ location.replace("login.html?next=watermark-remover.html"); return; }
+    $id("go").disabled=true;
+    var f=curFile;
+    var ext=(f.name.split(".").pop()||"mp4").toLowerCase();
+    var sres=await sb.auth.getSession(); var token=sres.data.session.access_token;
+    var objectName=user.id+"/"+Date.now()+"_"+Math.random().toString(36).slice(2)+"."+ext;
+    setUp(1, f.name+" 올리는 중…");
+    var upload=new tus.Upload(f,{
+      endpoint: cfg.SUPABASE_URL+"/storage/v1/upload/resumable",
+      retryDelays:[0,3000,8000,15000,30000],
+      headers:{ authorization:"Bearer "+token, "x-upsert":"false" },
+      uploadDataDuringCreation:true, removeFingerprintOnSuccess:true, chunkSize:6*1024*1024,
+      metadata:{ bucketName:"videos-source", objectName:objectName, contentType:f.type||"video/mp4", cacheControl:"3600" },
+      onError:function(err){ showErr("업로드에 문제가 생겼어요. 잠시 후 다시 시도해 주세요."); console.error(err); setUp(-1,""); refreshGo(); },
+      onProgress:function(s,t){ var p=Math.floor(s/t*100); setUp(p, f.name+" 올리는 중… "+p+"%"); },
+      onSuccess:async function(){
+        setUp(99,"등록 중…");
+        var ins=await sb.from("sc_projects").insert({
+          user_id:user.id, title:f.name, source_path:objectName, source_bytes:f.size,
+          objective:"wm_remove", status:"wm_queued",
+          wm_mode:MODE, wm_tier:TIER, wm_rects:(MODE==="manual"?rects:null),
+          rights_agreed_at:new Date().toISOString()
+        }).select("id,title").single();
+        if(ins.error){ showErr("등록 오류: "+ins.error.message); setUp(-1,""); refreshGo(); return; }
+        setUp(-1,"");
+        curFile=null; rects=[]; $id("drop-sub").textContent="1개씩 · 15분 이하 · 8GB 이하"; $id("editor").classList.remove("show");
+        USED++; refreshQuota(); refreshGo(); ensurePoll();
+      }
+    });
+    upload.start();
+  }
+
+  // ---------- 내 작업 목록 ----------
+  function makeRow(id,title){
+    var w=document.createElement("div"); w.className="wl-item"; w.id="wl-"+id;
+    w.innerHTML='<div class="wl-title">'+escapeHtml(title||"영상")+'</div>'
+      +'<div class="steps"><span class="stp s1">① 준비</span><span class="stp s2">② 지울 곳 찾기</span><span class="stp s3">③ AI 복원</span><span class="stp s4">④ 합치기</span></div>'
+      +'<div class="wl-msg"></div>'
+      +'<div class="wl-eta">⏳ 백그라운드에서 처리돼요. 화면을 닫아도 계속 진행되니, 다른 일 보다가 오세요!</div>'
+      +'<div class="wl-done" style="display:none;"></div>';
+    rows[id]=w; return w;
+  }
+  function setSteps(w,n){
+    var s=[w.querySelector(".s1"),w.querySelector(".s2"),w.querySelector(".s3"),w.querySelector(".s4")];
+    s.forEach(function(el,i){ el.className=el.className.replace(/ (on|done)/g,""); if(i<n-1) el.className+=" done"; else if(i===n-1) el.className+=" on"; });
+  }
+  function updateRow(w,p){
+    var st=p.status||"", d=p.status_detail||"";
+    var msg=w.querySelector(".wl-msg"), eta=w.querySelector(".wl-eta"), done=w.querySelector(".wl-done");
+    if(st==="wm_done"){
+      var info={}; try{ info=JSON.parse(d); }catch(e){}
+      w.querySelector(".steps").style.display="none"; msg.style.display="none"; eta.style.display="none";
+      done.style.display="block";
+      if(info.note==="no_target"){
+        done.innerHTML='<div class="wl-note">🤔 '+escapeHtml(info.msg||"지울 자막·워터마크를 찾지 못했어요. [직접 지정] 모드로 영역을 그려서 다시 시도해 주세요.")+'</div>';
+      } else if(info.url){
+        done.innerHTML='<video class="wl-video" controls playsinline src="'+info.url+'"></video>'
+          +'<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+          +'<a class="dl-btn" href="'+info.url+'" download>💾 다운로드</a>'
+          +'<span style="font-size:12.5px;color:var(--sub);">처리 '+(info.sec?Math.round(info.sec/60)+"분 "+ (info.sec%60)+"초":"")+' · 24시간 뒤 자동 삭제돼요.</span></div>'
+          +'<div class="wl-note" style="margin-top:8px;">👀 혹시 <b>남은 자막이 보이면</b> 같은 영상을 [직접 지정] 모드로 한 번 더 지우면 깨끗해져요.</div>';
+      } else { done.innerHTML='<div class="wl-note">완료됐지만 결과 주소를 찾지 못했어요. 새로고침해 주세요.</div>'; }
+      return;
+    }
+    if(st==="failed_wm"){ w.querySelector(".steps").style.display="none"; eta.style.display="none";
+      msg.innerHTML='<span style="color:#b91c1c;">❌ 실패: '+escapeHtml(d||"알 수 없는 오류")+' — 다시 시도해 주세요.</span>'; return; }
+    var n=1;
+    if(st==="wm_queued"||st==="wm_waiting"||st==="probing"||st==="uploaded") n=1;
+    else if(st==="wm_running"){
+      if(d.indexOf("찾는")>=0||d.indexOf("정밀")>=0) n=2;
+      else if(d.indexOf("복원")>=0) n=3;
+      else if(d.indexOf("합치")>=0) n=4;
+      else n=1;
+    }
+    setSteps(w,n);
+    msg.textContent = st==="wm_queued"||st==="wm_waiting" ? "대기열에서 순서를 기다리는 중…" : (d||"처리 중…");
+  }
+  async function listMine(){
+    var user=await getUser(); if(!user) return;
+    var r=await sb.from("sc_projects").select("id,title,status,status_detail")
+      .eq("user_id",user.id).eq("objective","wm_remove")
+      .order("created_at",{ascending:false}).limit(10);
+    if(r.error||!r.data) return;
+    var active=false;
+    r.data.forEach(function(p){ var w=rows[p.id]||makeRow(p.id,p.title); updateRow(w,p); $id("worklist").appendChild(w);
+      if(p.status!=="wm_done" && (p.status||"").indexOf("failed")!==0) active=true; });
+    if(!active&&pollTimer){ clearInterval(pollTimer); pollTimer=null; }
+  }
+  function ensurePoll(){ listMine(); if(!pollTimer) pollTimer=setInterval(listMine,5000); }
+
+  // ---------- 사용량 / 관리자 ----------
+  async function refreshQuota(){
+    try{
+      var s=await sb.from("app_settings").select("value").eq("key","wm_free_monthly").maybeSingle();
+      if(s.data&&s.data.value!=null) FREE_N=parseInt(s.data.value,10)||0;
+      var user=await getUser(); if(!user) return;
+      var ym=new Date().toISOString().slice(0,7);
+      var u=await sb.from("wm_usage").select("used").eq("user_id",user.id).eq("ym",ym).maybeSingle();
+      USED=(u.data&&u.data.used)||0;
+      var q=$id("quota"); var left=Math.max(0,FREE_N-USED);
+      if(IS_ADMIN){ q.textContent="👑 관리자 — 무료 편수 제한 없음 (수강생 기본: 월 "+FREE_N+"편)"; }
+      else if(left>0){ q.className="quota"; q.textContent="🎁 이번 달 무료 "+FREE_N+"편 중 "+left+"편 남음"; }
+      else { q.className="quota warn"; q.textContent="😢 이번 달 무료 "+FREE_N+"편을 모두 사용했어요"; }
+      refreshGo();
+    }catch(e){ console.error(e); }
+  }
+  async function saveFree(){
+    var n=parseInt($id("adm-free").value,10); if(isNaN(n)||n<0) return;
+    var r=await sb.from("app_settings").upsert({key:"wm_free_monthly",value:n,updated_at:new Date().toISOString()});
+    $id("adm-ok").textContent = r.error ? "저장 실패: "+r.error.message : "저장됨 ✓";
+    if(!r.error){ FREE_N=n; refreshQuota(); }
+    setTimeout(function(){ $id("adm-ok").textContent=""; },3000);
+  }
+
+  // ---------- 시작 ----------
+  (async () => {
+    const { data } = await sb.auth.getSession();
+    const user = data && data.session ? data.session.user : null;
+    if (!user) { location.replace("login.html?next=watermark-remover.html"); return; }
+    IS_ADMIN = await isAdmin(user);
+    if (!IS_ADMIN) {
+      const { data: fl } = await sb.from("feature_flags").select("is_public").eq("key","wm_remove").maybeSingle();
+      if (!fl || !fl.is_public) { location.replace("dashboard.html"); return; }
+    } else {
+      const { data: fl2 } = await sb.from("feature_flags").select("is_public").eq("key","wm_remove").maybeSingle();
+      if (!fl2 || !fl2.is_public) $id("devnote").style.display="block";
+      $id("adm-panel").style.display="block";
+      var s=await sb.from("app_settings").select("value").eq("key","wm_free_monthly").maybeSingle();
+      if(s.data) $id("adm-free").value=parseInt(s.data.value,10)||3;
+    }
+    await renderHeader("watermark-remover"); renderFooter();
+    refreshQuota(); ensurePoll();
+  })();
+</script>
+</body>
+</html>
