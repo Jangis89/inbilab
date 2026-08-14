@@ -945,11 +945,18 @@ async function runRender(job) {
   }
 }
 
-// ---------- GPU 일꾼(RunPod) 위임 ----------
-async function runWmRemoveGpu(job) {
-  const base = "https://api.runpod.ai/v2/" + process.env.RUNPOD_ENDPOINT_ID;
+// ---------- GPU 일꾼(RunPod) 위임: 계획 → 3대 병렬 작업 → 병합 ----------
+async function gpuEndpointBase() {
+  let ep = process.env.RUNPOD_ENDPOINT_ID;
+  try {
+    const { data } = await sb.from("app_settings").select("value").eq("key", "wm_gpu_tier").maybeSingle();
+    if (data && String(data.value).toLowerCase() === "h100" && process.env.RUNPOD_ENDPOINT_ID_H100) ep = process.env.RUNPOD_ENDPOINT_ID_H100;
+  } catch {}
+  return "https://api.runpod.ai/v2/" + ep;
+}
+async function rpCall(base, input) {
   const hdr = { "Authorization": "Bearer " + process.env.RUNPOD_API_KEY, "Content-Type": "application/json" };
-  const r = await fetch(base + "/run", { method: "POST", headers: hdr, body: JSON.stringify({ input: { project_id: job.project_id } }) });
+  const r = await fetch(base + "/run", { method: "POST", headers: hdr, body: JSON.stringify({ input }) });
   if (!r.ok) throw new Error("RunPod /run HTTP " + r.status + " " + (await r.text()).slice(0, 200));
   const { id } = await r.json();
   const t0 = Date.now();
@@ -960,11 +967,24 @@ async function runWmRemoveGpu(job) {
     const j = await s.json();
     if (j.status === "COMPLETED") {
       if (j.output && j.output.error) throw new Error("GPU 처리 오류: " + String(j.output.error).slice(0, 200));
-      return;
+      return j.output || {};
     }
     if (j.status === "FAILED" || j.status === "CANCELLED" || j.status === "TIMED_OUT") throw new Error("RunPod 상태: " + j.status);
     if (Date.now() - t0 > 3900000) throw new Error("GPU 처리 시간 초과");
   }
+}
+async function runWmRemoveGpu(job) {
+  const base = await gpuEndpointBase();
+  const t0 = Date.now() / 1000;
+  const plan = await rpCall(base, { project_id: job.project_id, phase: "plan", t0 });
+  if (plan.note === "no_target") return;
+  const total = plan.chunks || 0;
+  const PARTS = total >= 6 ? 3 : total >= 2 ? 2 : 1;
+  try {
+    await sb.from("sc_projects").update({ status: "wm_running", status_detail: "AI가 배경을 복원하는 중… (GPU " + PARTS + "대 동시 작업)" }).eq("id", job.project_id);
+  } catch {}
+  await Promise.all(Array.from({ length: PARTS }, (_, k) => rpCall(base, { project_id: job.project_id, phase: "work", part: k, parts: PARTS, t0 })));
+  await rpCall(base, { project_id: job.project_id, phase: "merge", t0 });
 }
 
 // ---------- 메인 루프 ----------
