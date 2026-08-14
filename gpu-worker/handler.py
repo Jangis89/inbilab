@@ -130,7 +130,13 @@ def glyph_clusters(frame):
         if not (20 <= area <= 7000 and 8 <= ch <= 85 and cw <= 240): continue
         m = (lab == i)
         sig = int(np.count_nonzero(m & (darkD > 0)))
-        if sig < max(4, 0.06 * area): continue
+        if sig < max(4, 0.06 * area):
+            # 보조 조건: 테두리 없는 흰 글자 — 주변이 글자보다 충분히 어두우면 인정
+            md = cv2.dilate(m.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=3).astype(bool)
+            ring = md & ~m
+            if not ring.any(): continue
+            gmean = float(mx[m].mean()); rmean = float(mx[ring].mean())
+            if not (gmean - rmean >= 60 and rmean < 150): continue
         good.append({"x0": x, "x1": x + cw - 1, "y0": y, "y1": y + ch - 1, "h": ch, "mask": m})
     good.sort(key=lambda c: c["y0"] + c["y1"])
     clusters = []
@@ -152,7 +158,7 @@ def glyph_clusters(frame):
         if x1 - x0 < 90: continue
         hs = sorted(i["h"] for i in its); med = hs[len(hs) // 2]
         if med < 16 or med > 80: continue
-        if x0 < 0.07 * w or x1 > 0.93 * w: continue
+        if (x1 - x0) < 0.45 * w and (x0 < 0.07 * w or x1 > 0.93 * w): continue
         y0 = min(i["y0"] for i in its); y1 = max(i["y1"] for i in its)
         out.append({"x0": x0, "x1": x1, "y0": y0, "y1": y1, "items": its, "dark": dark})
     return out
