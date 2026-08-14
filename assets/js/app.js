@@ -128,6 +128,7 @@
       shorts_maker: ["shorts.html", "shorts", "✂️", "숏츠 제작기"],
       audio_trim: ["silence.html", "silence", "🔇", "무음 제거기"],
       video_desilence: ["video-silence.html", "video-silence", "🎞️", "영상 무음 제거"],
+      wm_remove: ["watermark-remover.html", "watermark-remover", "🧽", "자막·워터마크 제거"],
     };
     try {
       const { data: ff } = await sb.from("feature_flags").select("key,is_public");
