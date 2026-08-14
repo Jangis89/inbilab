@@ -170,7 +170,6 @@ def read_all_crops(path, W, H, regions):
 
 # ---------------- 글자 감지 (wmremove.js 포팅, numpy 벡터화) ----------------
 import cv2
-cv2.setNumThreads(1)   # 중복 병렬화 방지: 병렬은 우리가 프로세스로 직접 함 (fork 교착 방지 겸용)
 
 def glyph_clusters(frame):
     """흰 글자(저채도 고명도)+검은 테두리 → CC → 가로줄 클러스터. frame: (h,w,3) uint8"""
@@ -744,10 +743,10 @@ def phase_plan(proj, tmp):
         frames = crops[ri]
         n = len(frames)
         if reg["kind"].startswith("subtitle"):
-            masks, masked = build_subtitle_masks_par(frames)
+            masks, masked = build_subtitle_masks(frames, n)
             if masked == 0: masks = None
         elif reg["kind"].startswith("manual"):
-            masks, masked = build_subtitle_masks_par(frames)
+            masks, masked = build_subtitle_masks(frames, n)
             if masked < max(10, math.ceil(n * 0.03)):
                 m = np.zeros((reg["h"], reg["w"]), np.uint8)
                 pad = 12
