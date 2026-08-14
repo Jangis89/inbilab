@@ -275,12 +275,15 @@ async function detectCorner(work, W, H, side) {
     const g = Math.abs(med[i] - med[i + 1]) + Math.abs(med[i] - med[i + cw]);
     if (mask[i] && g > 14) { wm[i] = 1; cnt++; }
   }
+  let stat = 0; for (let i = 0; i < n; i++) if (mask[i]) stat++;
+  if (stat / n > 0.55) return null;
   const ratio = cnt / n;
-  if (ratio < 0.004 || ratio > 0.5) return null;
+  if (ratio < 0.004 || ratio > 0.08) return null;
   const d = new Uint8Array(n); dilate(wm, cw, ch, 6, d);
   let x0 = cw, x1 = 0, y0 = ch, y1 = 0, tot = 0;
   for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (d[y * cw + x]) { tot++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-  if (tot < 400) return null;
+  if (tot < 400 || tot > n * 0.25) return null;
+  if ((x1 - x0) > cw * 0.85 || (y1 - y0) > ch * 0.85) return null;
   const px = Buffer.alloc(n); for (let i = 0; i < n; i++) px[i] = d[i] ? 255 : 0;
   return { x: cx, y: 0, w: cw, h: ch, kind: side === "tl" ? "corner-left" : "corner-right", staticMask: px };
 }
