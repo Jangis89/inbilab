@@ -10,7 +10,17 @@ import numpy as np
 import requests
 from multiprocessing import Pool
 
-NPROC = max(2, min(12, (os.cpu_count() or 8) - 2))
+def _usable_cpus():
+    try:
+        return len(os.sched_getaffinity(0))
+    except Exception:
+        return os.cpu_count() or 8
+
+NPROC = max(2, min(12, _usable_cpus() - 2))
+
+def _pool_init():
+    """자식 프로세스 준비 (현재는 부모의 스레드 설정을 그대로 물려받음)"""
+    pass
 
 class SW:
     """스톱워치: mark('이름')를 부를 때마다 직전 구간의 시간을 기록"""
@@ -160,6 +170,7 @@ def read_all_crops(path, W, H, regions):
 
 # ---------------- 글자 감지 (wmremove.js 포팅, numpy 벡터화) ----------------
 import cv2
+cv2.setNumThreads(1)   # 중복 병렬화 방지: 병렬은 우리가 프로세스로 직접 함 (fork 교착 방지 겸용)
 
 def glyph_clusters(frame):
     """흰 글자(저채도 고명도)+검은 테두리 → CC → 가로줄 클러스터. frame: (h,w,3) uint8"""
@@ -280,7 +291,7 @@ def build_subtitle_masks_par(frames):
     h, w = frames[0].shape[:2]
     raw = []
     masked = 0
-    with Pool(NPROC) as pool:
+    with Pool(NPROC, initializer=_pool_init) as pool:
         for packed, cnt, mk, hh, ww in pool.imap(_mask_block, jobs):
             arr = np.unpackbits(packed, count=cnt * hh * ww).reshape(cnt, hh, ww).astype(np.uint8) * 255
             for i in range(cnt): raw.append(arr[i])
@@ -296,7 +307,7 @@ def build_subtitle_masks_par(frames):
 def detect_sub_bands_from(samples, W, H):
     """미리 읽어둔 샘플 프레임에서 자막 y-밴드 찾기 (멀티코어)"""
     hits = []
-    with Pool(NPROC) as pool:
+    with Pool(NPROC, initializer=_pool_init) as pool:
         for boxes in pool.imap(_scan_boxes, samples, chunksize=8):
             hits.extend(boxes)
     return _bands_from_hits(hits, W, H)
@@ -602,6 +613,20 @@ def fetch_lite(proj, tmp, plan):
             f.write(tmp_download(f"wmtmp/{proj['id']}/work.mp4"))
     return src, work
 
+def assign_chunks(chunks, regions, parts):
+    """조각을 '무게(프레임수×영역넓이)' 기준으로 공평하게 배분 (결정적)"""
+    def cost(c):
+        r = regions[c["r"]]
+        return (c["e"] - c["s"] + 1) * r["w"] * r["h"]
+    order = sorted(range(len(chunks)), key=lambda i: (-cost(chunks[i]), i))
+    loads = [0] * parts
+    buckets = [[] for _ in range(parts)]
+    for i in order:
+        k = min(range(parts), key=lambda x: (loads[x], x))
+        buckets[k].append(i)
+        loads[k] += cost(chunks[i])
+    return [[chunks[i] for i in sorted(b)] for b in buckets]
+
 def ownership(region_chunks):
     """merge_chunks_into와 동일한 결과가 되는 '프레임 소유권' 계산 (조각별 담당 구간)"""
     cs = sorted(region_chunks, key=lambda c: c["s"])
@@ -758,9 +783,7 @@ def phase_work(proj, tmp, part, parts):
     sw = SW()
     plan = json.loads(tmp_download(f"wmtmp/{pid}/plan.json"))
     tier = TIERS.get(plan["tier"], TIERS["std"])
-    total = len(plan["chunks"])
-    lo = part * total // parts; hi = (part + 1) * total // parts
-    my_chunks = plan["chunks"][lo:hi]
+    my_chunks = assign_chunks(plan["chunks"], plan["regions"], parts)[part]
     if not my_chunks: return {"phase": "work", "part": part, "done": 0, "tms": sw.out()}
     src, work = fetch_lite(proj, tmp, plan)
     sw.mark("dl")
