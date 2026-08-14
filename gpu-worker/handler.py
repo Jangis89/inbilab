@@ -1,13 +1,28 @@
 # -*- coding: utf-8 -*-
 # ============================================================
-# 인비랩 자막·워터마크 제거기 — RunPod GPU 일꾼 v1.0
-# 역할: project_id 하나를 받아 전체 처리(감지→AI복원→합성→업로드)를
-#       GPU 서버 한 대 안에서 수행. Supabase 상태 갱신 포함.
-# 입력: {"input": {"project_id": "..."}}
+# 인비랩 자막·워터마크 제거기 — RunPod GPU 일꾼 v2.0
+# v2: 스톱워치(단계별 초) + 멀티코어 감지 + 단일 해독 재사용 +
+#     합치기 병렬(mergeseg×N → finish 이어붙이기)
+# 입력: {"input": {"project_id": "...", "phase": "plan|work|mergeseg|finish|merge|all"}}
 # ============================================================
 import os, io, json, time, math, subprocess, tempfile, shutil, traceback
 import numpy as np
 import requests
+from multiprocessing import Pool
+
+NPROC = max(2, min(12, (os.cpu_count() or 8) - 2))
+
+class SW:
+    """스톱워치: mark('이름')를 부를 때마다 직전 구간의 시간을 기록"""
+    def __init__(self):
+        self.t = {}
+        self.last = time.time()
+    def mark(self, name):
+        now = time.time()
+        self.t[name] = round(self.t.get(name, 0) + (now - self.last), 1)
+        self.last = now
+    def out(self):
+        return self.t
 
 SB_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SB_KEY = os.environ.get("SUPABASE_SERVICE_ROLE", "")
@@ -111,6 +126,38 @@ def snap16(n): return max(16, round(n / 16) * 16)
 def floor16(n): return max(16, (int(n) // 16) * 16)
 def clamp(v, a, b): return max(a, min(b, v))
 
+def stream_frames(path, W, H, sample_every=1, stop_after=None):
+    """전체 프레임을 한 번만 해독해 순서대로 내보내는 발생기(단일 해독 재사용용)"""
+    vf = None
+    if sample_every > 1: vf = f"select='not(mod(n\\,{sample_every}))'"
+    cmd = ["ffmpeg", "-v", "error", "-i", path]
+    if vf: cmd += ["-vf", vf]
+    cmd += ["-vsync", "0", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    fsz = W * H * 3
+    n = 0
+    try:
+        while True:
+            buf = p.stdout.read(fsz)
+            if not buf or len(buf) < fsz: break
+            yield np.frombuffer(buf, np.uint8).reshape(H, W, 3)
+            n += 1
+            if stop_after is not None and n >= stop_after:
+                p.terminate()
+                break
+    finally:
+        try: p.stdout.close()
+        except Exception: pass
+        p.wait()
+
+def read_all_crops(path, W, H, regions):
+    """단일 해독으로 여러 영역의 잘라낸 프레임을 동시에 수집. regions: [{'x','y','w','h'}] → {ri: [frames]}"""
+    out = {ri: [] for ri in range(len(regions))}
+    for fr in stream_frames(path, W, H):
+        for ri, r in enumerate(regions):
+            out[ri].append(fr[r["y"]:r["y"] + r["h"], r["x"]:r["x"] + r["w"]].copy())
+    return out
+
 # ---------------- 글자 감지 (wmremove.js 포팅, numpy 벡터화) ----------------
 import cv2
 
@@ -183,6 +230,129 @@ def rasterize(clusters, w, h):
     m = (glyph | (gd & (dark.astype(np.uint8) if dark is not None else 0))).astype(np.uint8)
     m = cv2.dilate(m, np.ones((3, 3), np.uint8), iterations=4)
     return (m * 255).astype(np.uint8)
+
+# ---------------- 멀티코어 감지 (결과는 순차 버전과 동일) ----------------
+def _scan_boxes(f):
+    """Pool용: 프레임 하나에서 자막 줄 상자(y0,y1)만 추출"""
+    return [(c["y0"], c["y1"]) for c in glyph_clusters(f)]
+
+def _mask_block(args):
+    """Pool용: 겹침 포함 블록에서 핵심 구간의 원시 마스크 생성 → 비트로 압축해 반환"""
+    frames, lo, hi, gstart, N = args   # frames: 블록(±6 겹침 포함), [lo,hi): 핵심 구간(블록 내 상대)
+    n = len(frames)
+    per = [glyph_clusters(f) for f in frames]
+    h, w = frames[0].shape[:2]
+    raws = []
+    masked = 0
+    for i in range(lo, hi):
+        # 전역 기준 ±6 창과 동일해지도록: 블록 경계는 영상 경계일 때만 잘림
+        keep = [c for c in per[i] if _stable_local(per, i, c, n, gstart, N)]
+        if keep:
+            raws.append(rasterize(keep, w, h)); masked += 1
+        else:
+            raws.append(np.zeros((h, w), np.uint8))
+    packed = np.packbits(np.stack(raws) > 20)
+    return packed, hi - lo, masked, h, w
+
+def _stable_local(per, i, box, n, gstart, N):
+    gi = gstart + i  # 전역 프레임 번호
+    lo_g = max(0, gi - 6); hi_g = min(N - 1, gi + 6)
+    cnt = 0
+    for gj in range(lo_g, hi_g + 1):
+        if gj == gi: continue
+        j = gj - gstart
+        if j < 0 or j >= n: continue  # (겹침이 6이면 발생하지 않음)
+        if any(iou(box, b) > 0.3 for b in per[j]): cnt += 1
+    return cnt >= 5
+
+def build_subtitle_masks_par(frames):
+    """build_subtitle_masks와 동일 결과를 멀티코어로 계산"""
+    N = len(frames)
+    if N == 0: return [], 0
+    B = 240
+    jobs = []
+    s = 0
+    while s < N:
+        e = min(N, s + B)                     # 핵심 [s,e)
+        bs = max(0, s - 6); be = min(N, e + 6)  # 겹침 포함
+        jobs.append((frames[bs:be], s - bs, e - bs, bs, N))
+        s = e
+    h, w = frames[0].shape[:2]
+    raw = []
+    masked = 0
+    with Pool(NPROC) as pool:
+        for packed, cnt, mk, hh, ww in pool.imap(_mask_block, jobs):
+            arr = np.unpackbits(packed, count=cnt * hh * ww).reshape(cnt, hh, ww).astype(np.uint8) * 255
+            for i in range(cnt): raw.append(arr[i])
+            masked += mk
+    out = []
+    for i in range(N):
+        u = np.zeros((h, w), np.uint8)
+        for j in range(max(0, i - 6), min(N - 1, i + 6) + 1):
+            u |= raw[j]
+        out.append(u)
+    return out, masked
+
+def detect_sub_bands_from(samples, W, H):
+    """미리 읽어둔 샘플 프레임에서 자막 y-밴드 찾기 (멀티코어)"""
+    hits = []
+    with Pool(NPROC) as pool:
+        for boxes in pool.imap(_scan_boxes, samples, chunksize=8):
+            hits.extend(boxes)
+    return _bands_from_hits(hits, W, H)
+
+def _bands_from_hits(hits, W, H):
+    if len(hits) < 4: return []
+    groups = []
+    for a, b in sorted(hits, key=lambda t: (t[0] + t[1]) / 2):
+        yc = (a + b) / 2
+        put = None
+        for g in groups:
+            if abs(g["yc"] - yc) < 90: put = g; break
+        if put:
+            put["items"].append((a, b))
+            put["yc"] = sum((x + y) / 2 for x, y in put["items"]) / len(put["items"])
+        else:
+            groups.append({"yc": yc, "items": [(a, b)]})
+    groups = [g for g in groups if len(g["items"]) >= 4]
+    groups.sort(key=lambda g: -len(g["items"]))
+    bands = []
+    for g in groups[:3]:
+        top = max(0, int(min(a for a, b in g["items"]) - 40))
+        bot = min(H, int(max(b for a, b in g["items"]) + 40))
+        bh = floor16(bot - top)
+        if bh < 48: bh = 48
+        bw = floor16(W)
+        bx = (W - bw) // 2
+        by = clamp(top, 0, H - bh)
+        if any(not (by + bh <= b2["y"] or b2["y"] + b2["h"] <= by) for b2 in bands): continue
+        bands.append({"x": bx, "y": by, "w": bw, "h": bh, "kind": "subtitle" + str(len(bands))})
+    return bands
+
+def detect_corner_from(samples, W, H, side):
+    """미리 읽은 샘플(약 48프레임 간격)로 모서리 고정 무늬 감지 — 게이트는 기존과 동일"""
+    cw = floor16(int(W * 0.42)); ch = floor16(int(H * 0.28))
+    cx = 0 if side == "tl" else W - cw
+    crops = [f[0:ch, cx:cx + cw] for f in samples[::4][:30]]
+    if len(crops) < 6: return None
+    gray = np.stack([cv2.cvtColor(f, cv2.COLOR_RGB2GRAY) for f in crops])
+    mx = gray.max(0).astype(np.int32); mn = gray.min(0).astype(np.int32)
+    static = (mx - mn) <= 20
+    if static.mean() > 0.55: return None
+    med = np.median(gray, 0).astype(np.int32)
+    gx = np.abs(np.diff(med, axis=1)); gx = np.pad(gx, ((0, 0), (0, 1)))
+    gy = np.abs(np.diff(med, axis=0)); gy = np.pad(gy, ((0, 1), (0, 0)))
+    sig = (static & ((gx + gy) > 14))
+    ratio = sig.mean()
+    if ratio < 0.004 or ratio > 0.08: return None
+    d = cv2.dilate(sig.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=6)
+    tot = int(d.sum())
+    n = cw * ch
+    if tot < 400 or tot > n * 0.25: return None
+    ys, xs = np.where(d > 0)
+    if (xs.max() - xs.min()) > cw * 0.85 or (ys.max() - ys.min()) > ch * 0.85: return None
+    return {"x": cx, "y": 0, "w": cw, "h": ch, "kind": "corner-left" if side == "tl" else "corner-right",
+            "static_mask": (d * 255).astype(np.uint8)}
 
 def detect_sub_bands(work, W, H, N):
     """전체 프레임에서 안정적인 자막 줄 y-밴드를 최대 3개 찾기 (12프레임 간격 샘플)"""
@@ -415,6 +585,37 @@ def restore_region(frames, masks, tier, on_step=None):
     return merge_chunks_into(merged, outs)
 
 # ---------------- 공통 준비 ----------------
+def download_to(url, dest):
+    with requests.get(url, stream=True, timeout=600) as r:
+        r.raise_for_status()
+        with open(dest, "wb") as f:
+            for chunk in r.iter_content(1024 * 1024): f.write(chunk)
+
+def fetch_lite(proj, tmp, plan):
+    """plan 이후 단계용: 원본만 내려받고 계획서의 값(N 등)을 재사용 — 재검사·재인코딩 없음"""
+    src = os.path.join(tmp, "src.mp4")
+    download_to(signed_url(proj["source_path"], 21600), src)
+    work = src
+    if plan.get("cfr"):
+        work = os.path.join(tmp, "work.mp4")
+        with open(work, "wb") as f:
+            f.write(tmp_download(f"wmtmp/{proj['id']}/work.mp4"))
+    return src, work
+
+def ownership(region_chunks):
+    """merge_chunks_into와 동일한 결과가 되는 '프레임 소유권' 계산 (조각별 담당 구간)"""
+    cs = sorted(region_chunks, key=lambda c: c["s"])
+    su = []; written = -1
+    for c in cs:
+        s_use = c["s"] if c["s"] > written else max(c["s"], written - 5)
+        su.append(s_use); written = max(written, c["e"])
+    own = []
+    for i, c in enumerate(cs):
+        end = c["e"] if i == len(cs) - 1 else min(c["e"], su[i + 1] - 1)
+        if end >= su[i]:
+            own.append({"s": su[i], "e": end, "c": c})
+    return own
+
 def fetch_source(proj, tmp):
     src = os.path.join(tmp, "src.mp4")
     url = signed_url(proj["source_path"], 21600)
@@ -476,23 +677,61 @@ def build_region_masks(pid, work, reg, N, frames=None):
         masks = [reg["static_mask"]] * n
     return frames, masks
 
-# ---------------- 단계: 계획 ----------------
+# ---------------- 단계: 계획 (v2: 단일 해독 + 멀티코어) ----------------
 def phase_plan(proj, tmp):
     pid = proj["id"]
+    sw = SW()
     set_proj(pid, "wm_running", "영상을 받아 오는 중…")
     src, work, info, N = fetch_source(proj, tmp)
+    sw.mark("dl_cnt")
+    cfr = (work != src)
+    if cfr:
+        with open(work, "rb") as f:
+            tmp_upload(f"wmtmp/{pid}/work.mp4", f.read(), "video/mp4")
+        sw.mark("cfr_up")
+    W, H = info["W"], info["H"]
     mode = "manual" if proj.get("wm_mode") == "manual" else "auto"
-    set_proj(pid, "wm_running", "자막·워터마크를 찾는 중…")
-    regions = detect_regions(proj, work, info, N, mode)
+    regions = []
+    if mode == "manual":
+        regions = detect_regions(proj, work, info, N, "manual")
+    else:
+        set_proj(pid, "wm_running", "자막·워터마크를 찾는 중…")
+        samples = list(stream_frames(work, W, H, sample_every=12))
+        sw.mark("scan_dec")
+        regions.extend(detect_sub_bands_from(samples, W, H))
+        for side in ("tl", "tr"):
+            c = detect_corner_from(samples, W, H, side)
+            if c: regions.append(c)
+        del samples
+        sw.mark("scan")
     if not regions:
         set_proj(pid, "wm_done", {"note": "no_target",
             "msg": "지울 자막·워터마크를 찾지 못했어요. [직접 지정] 모드로 영역을 그려서 다시 시도해 주세요."})
         return {"note": "no_target"}
     set_proj(pid, "wm_running", "자막 글자 위치를 정밀하게 잡는 중…")
+    crops = read_all_crops(work, W, H, regions)   # 단일 해독으로 전 영역 수집
+    if crops and crops.get(0) is not None and len(crops[0]) and len(crops[0]) != N:
+        N = len(crops[0])   # 실제 해독 프레임 수 기준으로 통일 (안전장치)
+    sw.mark("mask_dec")
     plan_regions = []
     all_chunks = []
     for ri, reg in enumerate(regions):
-        frames, masks = build_region_masks(pid, work, reg, N)
+        frames = crops[ri]
+        n = len(frames)
+        if reg["kind"].startswith("subtitle"):
+            masks, masked = build_subtitle_masks_par(frames)
+            if masked == 0: masks = None
+        elif reg["kind"].startswith("manual"):
+            masks, masked = build_subtitle_masks_par(frames)
+            if masked < max(10, math.ceil(n * 0.03)):
+                m = np.zeros((reg["h"], reg["w"]), np.uint8)
+                pad = 12
+                m[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
+                  max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
+                masks = [m] * n
+        else:
+            masks = [reg["static_mask"]] * n
+        crops[ri] = None
         del frames
         if masks is None: continue
         tmp_upload(f"wmtmp/{pid}/m{len(plan_regions)}.bin", masks_pack(masks))
@@ -501,42 +740,56 @@ def phase_plan(proj, tmp):
         reg2 = {k: v for k, v in reg.items() if k != "static_mask"}
         plan_regions.append(reg2)
         del masks
+    sw.mark("masks")
     if not plan_regions or not all_chunks:
         set_proj(pid, "wm_done", {"note": "no_target",
             "msg": "지울 자막을 찾지 못했어요. [직접 지정] 모드를 써주세요."})
         return {"note": "no_target"}
-    plan = {"W": info["W"], "H": info["H"], "fps": info["fps"], "N": N, "audio": info["audio"],
-            "mode": mode, "tier": proj.get("wm_tier") or "std",
+    plan = {"W": W, "H": H, "fps": info["fps"], "N": N, "audio": info["audio"],
+            "mode": mode, "tier": proj.get("wm_tier") or "std", "cfr": cfr,
             "regions": plan_regions, "chunks": all_chunks}
     tmp_upload(f"wmtmp/{pid}/plan.json", json.dumps(plan).encode(), "application/json")
-    return {"phase": "plan", "chunks": len(all_chunks), "regions": len(plan_regions)}
+    sw.mark("plan_up")
+    return {"phase": "plan", "chunks": len(all_chunks), "regions": len(plan_regions), "tms": sw.out()}
 
-# ---------------- 단계: 작업 (part k / parts) ----------------
+# ---------------- 단계: 작업 (part k / parts) — v2: 이어진 구간 배정 + 단일 해독 ----------------
 def phase_work(proj, tmp, part, parts):
     pid = proj["id"]
+    sw = SW()
     plan = json.loads(tmp_download(f"wmtmp/{pid}/plan.json"))
     tier = TIERS.get(plan["tier"], TIERS["std"])
-    my_chunks = [c for i, c in enumerate(plan["chunks"]) if i % parts == part]
-    if not my_chunks: return {"phase": "work", "part": part, "done": 0}
-    src, work, info, N = fetch_source(proj, tmp)
-    region_cache = {}
+    total = len(plan["chunks"])
+    lo = part * total // parts; hi = (part + 1) * total // parts
+    my_chunks = plan["chunks"][lo:hi]
+    if not my_chunks: return {"phase": "work", "part": part, "done": 0, "tms": sw.out()}
+    src, work = fetch_lite(proj, tmp, plan)
+    sw.mark("dl")
+    need_ris = sorted(set(c["r"] for c in my_chunks))
+    need_regions = [plan["regions"][ri] for ri in need_ris]
+    crops = read_all_crops(work, plan["W"], plan["H"], need_regions)  # 단일 해독
+    frames_by_ri = {ri: crops[k] for k, ri in enumerate(need_ris)}
+    sw.mark("dec")
+    masks_by_ri = {ri: masks_unpack(tmp_download(f"wmtmp/{pid}/m{ri}.bin")) for ri in need_ris}
+    sw.mark("mask_dl")
+    get_pipe()
+    sw.mark("model")
     done = 0
+    t_ai = 0.0; t_encup = 0.0
     for c in my_chunks:
         ri = c["r"]
-        if ri not in region_cache:
-            reg = plan["regions"][ri]
-            frames = read_region_frames(work, reg["x"], reg["y"], reg["w"], reg["h"])
-            masks = masks_unpack(tmp_download(f"wmtmp/{pid}/m{ri}.bin"))
-            region_cache = {ri: (frames, masks)}  # 메모리 절약: 한 영역만 유지
-        frames, masks = region_cache[ri]
-        arr = restore_chunk(frames, masks, tier, c)
+        ta = time.time()
+        arr = restore_chunk(frames_by_ri[ri], masks_by_ri[ri], tier, c)
+        t_ai += time.time() - ta
+        tb = time.time()
         out = os.path.join(tmp, f"o_{ri}_{c['s']}.mp4")
         encode_chunk_mp4(arr, plan["fps"], out)
         with open(out, "rb") as f:
             tmp_upload(f"wmtmp/{pid}/o_{ri}_{c['s']}.mp4", f.read(), "video/mp4")
         os.remove(out)
+        t_encup += time.time() - tb
         done += 1
-    return {"phase": "work", "part": part, "done": done}
+    sw.t["ai"] = round(t_ai, 1); sw.t["enc_up"] = round(t_encup, 1)
+    return {"phase": "work", "part": part, "done": done, "tms": sw.out()}
 
 # ---------------- 단계: 병합 ----------------
 def phase_merge(proj, tmp, t0):
@@ -571,6 +824,123 @@ def phase_merge(proj, tmp, t0):
     composite_and_finish(proj, src, work, info, N, results, t0, plan)
     tmp_delete(f"wmtmp/{pid}", tmp_names)
     return {"phase": "merge", "ok": True}
+
+# ---------------- 단계: 구간 합성 (part k / parts) — v2 병렬 합치기 ----------------
+def phase_mergeseg(proj, tmp, part, parts):
+    pid = proj["id"]
+    sw = SW()
+    plan = json.loads(tmp_download(f"wmtmp/{pid}/plan.json"))
+    W, H, fps, N = plan["W"], plan["H"], plan["fps"], plan["N"]
+    F0 = part * N // parts; F1 = (part + 1) * N // parts   # 담당 프레임 [F0, F1)
+    src, work = fetch_lite(proj, tmp, plan)
+    sw.mark("dl")
+    # 각 영역: 소유권 계산 → 담당 구간과 겹치는 조각만 내려받아 프레임별 복원 결과 준비
+    seg_rest = {}   # ri -> {frame_i: (h,w,3) uint8}
+    masks_all = {}  # ri -> masks 목록
+    for ri, reg in enumerate(plan["regions"]):
+        rcs = [c for c in plan["chunks"] if c["r"] == ri]
+        if not rcs: continue
+        own = [o for o in ownership(rcs) if o["e"] >= F0 and o["s"] < F1]
+        if not own: continue
+        masks_all[ri] = masks_unpack(tmp_download(f"wmtmp/{pid}/m{ri}.bin"))
+        rest = {}
+        for o in own:
+            c = o["c"]
+            name = f"o_{ri}_{c['s']}.mp4"
+            p = os.path.join(tmp, name)
+            with open(p, "wb") as f: f.write(tmp_download(f"wmtmp/{pid}/{name}"))
+            arr = decode_chunk_mp4(p, reg["w"], reg["h"])
+            os.remove(p)
+            n_expect = c["e"] - c["s"] + 1
+            if len(arr) > n_expect: arr = arr[:n_expect]
+            if len(arr) < n_expect: arr = np.concatenate([arr, np.repeat(arr[-1:], n_expect - len(arr), 0)])
+            a = max(o["s"], F0); b = min(o["e"], F1 - 1)
+            for i in range(a, b + 1):
+                rest[i] = arr[i - c["s"]]
+            del arr
+        seg_rest[ri] = rest
+    sw.mark("chunks")
+    # 담당 구간만 합성해 조각 영상으로 인코딩 (오디오 없음)
+    outp = os.path.join(tmp, f"seg_{part}.mp4")
+    enc = subprocess.Popen(["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+                            "-s", f"{W}x{H}", "-r", str(fps), "-i", "-",
+                            "-c:v", "libx264", "-crf", "17", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                            outp, "-y"], stdin=subprocess.PIPE)
+    i = 0
+    for fr in stream_frames(work, W, H, stop_after=F1):
+        if i >= F1: break
+        if i >= F0:
+            frame = fr.copy()
+            for ri, rest in seg_rest.items():
+                if i not in rest: continue
+                reg = plan["regions"][ri]
+                a = cv2.GaussianBlur(masks_all[ri][i], (0, 0), 2).astype(np.float32)[..., None] / 255.0
+                sub = frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]].astype(np.float32)
+                frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]] = \
+                    np.clip(sub * (1 - a) + rest[i].astype(np.float32) * a, 0, 255).astype(np.uint8)
+            enc.stdin.write(frame.tobytes())
+        i += 1
+    enc.stdin.close(); enc.wait()
+    if enc.returncode != 0: raise RuntimeError("구간 합성 인코딩 실패")
+    sw.mark("comp")
+    with open(outp, "rb") as f:
+        tmp_upload(f"wmtmp/{pid}/seg_{part}.mp4", f.read(), "video/mp4")
+    sw.mark("up")
+    return {"phase": "mergeseg", "part": part, "frames": F1 - F0, "tms": sw.out()}
+
+# ---------------- 단계: 마무리 (이어붙이기 + 오디오 + 업로드) ----------------
+def phase_finish(proj, tmp, t0, parts, tms_in=None):
+    pid = proj["id"]
+    sw = SW()
+    plan = json.loads(tmp_download(f"wmtmp/{pid}/plan.json"))
+    set_proj(pid, "wm_running", "마무리 중…")
+    seg_paths = []
+    tmp_names = ["plan.json"] + [f"m{ri}.bin" for ri in range(len(plan["regions"]))]
+    if plan.get("cfr"): tmp_names.append("work.mp4")
+    for c in plan["chunks"]: tmp_names.append(f"o_{c['r']}_{c['s']}.mp4")
+    for k in range(parts):
+        p = os.path.join(tmp, f"seg_{k}.mp4")
+        with open(p, "wb") as f: f.write(tmp_download(f"wmtmp/{pid}/seg_{k}.mp4"))
+        seg_paths.append(p)
+        tmp_names.append(f"seg_{k}.mp4")
+    sw.mark("dl")
+    lst = os.path.join(tmp, "list.txt")
+    with open(lst, "w") as f:
+        for p in seg_paths: f.write(f"file '{p}'\n")
+    outp = os.path.join(tmp, "out.mp4")
+    if plan.get("audio"):
+        aurl = signed_url(proj["source_path"], 21600)
+        run(["ffmpeg", "-v", "error", "-f", "concat", "-safe", "0", "-i", lst, "-i", aurl,
+             "-map", "0:v", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
+             "-movflags", "+faststart", outp, "-y"])
+    else:
+        run(["ffmpeg", "-v", "error", "-f", "concat", "-safe", "0", "-i", lst,
+             "-c", "copy", "-movflags", "+faststart", outp, "-y"])
+    sw.mark("concat")
+    dest = f"{proj['user_id']}/wm_{pid}.mp4"
+    url_out = upload_clip(dest, outp)
+    sw.mark("up")
+    ym = time.strftime("%Y-%m", time.gmtime())
+    try:
+        requests.post(f"{SB_URL}/rest/v1/wm_usage",
+                      params={"on_conflict": "user_id,ym"},
+                      headers=sb_headers({"Content-Type": "application/json",
+                                          "Prefer": "resolution=ignore-duplicates,return=minimal"}),
+                      data=json.dumps({"user_id": proj["user_id"], "ym": ym, "used": 0}), timeout=30)
+        cur = sb_select_one("wm_usage", {"user_id": "eq." + proj["user_id"], "ym": "eq." + ym}, "id,used")
+        if cur: sb_update("wm_usage", {"id": "eq." + str(cur["id"])}, {"used": (cur.get("used") or 0) + 1})
+    except Exception:
+        traceback.print_exc()
+    sec = round(time.time() - t0)
+    mode = plan.get("mode") or ("manual" if proj.get("wm_mode") == "manual" else "auto")
+    tms = dict(tms_in or {})
+    tms["finish"] = sw.out()
+    detail = {"url": url_out, "mode": mode, "tier": plan.get("tier") or "std",
+              "regions": [r["kind"] for r in plan["regions"]], "sec": sec, "gpu": "runpod", "tms": tms}
+    set_proj(pid, "wm_done", detail)
+    tmp_delete(f"wmtmp/{pid}", tmp_names)
+    print("[gpu-wm] 완료(v2)", pid, json.dumps({**detail, "url": "(생략)"}, ensure_ascii=False))
+    return {"phase": "finish", "ok": True, "sec": sec}
 
 # ---------------- 합성 + 마무리 (공용) ----------------
 def composite_and_finish(proj, src, work, info, N, results, t0, plan=None):
@@ -669,12 +1039,14 @@ def handler(event):
         if not proj: return {"error": "프로젝트를 찾을 수 없어요: " + pid}
         if phase == "plan": return phase_plan(proj, tmp)
         if phase == "work": return phase_work(proj, tmp, int(inp.get("part", 0)), int(inp.get("parts", 1)))
+        if phase == "mergeseg": return phase_mergeseg(proj, tmp, int(inp.get("part", 0)), int(inp.get("parts", 1)))
+        if phase == "finish": return phase_finish(proj, tmp, t0, int(inp.get("parts", 1)), inp.get("tms"))
         if phase == "merge": return phase_merge(proj, tmp, t0)
         return phase_all(proj, tmp, t0)
     except Exception as e:
         traceback.print_exc()
         try:
-            if phase in ("all", "merge", "plan"):
+            if phase in ("all", "merge", "plan", "finish", "mergeseg"):
                 set_proj(pid, "failed_wm", str(e)[:300])
         except Exception:
             pass
