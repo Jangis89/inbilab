@@ -87,7 +87,7 @@ if (!GEMINI_KEY) console.warn("[준비] GEMINI_API_KEY 미설정 — 전사(tran
 // ---------- 대기열 처리 루프 ----------
 async function claimJob() {
   // queued 상태의 가장 오래된 작업 1개를 원자적으로 가져온다 (경쟁 방지: status 조건부 업데이트)
-  const allowedTypes = (GEMINI_KEY ? ["probe", "transcribe", "analyze", "render", "desilence"] : ["probe", "render", "desilence"]).concat(process.env.REPLICATE_API_TOKEN ? ["wmremove"] : []);
+  const allowedTypes = (GEMINI_KEY ? ["probe", "transcribe", "analyze", "render", "desilence"] : ["probe", "render", "desilence"]).concat(process.env.REPLICATE_API_TOKEN || (process.env.RUNPOD_API_KEY && process.env.RUNPOD_ENDPOINT_ID) ? ["wmremove"] : []);
   const { data: jobs, error } = await sb
     .from("sc_render_jobs")
     .select("id, project_id, recipe_id, job_type, attempts")
@@ -945,6 +945,28 @@ async function runRender(job) {
   }
 }
 
+// ---------- GPU 일꾼(RunPod) 위임 ----------
+async function runWmRemoveGpu(job) {
+  const base = "https://api.runpod.ai/v2/" + process.env.RUNPOD_ENDPOINT_ID;
+  const hdr = { "Authorization": "Bearer " + process.env.RUNPOD_API_KEY, "Content-Type": "application/json" };
+  const r = await fetch(base + "/run", { method: "POST", headers: hdr, body: JSON.stringify({ input: { project_id: job.project_id } }) });
+  if (!r.ok) throw new Error("RunPod /run HTTP " + r.status + " " + (await r.text()).slice(0, 200));
+  const { id } = await r.json();
+  const t0 = Date.now();
+  for (;;) {
+    await new Promise((res) => setTimeout(res, 5000));
+    const s = await fetch(base + "/status/" + id, { headers: hdr });
+    if (!s.ok) throw new Error("RunPod /status HTTP " + s.status);
+    const j = await s.json();
+    if (j.status === "COMPLETED") {
+      if (j.output && j.output.error) throw new Error("GPU 처리 오류: " + String(j.output.error).slice(0, 200));
+      return;
+    }
+    if (j.status === "FAILED" || j.status === "CANCELLED" || j.status === "TIMED_OUT") throw new Error("RunPod 상태: " + j.status);
+    if (Date.now() - t0 > 3900000) throw new Error("GPU 처리 시간 초과");
+  }
+}
+
 // ---------- 메인 루프 ----------
 console.log(`[시작] 렌더 서버 ${WORKER_ID} — ${POLL_MS / 1000}초 간격 대기열 감시`);
 let flagsEnsured = false;
@@ -1403,7 +1425,15 @@ async function loop() {
         else if (job.job_type === "analyze") await runAnalyze(job);
         else if (job.job_type === "render") await runRender(job);
         else if (job.job_type === "desilence") await runDesilence(job);
-        else if (job.job_type === "wmremove") await runWmRemove(job);
+        else if (job.job_type === "wmremove") {
+          if (process.env.RUNPOD_API_KEY && process.env.RUNPOD_ENDPOINT_ID) {
+            try { await runWmRemoveGpu(job); }
+            catch (e) {
+              console.error("[wm-gpu] GPU 서버 실패, 예비(Replicate)로 전환:", e.message);
+              if (process.env.REPLICATE_API_TOKEN) await runWmRemove(job); else throw e;
+            }
+          } else await runWmRemove(job);
+        }
         else throw new Error("아직 지원하지 않는 작업 유형: " + job.job_type);
         await finishJob(job.id, true);
         processedCount++;
