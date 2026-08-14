@@ -283,28 +283,43 @@ def get_pipe():
         _PIPE.to("cuda:0")
     return _PIPE
 
+def plan_text_chunks(masks, N):
+    """글자가 실제로 있는 프레임 구간만 4k+1 조각으로 계획 (겹침 12)"""
+    txt = [i for i in range(N) if masks[i].any()]
+    if not txt: return []
+    ivs = []; s0 = txt[0]; p = txt[0]
+    for i in txt[1:]:
+        if i - p <= 24: p = i; continue
+        ivs.append((s0, p)); s0 = i; p = i
+    ivs.append((s0, p))
+    chunks = []
+    for a, b in ivs:
+        a = max(0, a - 4); b = min(N - 1, b + 4)
+        s = a
+        while True:
+            e = min(b, s + CHUNK_LEN - 1)
+            if e - s + 1 < 9: s = max(0, e - 8)  # 너무 짧은 조각 방지
+            n = e - s + 1
+            n_use = ((n - 1) // 4) * 4 + 1
+            e = min(N - 1, s + n_use - 1)
+            chunks.append({"s": s, "e": e})
+            if e >= b - 3: break
+            s = e - 11  # 12프레임 겹침
+    return chunks
+
 def restore_region(frames, masks, tier, on_step=None):
-    """frames:(N,h,w,3)uint8 masks:(N,h,w)0/255 → 복원된 (N,h,w,3)uint8"""
+    """frames:(N,h,w,3)uint8 masks:(N,h,w)0/255 → 복원된 (N,h,w,3)uint8
+       글자가 있는 구간만 AI로 복원, 나머지는 원본 그대로"""
     import torch
     pipe = get_pipe()
     N = len(frames)
     h, w = frames[0].shape[:2]
     sw = snap16(w * tier["scale"]); sh = snap16(h * tier["scale"])
-    starts = []
-    if N <= CHUNK_LEN: starts = [0]
-    else:
-        s = 0
-        while s + CHUNK_LEN <= N: starts.append(s); s += CHUNK_STEP
-        if starts[-1] + CHUNK_LEN < N: starts.append(N - CHUNK_LEN)
-    chunks = [{"i": i, "s": s, "e": min(N - 1, s + CHUNK_LEN - 1)} for i, s in enumerate(starts)]
-    outs = []
-    for c in chunks:
-        n = c["e"] - c["s"] + 1
-        n_use = ((n - 1) // 4) * 4 + 1  # 4k+1
-        if not any(masks[k].any() for k in range(c["s"], c["s"] + n_use)):
-            outs.append({"s": c["s"], "e": c["e"], "arr": np.stack(frames[c["s"]:c["e"] + 1])})
-            if on_step: on_step(len(outs), len(chunks))
-            continue
+    chunks = plan_text_chunks(masks, N)
+    merged = np.stack(frames)  # 기본값: 원본
+    written_to = -1
+    for ci, c in enumerate(chunks):
+        n_use = c["e"] - c["s"] + 1  # 이미 4k+1
         imgs = np.stack(frames[c["s"]:c["s"] + n_use]).astype(np.float32) / 127.5 - 1.0
         mks = (np.stack(masks[c["s"]:c["s"] + n_use]) > 20).astype(np.float32)[..., None]
         t_img = torch.from_numpy(imgs)
@@ -313,19 +328,16 @@ def restore_region(frames, masks, tier, on_step=None):
                       num_inference_steps=tier["steps"],
                       generator=torch.Generator(device="cuda:0").manual_seed(42),
                       iterations=6).frames[0]
-        arr = (np.clip(result, 0, 1) * 255).astype(np.uint8)  # (n_use, sh, sw, 3)
+        arr = (np.clip(result, 0, 1) * 255).astype(np.uint8)
         if (sh, sw) != (h, w):
             arr = np.stack([cv2.resize(fr, (w, h), interpolation=cv2.INTER_LANCZOS4) for fr in arr])
-        if n_use < n:
-            arr = np.concatenate([arr, np.repeat(arr[-1:], n - n_use, 0)])
-        outs.append({"s": c["s"], "e": c["e"], "arr": arr})
-        if on_step: on_step(len(outs), len(chunks))
-    # 겹침(12프레임) 중앙에서 이어붙이기: k-1은 s_k+5까지, k는 s_k+6부터
-    merged = np.zeros((N, h, w, 3), np.uint8)
-    for k, o in enumerate(outs):
-        s_use = 0 if k == 0 else o["s"] + 6
-        e_use = o["e"] if k == len(outs) - 1 else outs[k + 1]["s"] + 5
-        merged[s_use:e_use + 1] = o["arr"][s_use - o["s"]:e_use - o["s"] + 1]
+        s_use = c["s"] if c["s"] > written_to else written_to - 5
+        s_use = max(s_use, c["s"])
+        if c["s"] <= written_to:  # 겹침: 중앙에서 교체 시작
+            s_use = written_to - 5
+        merged[s_use:c["e"] + 1] = arr[s_use - c["s"]:]
+        written_to = c["e"]
+        if on_step: on_step(ci + 1, len(chunks))
     return merged
 
 # ---------------- 메인 처리 ----------------
