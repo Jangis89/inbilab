@@ -15,6 +15,7 @@ import http from "node:http";
 import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
+import { runWmRemove, scanWmQueued, cleanupWmExpired } from "./wmremove.js";
 
 const exec = promisify(execFile);
 
@@ -86,7 +87,7 @@ if (!GEMINI_KEY) console.warn("[준비] GEMINI_API_KEY 미설정 — 전사(tran
 // ---------- 대기열 처리 루프 ----------
 async function claimJob() {
   // queued 상태의 가장 오래된 작업 1개를 원자적으로 가져온다 (경쟁 방지: status 조건부 업데이트)
-  const allowedTypes = GEMINI_KEY ? ["probe", "transcribe", "analyze", "render", "desilence"] : ["probe", "render", "desilence"];
+  const allowedTypes = (GEMINI_KEY ? ["probe", "transcribe", "analyze", "render", "desilence"] : ["probe", "render", "desilence"]).concat(process.env.REPLICATE_API_TOKEN ? ["wmremove"] : []);
   const { data: jobs, error } = await sb
     .from("sc_render_jobs")
     .select("id, project_id, recipe_id, job_type, attempts")
@@ -1389,7 +1390,8 @@ async function loop() {
   lastPollAt = new Date().toISOString();
   try {
     if (!flagsEnsured) { await ensureFlags(); flagsEnsured = true; }
-    if (Date.now() - lastCleanup > 300000) { lastCleanup = Date.now(); cleanupExpired(); recoverStuck(); }
+    if (Date.now() - lastCleanup > 300000) { lastCleanup = Date.now(); cleanupExpired(); recoverStuck(); cleanupWmExpired(); }
+    await scanWmQueued();
     const job = await claimJob();
     if (!job) { await tryYtTranscriptJob(); }
     if (job) {
@@ -1400,6 +1402,7 @@ async function loop() {
         else if (job.job_type === "analyze") await runAnalyze(job);
         else if (job.job_type === "render") await runRender(job);
         else if (job.job_type === "desilence") await runDesilence(job);
+        else if (job.job_type === "wmremove") await runWmRemove(job);
         else throw new Error("아직 지원하지 않는 작업 유형: " + job.job_type);
         await finishJob(job.id, true);
         processedCount++;
@@ -1413,7 +1416,8 @@ async function loop() {
           const failStatus = job.job_type === "transcribe" ? "failed_transcribe"
             : job.job_type === "analyze" ? "failed_analyze"
             : job.job_type === "render" ? "failed_render"
-            : job.job_type === "desilence" ? "failed_desilence" : "failed_probe";
+            : job.job_type === "desilence" ? "failed_desilence"
+            : job.job_type === "wmremove" ? "failed_wm" : "failed_probe";
           await setProjectStatus(job.project_id, failStatus, err.message.slice(0, 200));
         }
       }
