@@ -220,6 +220,106 @@ def glyph_clusters(frame):
         out.append({"x0": x0, "x1": x1, "y0": y0, "y1": y1, "items": its, "dark": dark})
     return out
 
+def glyph_labels(frame, ref=None):
+    """장식형 큰 글자 감지: 색 채움+흰 테두리, 배열 방향 무관(가로·세로·대각).
+    예: 파란 세로 한자 '香料'. 반환 형식은 glyph_clusters와 호환.
+    글자 vs 물체 구분: (1) ref 프레임 대비 픽셀이 완전히 정지(박힌 글자의 결정적 특징)
+    + (2) 채움비율(글자는 성글다) + (3) 흰 테두리 + (4) 색 균일성 + (5) 크기."""
+    h, w = frame.shape[:2]
+    hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
+    Hh = hsv[..., 0]; S = hsv[..., 1]; V = hsv[..., 2]
+    colored = ((S > 70) & (V > 130)).astype(np.uint8)
+    whitem = ((V > 185) & (S < 70)).astype(np.uint8)
+    if ref is not None:
+        d = cv2.absdiff(frame, ref)
+        diff = np.maximum(np.maximum(d[..., 0], d[..., 1]), d[..., 2])
+        colored &= (diff < 14).astype(np.uint8)   # 움직인 픽셀 제거 (박힌 글자만 남음)
+    # 색상 히스토그램: 창별 픽셀 수를 미리 계산해 빈 색창은 건너뜀 (결과 동일, 속도만 향상)
+    hist = np.bincount(Hh[colored > 0].ravel(), minlength=180).astype(np.int64)
+    if hist.sum() < 500: return []
+    grad = None   # 경계 선명도 지도 — 실제 후보가 나올 때만 계산 (지연 계산)
+    k3 = np.ones((3, 3), np.uint8)
+    cands = []
+    # 색깔별로 나눠서 덩어리 찾기 (글자색과 배경색이 붙는 것을 방지)
+    _ar = np.arange(180)
+    for hc in range(0, 180, 15):
+        idx = (_ar - (hc + 7)) % 180
+        wl = (np.minimum(idx, 180 - idx) <= 10)
+        if int(hist[wl].sum()) < 500: continue
+        band = colored & wl.astype(np.uint8)[Hh]
+        n, lab, stats, cent = cv2.connectedComponentsWithStats(band, 8)
+        for i in range(1, n):
+            x, y, cw, ch, area = stats[i]
+            if not (400 <= area <= 60000 and 20 <= ch <= 460 and 12 <= cw <= 460): continue
+            m = (lab == i)
+            m8 = m.astype(np.uint8)
+            md = cv2.dilate(m8, k3, iterations=4).astype(bool)
+            ring = md & ~m
+            if not ring.any(): continue
+            wr = float(whitem[ring].mean())
+            if wr < 0.45: continue                      # 흰 테두리가 사방을 둘러야 함
+            if grad is None:
+                # 경계 선명도용 기울기 지도 (글자는 윤곽이 칼같이 선명, 흐린 배경은 뭉개짐)
+                # 밝기(V)와 채도(S) 변화를 함께 봄 — 파란 글자↔흰 테두리는 채도가 급변
+                grad = np.zeros(frame.shape[:2], np.float32)
+                for ch_map in (V, S):
+                    g = ch_map.astype(np.float32)
+                    gx = np.abs(np.diff(g, axis=1)); gx = np.pad(gx, ((0, 0), (0, 1)))
+                    gy = np.abs(np.diff(g, axis=0)); gy = np.pad(gy, ((0, 1), (0, 0)))
+                    grad += gx + gy
+            bd = (cv2.dilate(m8, k3) > 0) & ~(cv2.erode(m8, k3) > 0)
+            if not bd.any(): continue
+            if float(grad[bd].mean()) < 35: continue    # 윤곽 선명도 (흐린 배경 제거)
+            cands.append({"x0": int(x), "x1": int(x + cw - 1), "y0": int(y), "y1": int(y + ch - 1),
+                          "cx": x + cw / 2.0, "cy": y + ch / 2.0, "sz": max(cw, ch),
+                          "hue": float(hc + 7), "area": int(area), "wr": wr, "mask": m})
+    if not cands: return []
+    # 겹치는 후보(이웃 색창에서 중복 검출) 제거 — 큰 것 우선
+    cands.sort(key=lambda c: -c["area"])
+    keep = []
+    for c in cands:
+        dup = False
+        for k in keep:
+            ix = max(0, min(c["x1"], k["x1"]) - max(c["x0"], k["x0"]))
+            iy = max(0, min(c["y1"], k["y1"]) - max(c["y0"], k["y0"]))
+            inter = ix * iy
+            ca = (c["x1"] - c["x0"]) * (c["y1"] - c["y0"])
+            if ca > 0 and inter / ca > 0.6: dup = True; break
+        if not dup: keep.append(c)
+    cands = keep
+    used = [False] * len(cands)
+    groups = []
+    for i in range(len(cands)):
+        if used[i]: continue
+        grp = [i]; used[i] = True; changed = True
+        while changed:
+            changed = False
+            for j in range(len(cands)):
+                if used[j]: continue
+                for k in grp:
+                    a, b = cands[k], cands[j]
+                    dist = ((a["cx"] - b["cx"]) ** 2 + (a["cy"] - b["cy"]) ** 2) ** 0.5
+                    if dist < 2.5 * max(a["sz"], b["sz"], 40) and \
+                       min(abs(a["hue"] - b["hue"]), 180 - abs(a["hue"] - b["hue"])) < 16:
+                        grp.append(j); used[j] = True; changed = True
+                        break
+        its = [cands[g] for g in grp]
+        gx0 = min(i2["x0"] for i2 in its); gx1 = max(i2["x1"] for i2 in its)
+        gy0 = min(i2["y0"] for i2 in its); gy1 = max(i2["y1"] for i2 in its)
+        gw = gx1 - gx0 + 1; gh = gy1 - gy0 + 1
+        tot = sum(i2["area"] for i2 in its)
+        fill = tot / max(1, gw * gh)
+        wr_avg = sum(i2["wr"] * i2["area"] for i2 in its) / max(1, tot)
+        # 그룹 판정: 크기·모양·성긂·테두리
+        if not (5000 <= gw * gh <= 260000): continue        # 전체 덩어리 크기 (한 글자 100px급 이상)
+        if min(gw, gh) < 44 or max(gw, gh) > 520: continue
+        if not (0.08 <= fill <= 0.50): continue             # 글자는 성글다 (옷·물체는 꽉 참)
+        if wr_avg < 0.25: continue                          # 흰 테두리가 충분히 둘러야 함
+        if tot < 2500: continue
+        groups.append({"x0": gx0, "x1": gx1, "y0": gy0, "y1": gy1,
+                       "items": [{"mask": i2["mask"]} for i2 in its], "dark": whitem})
+    return groups[:4]
+
 def iou(a, b):
     x1 = max(a["x0"], b["x0"]); y1 = max(a["y0"], b["y0"])
     x2 = min(a["x1"], b["x1"]); y2 = min(a["y1"], b["y1"])
@@ -229,15 +329,16 @@ def iou(a, b):
     return inter / (aa + bb - inter)
 
 def rasterize(clusters, w, h):
-    """글자픽셀 + (글자 8px 이내 어두운 테두리) → 4px 팽창 마스크 (h,w) uint8 0/255"""
+    """글자픽셀 + (글자 8px 이내 테두리색) → 4px 팽창 마스크 (h,w) uint8 0/255.
+    클러스터마다 자기 테두리 지도(dark)를 사용 — 흰 글자는 검은 테두리, 색 글자는 흰 테두리."""
     m = np.zeros((h, w), np.uint8)
-    dark = clusters[0]["dark"] if clusters else None
-    glyph = np.zeros((h, w), np.uint8)
     for cl in clusters:
+        glyph = np.zeros((h, w), np.uint8)
         for it in cl["items"]:
             glyph |= it["mask"].astype(np.uint8)
-    gd = cv2.dilate(glyph, np.ones((3, 3), np.uint8), iterations=8)
-    m = (glyph | (gd & (dark.astype(np.uint8) if dark is not None else 0))).astype(np.uint8)
+        gd = cv2.dilate(glyph, np.ones((3, 3), np.uint8), iterations=8)
+        dk = cl.get("dark")
+        m |= (glyph | (gd & (dk.astype(np.uint8) if dk is not None else 0))).astype(np.uint8)
     m = cv2.dilate(m, np.ones((3, 3), np.uint8), iterations=4)
     return (m * 255).astype(np.uint8)
 
@@ -245,6 +346,12 @@ def rasterize(clusters, w, h):
 def _scan_boxes(f):
     """Pool용: 프레임 하나에서 자막 줄 상자(y0,y1)만 추출"""
     return [(c["y0"], c["y1"]) for c in glyph_clusters(f)]
+
+def _scan_boxes2(args):
+    """Pool용: (프레임, 비교프레임) → 자막 줄 + 장식 글자 상자"""
+    f, ref = args
+    return [(c["y0"], c["y1"]) for c in glyph_clusters(f)] + \
+           [(c["y0"], c["y1"]) for c in glyph_labels(f, ref)]
 
 def _mask_block(args):
     """Pool용: 겹침 포함 블록에서 핵심 구간의 원시 마스크 생성 → 비트로 압축해 반환"""
@@ -305,9 +412,11 @@ def build_subtitle_masks_par(frames):
 
 def detect_sub_bands_from(samples, W, H):
     """미리 읽어둔 샘플 프레임에서 자막 y-밴드 찾기 (멀티코어)"""
+    pairs = [(samples[i], samples[i - 1] if i > 0 else (samples[1] if len(samples) > 1 else None))
+             for i in range(len(samples))]
     hits = []
     with Pool(NPROC, initializer=_pool_init) as pool:
-        for boxes in pool.imap(_scan_boxes, samples, chunksize=8):
+        for boxes in pool.imap(_scan_boxes2, pairs, chunksize=8):
             hits.extend(boxes)
     return _bands_from_hits(hits, W, H)
 
@@ -327,7 +436,8 @@ def _bands_from_hits(hits, W, H):
     groups = [g for g in groups if len(g["items"]) >= 4]
     groups.sort(key=lambda g: -len(g["items"]))
     bands = []
-    for g in groups[:3]:
+    for g in groups:
+        if len(bands) >= 5: break
         top = max(0, int(min(a for a, b in g["items"]) - 40))
         bot = min(H, int(max(b for a, b in g["items"]) + 40))
         bh = floor16(bot - top)
@@ -365,40 +475,13 @@ def detect_corner_from(samples, W, H, side):
             "static_mask": (d * 255).astype(np.uint8)}
 
 def detect_sub_bands(work, W, H, N):
-    """전체 프레임에서 안정적인 자막 줄 y-밴드를 최대 3개 찾기 (12프레임 간격 샘플)"""
+    """(비병렬 예비용) 전체 프레임에서 자막 줄+장식 글자 y-밴드 찾기"""
     frames = read_region_frames(work, 0, 0, W, H, sample_every=12)
     hits = []
-    for f in frames:
-        for c in glyph_clusters(f):
-            hits.append((c["y0"], c["y1"]))
-    if len(hits) < 4: return []
-    # y-중심을 ±90px 그룹으로 묶기
-    groups = []
-    for a, b in sorted(hits, key=lambda t: (t[0] + t[1]) / 2):
-        yc = (a + b) / 2
-        put = None
-        for g in groups:
-            if abs(g["yc"] - yc) < 90: put = g; break
-        if put:
-            put["items"].append((a, b))
-            put["yc"] = sum((x + y) / 2 for x, y in put["items"]) / len(put["items"])
-        else:
-            groups.append({"yc": yc, "items": [(a, b)]})
-    groups = [g for g in groups if len(g["items"]) >= 4]
-    groups.sort(key=lambda g: -len(g["items"]))
-    bands = []
-    for g in groups[:3]:
-        top = max(0, int(min(a for a, b in g["items"]) - 40))
-        bot = min(H, int(max(b for a, b in g["items"]) + 40))
-        bh = floor16(bot - top)
-        if bh < 48: bh = 48
-        bw = floor16(W)
-        bx = (W - bw) // 2
-        by = clamp(top, 0, H - bh)
-        # 겹치는 밴드는 합치지 않고 건너뜀
-        if any(not (by + bh <= b2["y"] or b2["y"] + b2["h"] <= by) for b2 in bands): continue
-        bands.append({"x": bx, "y": by, "w": bw, "h": bh, "kind": "subtitle" + str(len(bands))})
-    return bands
+    for i, f in enumerate(frames):
+        ref = frames[i - 1] if i > 0 else (frames[1] if len(frames) > 1 else None)
+        hits.extend(_scan_boxes2((f, ref)))
+    return _bands_from_hits(hits, W, H)
 
 def detect_corner(work, W, H, side, N):
     """모서리 고정 무늬 감지 (정지장면 오탐 방지 게이트 포함)"""
@@ -426,9 +509,50 @@ def detect_corner(work, W, H, side, N):
     return {"x": cx, "y": 0, "w": cw, "h": ch, "kind": "corner-left" if side == "tl" else "corner-right",
             "static_mask": (d * 255).astype(np.uint8)}
 
+def _box_iou(a, b):
+    x1 = max(a[0], b[0]); y1 = max(a[1], b[1])
+    x2 = min(a[2], b[2]); y2 = min(a[3], b[3])
+    if x2 <= x1 or y2 <= y1: return 0.0
+    inter = (x2 - x1) * (y2 - y1)
+    aa = (a[2] - a[0]) * (a[3] - a[1]); bb = (b[2] - b[0]) * (b[3] - b[1])
+    return inter / max(1, aa + bb - inter)
+
 def build_subtitle_masks(band_frames, N):
-    """프레임별 클러스터 → 시간 안정성(±6 중 5) → ±6 링 합집합 마스크 목록"""
-    per = [glyph_clusters(f) for f in band_frames]
+    """프레임별 클러스터(자막 줄+장식 글자) → 시간 안정성(±6 중 5) → ±6 링 합집합 마스크 목록.
+    장식 글자는 2단계: (1) 정지 통과 감지로 '라벨 구역·시간대' 등록(오탐 방지) →
+    (2) 그 구역·시간대 안에서만 매 프레임 감지(움직이는 라벨도 포함)."""
+    def _ref(i):
+        j = i - 12 if i >= 12 else min(N - 1, i + 12)
+        return band_frames[j] if j != i else None
+    # 1단계: 라벨 구역 등록 (3프레임 간격 스캔)
+    hits = []   # (frame_i, box)
+    for i in range(0, N, 3):
+        for g in glyph_labels(band_frames[i], _ref(i)):
+            hits.append((i, (g["x0"], g["y0"], g["x1"], g["y1"])))
+    zones = []  # {"box":(..), "cnt":n, "lo":f, "hi":f}
+    for fi, b in hits:
+        put = None
+        for z in zones:
+            if _box_iou(z["box"], b) > 0.4: put = z; break
+        if put:
+            put["cnt"] += 1
+            put["lo"] = min(put["lo"], fi); put["hi"] = max(put["hi"], fi)
+            put["box"] = (min(put["box"][0], b[0]), min(put["box"][1], b[1]),
+                          max(put["box"][2], b[2]), max(put["box"][3], b[3]))
+        else:
+            zones.append({"box": b, "cnt": 1, "lo": fi, "hi": fi})
+    zones = [z for z in zones if z["cnt"] >= 4]
+    # 2단계: 프레임별 클러스터 (자막 줄 + 구역 안 라벨)
+    per = []
+    for i, f in enumerate(band_frames):
+        cl = glyph_clusters(f)
+        for z in zones:
+            if z["lo"] - 36 <= i <= z["hi"] + 36:
+                for g in glyph_labels(f, None):
+                    if _box_iou((g["x0"], g["y0"], g["x1"], g["y1"]), z["box"]) > 0.3:
+                        cl.append(g)
+                break
+        per.append(cl)
     def stable(i, box):
         cnt = 0
         for j in range(max(0, i - 6), min(N - 1, i + 6) + 1):
