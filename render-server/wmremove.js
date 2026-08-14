@@ -466,7 +466,7 @@ export async function runWmRemove(job) {
       else if (region.kind.indexOf("manual") === 0) {
         await setProj(proj.id, "wm_running", "지정한 곳의 글자를 정밀하게 찾는 중…");
         const gm = await buildSubtitleMask(work, region, info.fps, tmp);
-        mk = gm.maskedFrames >= Math.ceil(N * 0.7) ? gm : await buildStaticMask(region, N, info.fps, tmp);
+        mk = gm.maskedFrames >= Math.max(10, Math.ceil(N * 0.03)) ? gm : await buildStaticMask(region, N, info.fps, tmp);
       }
       else mk = await buildStaticMask(region, N, info.fps, tmp);
       if (region.kind === "subtitle" && mk.maskedFrames === 0) continue;
