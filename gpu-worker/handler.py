@@ -18,8 +18,8 @@ TIERS = {
     "std":  {"scale": 0.75, "steps": 6},
     "hq":   {"scale": 1.0,  "steps": 8},
 }
-CHUNK_LEN = 201   # 4k+1 (로컬 GPU라 조각을 작게, 순차 처리)
-CHUNK_STEP = 189  # 12프레임 겹침
+CHUNK_LEN = 401   # 4k+1
+CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
 def sb_headers(extra=None):
@@ -178,25 +178,41 @@ def rasterize(clusters, w, h):
     m = cv2.dilate(m, np.ones((3, 3), np.uint8), iterations=4)
     return (m * 255).astype(np.uint8)
 
-def detect_sub_band(work, W, H, N):
-    """하단 45%에서 자막 띠 찾기 (12프레임 간격 샘플)"""
-    y0 = int(H * 0.55)
-    frames = read_region_frames(work, 0, y0, W, H - y0, sample_every=12)
+def detect_sub_bands(work, W, H, N):
+    """전체 프레임에서 안정적인 자막 줄 y-밴드를 최대 3개 찾기 (12프레임 간격 샘플)"""
+    frames = read_region_frames(work, 0, 0, W, H, sample_every=12)
     hits = []
     for f in frames:
         for c in glyph_clusters(f):
-            hits.append((c["y0"] + y0, c["y1"] + y0))
-    if len(hits) < 4: return None
-    ys = sorted((a + b) / 2 for a, b in hits)
-    mid = ys[len(ys) // 2]
-    top = max(0, int(min(a for a, b in hits if abs((a + b) / 2 - mid) < 120) - 40))
-    bot = min(H, int(max(b for a, b in hits if abs((a + b) / 2 - mid) < 120) + 40))
-    bh = floor16(bot - top)
-    if bh < 48: bh = 48
-    bw = floor16(W)
-    bx = (W - bw) // 2
-    by = clamp(top, 0, H - bh)
-    return {"x": bx, "y": by, "w": bw, "h": bh, "kind": "subtitle"}
+            hits.append((c["y0"], c["y1"]))
+    if len(hits) < 4: return []
+    # y-중심을 ±90px 그룹으로 묶기
+    groups = []
+    for a, b in sorted(hits, key=lambda t: (t[0] + t[1]) / 2):
+        yc = (a + b) / 2
+        put = None
+        for g in groups:
+            if abs(g["yc"] - yc) < 90: put = g; break
+        if put:
+            put["items"].append((a, b))
+            put["yc"] = sum((x + y) / 2 for x, y in put["items"]) / len(put["items"])
+        else:
+            groups.append({"yc": yc, "items": [(a, b)]})
+    groups = [g for g in groups if len(g["items"]) >= 4]
+    groups.sort(key=lambda g: -len(g["items"]))
+    bands = []
+    for g in groups[:3]:
+        top = max(0, int(min(a for a, b in g["items"]) - 40))
+        bot = min(H, int(max(b for a, b in g["items"]) + 40))
+        bh = floor16(bot - top)
+        if bh < 48: bh = 48
+        bw = floor16(W)
+        bx = (W - bw) // 2
+        by = clamp(top, 0, H - bh)
+        # 겹치는 밴드는 합치지 않고 건너뜀
+        if any(not (by + bh <= b2["y"] or b2["y"] + b2["h"] <= by) for b2 in bands): continue
+        bands.append({"x": bx, "y": by, "w": bw, "h": bh, "kind": "subtitle" + str(len(bands))})
+    return bands
 
 def detect_corner(work, W, H, side, N):
     """모서리 고정 무늬 감지 (정지장면 오탐 방지 게이트 포함)"""
@@ -285,6 +301,10 @@ def restore_region(frames, masks, tier, on_step=None):
     for c in chunks:
         n = c["e"] - c["s"] + 1
         n_use = ((n - 1) // 4) * 4 + 1  # 4k+1
+        if not any(masks[k].any() for k in range(c["s"], c["s"] + n_use)):
+            outs.append({"s": c["s"], "e": c["e"], "arr": np.stack(frames[c["s"]:c["e"] + 1])})
+            if on_step: on_step(len(outs), len(chunks))
+            continue
         imgs = np.stack(frames[c["s"]:c["s"] + n_use]).astype(np.float32) / 127.5 - 1.0
         mks = (np.stack(masks[c["s"]:c["s"] + n_use]) > 20).astype(np.float32)[..., None]
         t_img = torch.from_numpy(imgs)
@@ -353,8 +373,7 @@ def process(project_id):
                                 "rx0": px - gx, "rx1": px - gx + pw - 1, "ry0": py - gy, "ry1": py - gy + ph - 1})
         else:
             set_proj(project_id, "wm_running", "자막·워터마크를 찾는 중…")
-            band = detect_sub_band(work, W, H, N)
-            if band: regions.append(band)
+            regions.extend(detect_sub_bands(work, W, H, N))
             for side in ("tl", "tr"):
                 c = detect_corner(work, W, H, side, N)
                 if c: regions.append(c)
@@ -368,7 +387,7 @@ def process(project_id):
         for reg in regions:
             frames = read_region_frames(work, reg["x"], reg["y"], reg["w"], reg["h"])
             n = len(frames)
-            if reg["kind"] == "subtitle":
+            if reg["kind"].startswith("subtitle"):
                 set_proj(project_id, "wm_running", "자막 글자 위치를 정밀하게 잡는 중…")
                 masks, masked = build_subtitle_masks(frames, n)
                 if masked == 0: continue
