@@ -348,10 +348,10 @@ def _scan_boxes(f):
     return [(c["y0"], c["y1"]) for c in glyph_clusters(f)]
 
 def _scan_boxes2(args):
-    """Pool용: (프레임, 비교프레임) → 자막 줄 + 장식 글자 상자"""
+    """Pool용: (프레임, 비교프레임) → (자막 줄 y구간 목록, 장식 글자 전체상자 목록)"""
     f, ref = args
-    return [(c["y0"], c["y1"]) for c in glyph_clusters(f)] + \
-           [(c["y0"], c["y1"]) for c in glyph_labels(f, ref)]
+    return ([(c["y0"], c["y1"]) for c in glyph_clusters(f)],
+            [(g["x0"], g["y0"], g["x1"], g["y1"]) for g in glyph_labels(f, ref)])
 
 def _mask_block(args):
     """Pool용: 겹침 포함 블록에서 핵심 구간의 원시 마스크 생성 → 비트로 압축해 반환"""
@@ -411,14 +411,44 @@ def build_subtitle_masks_par(frames):
     return out, masked
 
 def detect_sub_bands_from(samples, W, H):
-    """미리 읽어둔 샘플 프레임에서 자막 y-밴드 찾기 (멀티코어)"""
+    """미리 읽어둔 샘플에서 (1) 자막 y-밴드 + (2) 장식 라벨 전용 영역 찾기 (멀티코어).
+    밴드 선택은 예전과 완전히 동일(자막 줄 기준)하고, 라벨은 별도의 좁은 영역으로 추가한다."""
     pairs = [(samples[i], samples[i - 1] if i > 0 else (samples[1] if len(samples) > 1 else None))
              for i in range(len(samples))]
     hits = []
+    lboxes = []
     with Pool(NPROC, initializer=_pool_init) as pool:
-        for boxes in pool.imap(_scan_boxes2, pairs, chunksize=8):
+        for boxes, labs in pool.imap(_scan_boxes2, pairs, chunksize=8):
             hits.extend(boxes)
-    return _bands_from_hits(hits, W, H)
+            lboxes.extend(labs)
+    return _bands_from_hits(hits, W, H) + _label_regions_from(lboxes, W, H)
+
+def _label_regions_from(lboxes, W, H):
+    """샘플들에서 정지-통과한 장식 라벨 상자들을 묶어 전용 영역(kind=labelN)으로 만든다.
+    같은 자리에서 4개 샘플(≈1.6초) 이상 보여야 등록 — 순간 오탐 차단."""
+    groups = []
+    for b in lboxes:
+        put = None
+        for g in groups:
+            if _box_iou(g["box"], b) > 0.3: put = g; break
+        if put:
+            put["n"] += 1
+            put["box"] = (min(put["box"][0], b[0]), min(put["box"][1], b[1]),
+                          max(put["box"][2], b[2]), max(put["box"][3], b[3]))
+        else:
+            groups.append({"box": b, "n": 1})
+    groups = [g for g in groups if g["n"] >= 4]
+    groups.sort(key=lambda g: -g["n"])
+    regs = []
+    for g in groups[:2]:                      # 라벨 영역은 최대 2개
+        x0, y0, x1, y1 = g["box"]
+        gx = floor16(max(0, x0 - 40)); gy = floor16(max(0, y0 - 40))
+        gw = floor16(min(W, x1 + 40) - gx); gh = floor16(min(H, y1 + 40) - gy)
+        if gw < 48: gw = 48
+        if gh < 48: gh = 48
+        gx = clamp(gx, 0, W - gw); gy = clamp(gy, 0, H - gh)
+        regs.append({"x": gx, "y": gy, "w": gw, "h": gh, "kind": "label" + str(len(regs))})
+    return regs
 
 def _bands_from_hits(hits, W, H):
     if len(hits) < 4: return []
@@ -437,7 +467,7 @@ def _bands_from_hits(hits, W, H):
     groups.sort(key=lambda g: -len(g["items"]))
     bands = []
     for g in groups:
-        if len(bands) >= 5: break
+        if len(bands) >= 3: break
         top = max(0, int(min(a for a, b in g["items"]) - 40))
         bot = min(H, int(max(b for a, b in g["items"]) + 40))
         bh = floor16(bot - top)
@@ -478,10 +508,13 @@ def detect_sub_bands(work, W, H, N):
     """(비병렬 예비용) 전체 프레임에서 자막 줄+장식 글자 y-밴드 찾기"""
     frames = read_region_frames(work, 0, 0, W, H, sample_every=12)
     hits = []
+    lboxes = []
     for i, f in enumerate(frames):
         ref = frames[i - 1] if i > 0 else (frames[1] if len(frames) > 1 else None)
-        hits.extend(_scan_boxes2((f, ref)))
-    return _bands_from_hits(hits, W, H)
+        boxes, labs = _scan_boxes2((f, ref))
+        hits.extend(boxes)
+        lboxes.extend(labs)
+    return _bands_from_hits(hits, W, H) + _label_regions_from(lboxes, W, H)
 
 def detect_corner(work, W, H, side, N):
     """모서리 고정 무늬 감지 (정지장면 오탐 방지 게이트 포함)"""
@@ -517,18 +550,20 @@ def _box_iou(a, b):
     aa = (a[2] - a[0]) * (a[3] - a[1]); bb = (b[2] - b[0]) * (b[3] - b[1])
     return inter / max(1, aa + bb - inter)
 
-def build_subtitle_masks(band_frames, N):
+def build_subtitle_masks(band_frames, N, with_labels=True):
     """프레임별 클러스터(자막 줄+장식 글자) → 시간 안정성(±6 중 5) → ±6 링 합집합 마스크 목록.
     장식 글자는 2단계: (1) 정지 통과 감지로 '라벨 구역·시간대' 등록(오탐 방지) →
-    (2) 그 구역·시간대 안에서만 매 프레임 감지(움직이는 라벨도 포함)."""
+    (2) 그 구역·시간대 안에서만 매 프레임 감지(움직이는 라벨도 포함).
+    with_labels=False면 장식 글자 단계를 건너뜀 (라벨 전용 영역이 따로 담당할 때)."""
     def _ref(i):
         j = i - 12 if i >= 12 else min(N - 1, i + 12)
         return band_frames[j] if j != i else None
     # 1단계: 라벨 구역 등록 (3프레임 간격 스캔)
     hits = []   # (frame_i, box)
-    for i in range(0, N, 3):
-        for g in glyph_labels(band_frames[i], _ref(i)):
-            hits.append((i, (g["x0"], g["y0"], g["x1"], g["y1"])))
+    if with_labels:
+        for i in range(0, N, 3):
+            for g in glyph_labels(band_frames[i], _ref(i)):
+                hits.append((i, (g["x0"], g["y0"], g["x1"], g["y1"])))
     zones = []  # {"box":(..), "cnt":n, "lo":f, "hi":f}
     for fi, b in hits:
         put = None
@@ -656,6 +691,9 @@ def plan_text_chunks(masks, N):
     """글자가 실제로 있는 프레임 구간만 4k+1 조각으로 계획 (겹침 12)"""
     txt = [i for i in range(N) if masks[i].any()]
     if not txt: return []
+    # 밴드가 기준(360px)보다 높으면 조각 길이를 비례 축소 → GPU 메모리 사용량을 기존 수준으로 유지
+    h0 = masks[0].shape[0]
+    CL = CHUNK_LEN if h0 <= 360 else max(41, ((CHUNK_LEN * 360 // h0) - 1) // 4 * 4 + 1)
     ivs = []; s0 = txt[0]; p = txt[0]
     for i in txt[1:]:
         if i - p <= 24: p = i; continue
@@ -666,7 +704,7 @@ def plan_text_chunks(masks, N):
         a = max(0, a - 4); b = min(N - 1, b + 4)
         s = a
         while True:
-            e = min(b, s + CHUNK_LEN - 1)
+            e = min(b, s + CL - 1)
             if e - s + 1 < 9: s = max(0, e - 8)  # 너무 짧은 조각 방지
             n = e - s + 1
             n_use = ((n - 1) // 4) * 4 + 1
@@ -810,8 +848,8 @@ def build_region_masks(pid, work, reg, N, frames=None):
     if frames is None:
         frames = read_region_frames(work, reg["x"], reg["y"], reg["w"], reg["h"])
     n = len(frames)
-    if reg["kind"].startswith("subtitle"):
-        masks, masked = build_subtitle_masks(frames, n)
+    if reg["kind"].startswith(("subtitle", "label")):
+        masks, masked = build_subtitle_masks(frames, n, with_labels=not reg["kind"].startswith("subtitle"))
         if masked == 0: return frames, None
     elif reg["kind"].startswith("manual"):
         masks, masked = build_subtitle_masks(frames, n)
@@ -866,8 +904,8 @@ def phase_plan(proj, tmp):
     for ri, reg in enumerate(regions):
         frames = crops[ri]
         n = len(frames)
-        if reg["kind"].startswith("subtitle"):
-            masks, masked = build_subtitle_masks(frames, n)
+        if reg["kind"].startswith(("subtitle", "label")):
+            masks, masked = build_subtitle_masks(frames, n, with_labels=not reg["kind"].startswith("subtitle"))
             if masked == 0: masks = None
         elif reg["kind"].startswith("manual"):
             masks, masked = build_subtitle_masks(frames, n)
