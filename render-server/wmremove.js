@@ -335,7 +335,7 @@ async function buildStaticMask(region, N, fps, tmp) {
   const png = join(tmp, "static_" + region.kind + ".png");
   let raw;
   if (region.staticMask) raw = region.staticMask;
-  else { raw = Buffer.alloc(w * h, 0); const rx0 = region.rx0, rx1 = region.rx1, ry0 = region.ry0, ry1 = region.ry1; for (let yy = ry0; yy <= ry1; yy++) for (let xx = rx0; xx <= rx1; xx++) raw[yy * w + xx] = 255; }
+  else { raw = Buffer.alloc(w * h, 0); const m = 12, rx0 = Math.max(0, region.rx0 - m), rx1 = Math.min(w - 1, region.rx1 + m), ry0 = Math.max(0, region.ry0 - m), ry1 = Math.min(h - 1, region.ry1 + m); for (let yy = ry0; yy <= ry1; yy++) for (let xx = rx0; xx <= rx1; xx++) raw[yy * w + xx] = 255; }
   const rawp = join(tmp, "static_" + region.kind + ".raw");
   await writeFile(rawp, raw);
   await ff(["-f", "rawvideo", "-pix_fmt", "gray", "-s", w + "x" + h, "-i", rawp, "-frames:v", "1", png, "-y"]);
@@ -463,6 +463,11 @@ export async function runWmRemove(job) {
     for (const region of regions) {
       let mk;
       if (region.kind === "subtitle") { await setProj(proj.id, "wm_running", "자막 글자 위치를 정밀하게 잡는 중…"); mk = await buildSubtitleMask(work, region, info.fps, tmp); }
+      else if (region.kind.indexOf("manual") === 0) {
+        await setProj(proj.id, "wm_running", "지정한 곳의 글자를 정밀하게 찾는 중…");
+        const gm = await buildSubtitleMask(work, region, info.fps, tmp);
+        mk = gm.maskedFrames >= Math.ceil(N * 0.7) ? gm : await buildStaticMask(region, N, info.fps, tmp);
+      }
       else mk = await buildStaticMask(region, N, info.fps, tmp);
       if (region.kind === "subtitle" && mk.maskedFrames === 0) continue;
       prepared.push({ region, mk });
