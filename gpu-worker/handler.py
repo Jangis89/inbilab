@@ -272,6 +272,65 @@ def build_subtitle_masks(band_frames, N):
         out.append(u)
     return out, masked
 
+# ---------------- 병렬용 임시 저장소 (videos-clips/wmtmp) ----------------
+import zlib, io as _io
+
+def tmp_upload(path_in_bucket, data_bytes, ctype="application/octet-stream"):
+    r = requests.post(f"{SB_URL}/storage/v1/object/videos-clips/{path_in_bucket}",
+                      headers=sb_headers({"Content-Type": ctype, "x-upsert": "true"}),
+                      data=data_bytes, timeout=600)
+    r.raise_for_status()
+
+def tmp_download(path_in_bucket):
+    r = requests.get(f"{SB_URL}/storage/v1/object/videos-clips/{path_in_bucket}",
+                     headers=sb_headers(), timeout=600)
+    r.raise_for_status()
+    return r.content
+
+def tmp_delete(prefix, names):
+    try:
+        requests.delete(f"{SB_URL}/storage/v1/object/videos-clips",
+                        headers=sb_headers({"Content-Type": "application/json"}),
+                        data=json.dumps({"prefixes": [prefix + "/" + n for n in names]}), timeout=60)
+    except Exception:
+        pass
+
+def masks_pack(masks):
+    """마스크 목록(N,h,w u8 0/255) → 압축 바이트"""
+    N = len(masks); h, w = masks[0].shape
+    bits = np.packbits(np.stack(masks) > 20)
+    raw = N.to_bytes(4, "big") + h.to_bytes(4, "big") + w.to_bytes(4, "big") + bits.tobytes()
+    return zlib.compress(raw, 6)
+
+def masks_unpack(data):
+    raw = zlib.decompress(data)
+    N = int.from_bytes(raw[0:4], "big"); h = int.from_bytes(raw[4:8], "big"); w = int.from_bytes(raw[8:12], "big")
+    bits = np.frombuffer(raw[12:], np.uint8)
+    arr = np.unpackbits(bits, count=N * h * w).reshape(N, h, w).astype(np.uint8) * 255
+    return [arr[i] for i in range(N)]
+
+def encode_chunk_mp4(frames_arr, fps, path):
+    """(n,h,w,3) uint8 → 고품질 mp4"""
+    n, h, w = frames_arr.shape[0], frames_arr.shape[1], frames_arr.shape[2]
+    p = subprocess.Popen(["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+                          "-s", f"{w}x{h}", "-r", str(fps), "-i", "-",
+                          "-c:v", "libx264", "-crf", "10", "-preset", "veryfast", "-pix_fmt", "yuv420p", path, "-y"],
+                         stdin=subprocess.PIPE)
+    p.stdin.write(frames_arr.tobytes()); p.stdin.close(); p.wait()
+    if p.returncode != 0: raise RuntimeError("조각 인코딩 실패")
+
+def decode_chunk_mp4(path, w, h):
+    p = subprocess.Popen(["ffmpeg", "-v", "error", "-i", path, "-vsync", "0",
+                          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
+    frames = []
+    fsz = w * h * 3
+    while True:
+        buf = p.stdout.read(fsz)
+        if not buf or len(buf) < fsz: break
+        frames.append(np.frombuffer(buf, np.uint8).reshape(h, w, 3))
+    p.wait()
+    return np.stack(frames)
+
 # ---------------- AI 파이프라인 (로컬 GPU) ----------------
 _PIPE = None
 def get_pipe():
@@ -313,191 +372,315 @@ def plan_text_chunks(masks, N):
             s = e - 11  # 12프레임 겹침
     return chunks
 
-def restore_region(frames, masks, tier, on_step=None):
-    """frames:(N,h,w,3)uint8 masks:(N,h,w)0/255 → 복원된 (N,h,w,3)uint8
-       글자가 있는 구간만 AI로 복원, 나머지는 원본 그대로"""
+def restore_chunk(frames, masks, tier, c):
+    """조각 하나 AI 복원: c={'s','e'} → (n,h,w,3) uint8 (원본 해상도)"""
     import torch
     pipe = get_pipe()
-    N = len(frames)
     h, w = frames[0].shape[:2]
     sw = snap16(w * tier["scale"]); sh = snap16(h * tier["scale"])
-    chunks = plan_text_chunks(masks, N)
-    merged = np.stack(frames)  # 기본값: 원본
+    n_use = c["e"] - c["s"] + 1  # 4k+1 보장됨
+    imgs = np.stack(frames[c["s"]:c["s"] + n_use]).astype(np.float32) / 127.5 - 1.0
+    mks = (np.stack(masks[c["s"]:c["s"] + n_use]) > 20).astype(np.float32)[..., None]
+    result = pipe(images=torch.from_numpy(imgs), masks=torch.from_numpy(mks),
+                  num_frames=n_use, height=sh, width=sw,
+                  num_inference_steps=tier["steps"],
+                  generator=torch.Generator(device="cuda:0").manual_seed(42),
+                  iterations=6).frames[0]
+    arr = (np.clip(result, 0, 1) * 255).astype(np.uint8)
+    if (sh, sw) != (h, w):
+        arr = np.stack([cv2.resize(fr, (w, h), interpolation=cv2.INTER_LANCZOS4) for fr in arr])
+    return arr
+
+def merge_chunks_into(merged, outs):
+    """outs: [{'s','e','arr'}] (s 오름차순) → merged에 겹침 중앙 기준으로 기록"""
     written_to = -1
-    for ci, c in enumerate(chunks):
-        n_use = c["e"] - c["s"] + 1  # 이미 4k+1
-        imgs = np.stack(frames[c["s"]:c["s"] + n_use]).astype(np.float32) / 127.5 - 1.0
-        mks = (np.stack(masks[c["s"]:c["s"] + n_use]) > 20).astype(np.float32)[..., None]
-        t_img = torch.from_numpy(imgs)
-        t_mk = torch.from_numpy(mks)
-        result = pipe(images=t_img, masks=t_mk, num_frames=n_use, height=sh, width=sw,
-                      num_inference_steps=tier["steps"],
-                      generator=torch.Generator(device="cuda:0").manual_seed(42),
-                      iterations=6).frames[0]
-        arr = (np.clip(result, 0, 1) * 255).astype(np.uint8)
-        if (sh, sw) != (h, w):
-            arr = np.stack([cv2.resize(fr, (w, h), interpolation=cv2.INTER_LANCZOS4) for fr in arr])
-        s_use = c["s"] if c["s"] > written_to else written_to - 5
-        s_use = max(s_use, c["s"])
-        if c["s"] <= written_to:  # 겹침: 중앙에서 교체 시작
-            s_use = written_to - 5
-        merged[s_use:c["e"] + 1] = arr[s_use - c["s"]:]
-        written_to = c["e"]
-        if on_step: on_step(ci + 1, len(chunks))
+    for o in sorted(outs, key=lambda x: x["s"]):
+        s_use = o["s"]
+        if o["s"] <= written_to:
+            s_use = max(o["s"], written_to - 5)
+        merged[s_use:o["e"] + 1] = o["arr"][s_use - o["s"]:]
+        written_to = max(written_to, o["e"])
     return merged
 
-# ---------------- 메인 처리 ----------------
-def process(project_id):
-    t0 = time.time()
-    proj = sb_select_one("sc_projects", {"id": "eq." + project_id})
-    if not proj: raise RuntimeError("프로젝트를 찾을 수 없어요: " + project_id)
-    tier = TIERS.get(proj.get("wm_tier") or "std", TIERS["std"])
+def restore_region(frames, masks, tier, on_step=None):
+    """단독(비병렬) 경로: 글자 구간만 복원"""
+    N = len(frames)
+    chunks = plan_text_chunks(masks, N)
+    merged = np.stack(frames)
+    outs = []
+    for ci, c in enumerate(chunks):
+        arr = restore_chunk(frames, masks, tier, c)
+        outs.append({"s": c["s"], "e": c["e"], "arr": arr})
+        if on_step: on_step(ci + 1, len(chunks))
+    return merge_chunks_into(merged, outs)
+
+# ---------------- 공통 준비 ----------------
+def fetch_source(proj, tmp):
+    src = os.path.join(tmp, "src.mp4")
+    url = signed_url(proj["source_path"], 21600)
+    with requests.get(url, stream=True, timeout=600) as r:
+        r.raise_for_status()
+        with open(src, "wb") as f:
+            for chunk in r.iter_content(1024 * 1024): f.write(chunk)
+    info = probe_info(src)
+    if info["dur"] > 900: raise RuntimeError("지금은 15분 이하 영상만 지원해요. 나눠서 올려주세요.")
+    work = src
+    N = frame_count(work)
+    expected = round(info["dur"] * info["fps"])
+    if N and abs(N - expected) > max(5, expected * 0.02):
+        work = os.path.join(tmp, "work.mp4")
+        run(["ffmpeg", "-v", "error", "-i", src, "-vf", f"fps={info['fps']}", "-an",
+             "-c:v", "libx264", "-crf", "12", "-preset", "ultrafast", "-pix_fmt", "yuv420p", work, "-y"])
+        N = frame_count(work)
+    return src, work, info, N
+
+def detect_regions(proj, work, info, N, mode):
+    W, H = info["W"], info["H"]
+    regions = []
+    if mode == "manual":
+        rects = proj.get("wm_rects") or []
+        if not rects: raise RuntimeError("지울 영역이 지정되지 않았어요")
+        for r0 in rects[:4]:
+            px = clamp(round(r0["x"] * W), 0, W - 8); py = clamp(round(r0["y"] * H), 0, H - 8)
+            pw = clamp(round(r0["w"] * W), 8, W - px); ph = clamp(round(r0["h"] * H), 8, H - py)
+            gx = clamp(px - 32, 0, W); gy = clamp(py - 32, 0, H)
+            gw = floor16(min(W - gx, pw + 64)); gh = floor16(min(H - gy, ph + 64))
+            if gx + gw > W: gx = W - gw
+            if gy + gh > H: gy = H - gh
+            regions.append({"x": gx, "y": gy, "w": gw, "h": gh, "kind": f"manual{len(regions)}",
+                            "rx0": px - gx, "rx1": px - gx + pw - 1, "ry0": py - gy, "ry1": py - gy + ph - 1})
+    else:
+        regions.extend(detect_sub_bands(work, W, H, N))
+        for side in ("tl", "tr"):
+            c = detect_corner(work, W, H, side, N)
+            if c: regions.append(c)
+    return regions
+
+def build_region_masks(pid, work, reg, N, frames=None):
+    """영역 마스크 목록 생성 (frames 미리 있으면 재사용)"""
+    if frames is None:
+        frames = read_region_frames(work, reg["x"], reg["y"], reg["w"], reg["h"])
+    n = len(frames)
+    if reg["kind"].startswith("subtitle"):
+        masks, masked = build_subtitle_masks(frames, n)
+        if masked == 0: return frames, None
+    elif reg["kind"].startswith("manual"):
+        masks, masked = build_subtitle_masks(frames, n)
+        if masked < max(10, math.ceil(n * 0.03)):
+            m = np.zeros((reg["h"], reg["w"]), np.uint8)
+            pad = 12
+            m[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
+              max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
+            masks = [m] * n
+    else:
+        masks = [reg["static_mask"]] * n
+    return frames, masks
+
+# ---------------- 단계: 계획 ----------------
+def phase_plan(proj, tmp):
+    pid = proj["id"]
+    set_proj(pid, "wm_running", "영상을 받아 오는 중…")
+    src, work, info, N = fetch_source(proj, tmp)
     mode = "manual" if proj.get("wm_mode") == "manual" else "auto"
+    set_proj(pid, "wm_running", "자막·워터마크를 찾는 중…")
+    regions = detect_regions(proj, work, info, N, mode)
+    if not regions:
+        set_proj(pid, "wm_done", {"note": "no_target",
+            "msg": "지울 자막·워터마크를 찾지 못했어요. [직접 지정] 모드로 영역을 그려서 다시 시도해 주세요."})
+        return {"note": "no_target"}
+    set_proj(pid, "wm_running", "자막 글자 위치를 정밀하게 잡는 중…")
+    plan_regions = []
+    all_chunks = []
+    for ri, reg in enumerate(regions):
+        frames, masks = build_region_masks(pid, work, reg, N)
+        del frames
+        if masks is None: continue
+        tmp_upload(f"wmtmp/{pid}/m{len(plan_regions)}.bin", masks_pack(masks))
+        chunks = plan_text_chunks(masks, N)
+        for c in chunks: all_chunks.append({"r": len(plan_regions), "s": c["s"], "e": c["e"]})
+        reg2 = {k: v for k, v in reg.items() if k != "static_mask"}
+        plan_regions.append(reg2)
+        del masks
+    if not plan_regions or not all_chunks:
+        set_proj(pid, "wm_done", {"note": "no_target",
+            "msg": "지울 자막을 찾지 못했어요. [직접 지정] 모드를 써주세요."})
+        return {"note": "no_target"}
+    plan = {"W": info["W"], "H": info["H"], "fps": info["fps"], "N": N, "audio": info["audio"],
+            "mode": mode, "tier": proj.get("wm_tier") or "std",
+            "regions": plan_regions, "chunks": all_chunks}
+    tmp_upload(f"wmtmp/{pid}/plan.json", json.dumps(plan).encode(), "application/json")
+    return {"phase": "plan", "chunks": len(all_chunks), "regions": len(plan_regions)}
+
+# ---------------- 단계: 작업 (part k / parts) ----------------
+def phase_work(proj, tmp, part, parts):
+    pid = proj["id"]
+    plan = json.loads(tmp_download(f"wmtmp/{pid}/plan.json"))
+    tier = TIERS.get(plan["tier"], TIERS["std"])
+    my_chunks = [c for i, c in enumerate(plan["chunks"]) if i % parts == part]
+    if not my_chunks: return {"phase": "work", "part": part, "done": 0}
+    src, work, info, N = fetch_source(proj, tmp)
+    region_cache = {}
+    done = 0
+    for c in my_chunks:
+        ri = c["r"]
+        if ri not in region_cache:
+            reg = plan["regions"][ri]
+            frames = read_region_frames(work, reg["x"], reg["y"], reg["w"], reg["h"])
+            masks = masks_unpack(tmp_download(f"wmtmp/{pid}/m{ri}.bin"))
+            region_cache = {ri: (frames, masks)}  # 메모리 절약: 한 영역만 유지
+        frames, masks = region_cache[ri]
+        arr = restore_chunk(frames, masks, tier, c)
+        out = os.path.join(tmp, f"o_{ri}_{c['s']}.mp4")
+        encode_chunk_mp4(arr, plan["fps"], out)
+        with open(out, "rb") as f:
+            tmp_upload(f"wmtmp/{pid}/o_{ri}_{c['s']}.mp4", f.read(), "video/mp4")
+        os.remove(out)
+        done += 1
+    return {"phase": "work", "part": part, "done": done}
+
+# ---------------- 단계: 병합 ----------------
+def phase_merge(proj, tmp, t0):
+    pid = proj["id"]
+    plan = json.loads(tmp_download(f"wmtmp/{pid}/plan.json"))
+    W, H, fps, N = plan["W"], plan["H"], plan["fps"], plan["N"]
+    set_proj(pid, "wm_running", "복원한 부분을 원본에 합치는 중…")
+    src, work, info, N2 = fetch_source(proj, tmp)
+    results = []
+    tmp_names = ["plan.json"]
+    for ri, reg in enumerate(plan["regions"]):
+        frames = read_region_frames(work, reg["x"], reg["y"], reg["w"], reg["h"])
+        masks = masks_unpack(tmp_download(f"wmtmp/{pid}/m{ri}.bin"))
+        tmp_names.append(f"m{ri}.bin")
+        merged = np.stack(frames)
+        outs = []
+        for c in [c for c in plan["chunks"] if c["r"] == ri]:
+            name = f"o_{ri}_{c['s']}.mp4"
+            data = tmp_download(f"wmtmp/{pid}/{name}")
+            tmp_names.append(name)
+            p = os.path.join(tmp, name)
+            with open(p, "wb") as f: f.write(data)
+            arr = decode_chunk_mp4(p, reg["w"], reg["h"])
+            os.remove(p)
+            n_expect = c["e"] - c["s"] + 1
+            if len(arr) > n_expect: arr = arr[:n_expect]
+            if len(arr) < n_expect: arr = np.concatenate([arr, np.repeat(arr[-1:], n_expect - len(arr), 0)])
+            outs.append({"s": c["s"], "e": c["e"], "arr": arr})
+        merge_chunks_into(merged, outs)
+        results.append({"reg": reg, "restored": merged, "masks": masks})
+        del frames, outs
+    composite_and_finish(proj, src, work, info, N, results, t0, plan)
+    tmp_delete(f"wmtmp/{pid}", tmp_names)
+    return {"phase": "merge", "ok": True}
+
+# ---------------- 합성 + 마무리 (공용) ----------------
+def composite_and_finish(proj, src, work, info, N, results, t0, plan=None):
+    pid = proj["id"]
+    W, H, fps = info["W"], info["H"], info["fps"]
+    tmpdir = os.path.dirname(src)
+    outp = os.path.join(tmpdir, "out.mp4")
+    dec = subprocess.Popen(["ffmpeg", "-v", "error", "-i", work, "-vsync", "0",
+                            "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
+    enc_cmd = ["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+               "-s", f"{W}x{H}", "-r", str(fps), "-i", "-"]
+    if info["audio"]:
+        enc_cmd += ["-i", src, "-map", "0:v", "-map", "1:a:0", "-c:a", "aac", "-b:a", "160k"]
+    enc_cmd += ["-c:v", "libx264", "-crf", "17", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart", outp, "-y"]
+    enc = subprocess.Popen(enc_cmd, stdin=subprocess.PIPE)
+    fsz = W * H * 3
+    i = 0
+    while True:
+        buf = dec.stdout.read(fsz)
+        if not buf or len(buf) < fsz: break
+        frame = np.frombuffer(buf, np.uint8).reshape(H, W, 3).copy()
+        for res in results:
+            reg = res["reg"]
+            if i >= len(res["restored"]): continue
+            a = cv2.GaussianBlur(res["masks"][i], (0, 0), 2).astype(np.float32)[..., None] / 255.0
+            sub = frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]].astype(np.float32)
+            rest = res["restored"][i].astype(np.float32)
+            frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]] = \
+                np.clip(sub * (1 - a) + rest * a, 0, 255).astype(np.uint8)
+        enc.stdin.write(frame.tobytes())
+        i += 1
+    dec.wait(); enc.stdin.close(); enc.wait()
+    if enc.returncode != 0: raise RuntimeError("최종 합성 인코딩 실패")
+    dest = f"{proj['user_id']}/wm_{pid}.mp4"
+    url_out = upload_clip(dest, outp)
+    ym = time.strftime("%Y-%m", time.gmtime())
+    try:
+        requests.post(f"{SB_URL}/rest/v1/wm_usage",
+                      params={"on_conflict": "user_id,ym"},
+                      headers=sb_headers({"Content-Type": "application/json",
+                                          "Prefer": "resolution=ignore-duplicates,return=minimal"}),
+                      data=json.dumps({"user_id": proj["user_id"], "ym": ym, "used": 0}), timeout=30)
+        cur = sb_select_one("wm_usage", {"user_id": "eq." + proj["user_id"], "ym": "eq." + ym}, "id,used")
+        if cur: sb_update("wm_usage", {"id": "eq." + str(cur["id"])}, {"used": (cur.get("used") or 0) + 1})
+    except Exception:
+        traceback.print_exc()
+    sec = round(time.time() - t0)
+    mode = "manual" if proj.get("wm_mode") == "manual" else "auto"
+    detail = {"url": url_out, "mode": mode, "tier": proj.get("wm_tier") or "std",
+              "regions": [r["reg"]["kind"] for r in results], "sec": sec, "gpu": "runpod"}
+    set_proj(pid, "wm_done", detail)
+    print("[gpu-wm] 완료", pid, json.dumps({**detail, "url": "(생략)"}, ensure_ascii=False))
+    return detail
+
+# ---------------- 단독(비병렬) 전체 처리 ----------------
+def phase_all(proj, tmp, t0):
+    pid = proj["id"]
+    set_proj(pid, "wm_running", "영상을 받아 오는 중…")
+    src, work, info, N = fetch_source(proj, tmp)
+    mode = "manual" if proj.get("wm_mode") == "manual" else "auto"
+    set_proj(pid, "wm_running", "자막·워터마크를 찾는 중…")
+    regions = detect_regions(proj, work, info, N, mode)
+    if not regions:
+        set_proj(pid, "wm_done", {"note": "no_target",
+            "msg": "지울 자막·워터마크를 찾지 못했어요. [직접 지정] 모드로 영역을 그려서 다시 시도해 주세요."})
+        return {"note": "no_target"}
+    results = []
+    for reg in regions:
+        set_proj(pid, "wm_running", "자막 글자 위치를 정밀하게 잡는 중…")
+        frames, masks = build_region_masks(pid, work, reg, N)
+        if masks is None: continue
+        set_proj(pid, "wm_running", "AI가 배경을 복원하는 중…")
+        def on_step(d, t):
+            try: set_proj(pid, "wm_running", f"AI가 배경을 복원하는 중… ({d}/{t} 조각)")
+            except Exception: pass
+        merged = restore_region(frames, masks, TIERS.get(proj.get("wm_tier") or "std", TIERS["std"]), on_step)
+        results.append({"reg": reg, "restored": merged, "masks": masks})
+    if not results:
+        set_proj(pid, "wm_done", {"note": "no_target",
+            "msg": "지울 자막을 찾지 못했어요. [직접 지정] 모드를 써주세요."})
+        return {"note": "no_target"}
+    set_proj(pid, "wm_running", "복원한 부분을 원본에 합치는 중…")
+    return composite_and_finish(proj, src, work, info, N, results, t0)
+
+# ---------------- 진입점 ----------------
+def handler(event):
+    inp = event.get("input") or {}
+    pid = inp.get("project_id")
+    phase = inp.get("phase") or "all"
+    if not pid: return {"error": "project_id가 없습니다"}
+    t0 = inp.get("t0") or time.time()
     tmp = tempfile.mkdtemp(prefix="ibwm-")
     try:
-        set_proj(project_id, "wm_running", "영상을 받아 오는 중…")
-        src = os.path.join(tmp, "src.mp4")
-        url = signed_url(proj["source_path"], 21600)
-        with requests.get(url, stream=True, timeout=600) as r:
-            r.raise_for_status()
-            with open(src, "wb") as f:
-                for chunk in r.iter_content(1024 * 1024): f.write(chunk)
-        info = probe_info(src)
-        if info["dur"] > 900: raise RuntimeError("지금은 15분 이하 영상만 지원해요. 나눠서 올려주세요.")
-        set_proj(project_id, "wm_running", "영상을 분석하는 중…")
-        # CFR 보정: 대부분 CFR이라 그대로 사용, 아니면 초고속 재인코딩
-        work = src
-        N = frame_count(work)
-        W, H, fps = info["W"], info["H"], info["fps"]
-        expected = round(info["dur"] * fps)
-        if N and abs(N - expected) > max(5, expected * 0.02):
-            work = os.path.join(tmp, "work.mp4")
-            run(["ffmpeg", "-v", "error", "-i", src, "-vf", f"fps={fps}", "-an",
-                 "-c:v", "libx264", "-crf", "12", "-preset", "ultrafast", "-pix_fmt", "yuv420p", work, "-y"])
-            N = frame_count(work)
-        # ---- 영역 결정 ----
-        regions = []
-        if mode == "manual":
-            rects = proj.get("wm_rects") or []
-            if not rects: raise RuntimeError("지울 영역이 지정되지 않았어요")
-            for r0 in rects[:4]:
-                px = clamp(round(r0["x"] * W), 0, W - 8); py = clamp(round(r0["y"] * H), 0, H - 8)
-                pw = clamp(round(r0["w"] * W), 8, W - px); ph = clamp(round(r0["h"] * H), 8, H - py)
-                gx = clamp(px - 32, 0, W); gy = clamp(py - 32, 0, H)
-                gw = floor16(min(W - gx, pw + 64)); gh = floor16(min(H - gy, ph + 64))
-                if gx + gw > W: gx = W - gw
-                if gy + gh > H: gy = H - gh
-                regions.append({"x": gx, "y": gy, "w": gw, "h": gh, "kind": f"manual{len(regions)}",
-                                "rx0": px - gx, "rx1": px - gx + pw - 1, "ry0": py - gy, "ry1": py - gy + ph - 1})
-        else:
-            set_proj(project_id, "wm_running", "자막·워터마크를 찾는 중…")
-            regions.extend(detect_sub_bands(work, W, H, N))
-            for side in ("tl", "tr"):
-                c = detect_corner(work, W, H, side, N)
-                if c: regions.append(c)
-            if not regions:
-                set_proj(project_id, "wm_done", {"note": "no_target",
-                    "msg": "지울 자막·워터마크를 찾지 못했어요. [직접 지정] 모드로 영역을 그려서 다시 시도해 주세요."})
-                return {"note": "no_target"}
-        # ---- 마스크 + 복원 ----
-        results = []
-        done_regions = 0
-        for reg in regions:
-            frames = read_region_frames(work, reg["x"], reg["y"], reg["w"], reg["h"])
-            n = len(frames)
-            if reg["kind"].startswith("subtitle"):
-                set_proj(project_id, "wm_running", "자막 글자 위치를 정밀하게 잡는 중…")
-                masks, masked = build_subtitle_masks(frames, n)
-                if masked == 0: continue
-            elif reg["kind"].startswith("manual"):
-                set_proj(project_id, "wm_running", "지정한 곳의 글자를 정밀하게 찾는 중…")
-                masks, masked = build_subtitle_masks(frames, n)
-                if masked < max(10, math.ceil(n * 0.03)):
-                    m = np.zeros((reg["h"], reg["w"]), np.uint8)
-                    pad = 12
-                    m[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
-                      max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
-                    masks = [m] * n
-            else:
-                masks = [reg["static_mask"]] * n
-            set_proj(project_id, "wm_running", "AI가 배경을 복원하는 중…")
-            def on_step(d, t):
-                try: set_proj(project_id, "wm_running", f"AI가 배경을 복원하는 중… ({d}/{t} 조각)")
-                except Exception: pass
-            merged = restore_region(frames, masks, tier, on_step)
-            results.append({"reg": reg, "restored": merged, "masks": masks})
-            done_regions += 1
-        if not results:
-            set_proj(project_id, "wm_done", {"note": "no_target",
-                "msg": "지울 자막을 찾지 못했어요. [직접 지정] 모드를 써주세요."})
-            return {"note": "no_target"}
-        # ---- 합성 (스트리밍) ----
-        set_proj(project_id, "wm_running", "복원한 부분을 원본에 합치는 중…")
-        outp = os.path.join(tmp, "out.mp4")
-        dec = subprocess.Popen(["ffmpeg", "-v", "error", "-i", work, "-vsync", "0",
-                                "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
-        enc_cmd = ["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
-                   "-s", f"{W}x{H}", "-r", str(fps), "-i", "-"]
-        if info["audio"]:
-            enc_cmd += ["-i", src, "-map", "0:v", "-map", "1:a:0", "-c:a", "aac", "-b:a", "160k"]
-        enc_cmd += ["-c:v", "libx264", "-crf", "17", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-                    "-movflags", "+faststart", outp, "-y"]
-        enc = subprocess.Popen(enc_cmd, stdin=subprocess.PIPE)
-        fsz = W * H * 3
-        i = 0
-        while True:
-            buf = dec.stdout.read(fsz)
-            if not buf or len(buf) < fsz: break
-            frame = np.frombuffer(buf, np.uint8).reshape(H, W, 3).copy()
-            for res in results:
-                reg = res["reg"]
-                if i >= len(res["restored"]): continue
-                a = cv2.GaussianBlur(res["masks"][i], (0, 0), 2).astype(np.float32)[..., None] / 255.0
-                sub = frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]].astype(np.float32)
-                rest = res["restored"][i].astype(np.float32)
-                frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]] = \
-                    np.clip(sub * (1 - a) + rest * a, 0, 255).astype(np.uint8)
-            enc.stdin.write(frame.tobytes())
-            i += 1
-        dec.wait(); enc.stdin.close(); enc.wait()
-        if enc.returncode != 0: raise RuntimeError("최종 합성 인코딩 실패")
-        # ---- 업로드 + 마무리 ----
-        dest = f"{proj['user_id']}/wm_{project_id}.mp4"
-        url_out = upload_clip(dest, outp)
-        # 사용량 +1
-        ym = time.strftime("%Y-%m", time.gmtime())
-        try:
-            r = requests.post(f"{SB_URL}/rest/v1/wm_usage",
-                              params={"on_conflict": "user_id,ym"},
-                              headers=sb_headers({"Content-Type": "application/json",
-                                                  "Prefer": "resolution=ignore-duplicates,return=minimal"}),
-                              data=json.dumps({"user_id": proj["user_id"], "ym": ym, "used": 0}), timeout=30)
-            cur = sb_select_one("wm_usage", {"user_id": "eq." + proj["user_id"], "ym": "eq." + ym}, "id,used")
-            if cur: sb_update("wm_usage", {"id": "eq." + str(cur["id"])}, {"used": (cur.get("used") or 0) + 1})
-        except Exception:
-            traceback.print_exc()
-        sec = round(time.time() - t0)
-        detail = {"url": url_out, "mode": mode, "tier": proj.get("wm_tier") or "std",
-                  "regions": [r["reg"]["kind"] for r in results], "sec": sec, "gpu": "runpod"}
-        set_proj(project_id, "wm_done", detail)
-        print("[gpu-wm] 완료", project_id, json.dumps({**detail, "url": "(생략)"}, ensure_ascii=False))
-        return detail
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-# ---------------- RunPod 진입점 ----------------
-def handler(event):
-    pid = (event.get("input") or {}).get("project_id")
-    if not pid: return {"error": "project_id가 없습니다"}
-    try:
-        return process(pid)
+        proj = sb_select_one("sc_projects", {"id": "eq." + pid})
+        if not proj: return {"error": "프로젝트를 찾을 수 없어요: " + pid}
+        if phase == "plan": return phase_plan(proj, tmp)
+        if phase == "work": return phase_work(proj, tmp, int(inp.get("part", 0)), int(inp.get("parts", 1)))
+        if phase == "merge": return phase_merge(proj, tmp, t0)
+        return phase_all(proj, tmp, t0)
     except Exception as e:
         traceback.print_exc()
         try:
-            set_proj(pid, "failed_wm", str(e)[:300])
+            if phase in ("all", "merge", "plan"):
+                set_proj(pid, "failed_wm", str(e)[:300])
         except Exception:
             pass
         return {"error": str(e)[:500]}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 if __name__ == "__main__":
     import runpod
