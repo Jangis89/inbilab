@@ -983,8 +983,13 @@ async function runWmRemoveGpu(job) {
   try {
     await sb.from("sc_projects").update({ status: "wm_running", status_detail: "AI가 배경을 복원하는 중… (GPU " + PARTS + "대 동시 작업)" }).eq("id", job.project_id);
   } catch {}
-  await Promise.all(Array.from({ length: PARTS }, (_, k) => rpCall(base, { project_id: job.project_id, phase: "work", part: k, parts: PARTS, t0 })));
-  await rpCall(base, { project_id: job.project_id, phase: "merge", t0 });
+  const works = await Promise.all(Array.from({ length: PARTS }, (_, k) => rpCall(base, { project_id: job.project_id, phase: "work", part: k, parts: PARTS, t0 })));
+  try {
+    await sb.from("sc_projects").update({ status: "wm_running", status_detail: "복원한 부분을 원본에 합치는 중… (GPU " + PARTS + "대 동시 작업)" }).eq("id", job.project_id);
+  } catch {}
+  const segs = await Promise.all(Array.from({ length: PARTS }, (_, k) => rpCall(base, { project_id: job.project_id, phase: "mergeseg", part: k, parts: PARTS, t0 })));
+  const tms = { plan: plan.tms || {}, work: works.map(w => (w && w.tms) || {}), seg: segs.map(s => (s && s.tms) || {}) };
+  await rpCall(base, { project_id: job.project_id, phase: "finish", parts: PARTS, t0, tms });
 }
 
 // ---------- 메인 루프 ----------
