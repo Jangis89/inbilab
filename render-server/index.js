@@ -986,20 +986,31 @@ async function rpCallRetry(base, input, tries = 2, capMs = 2400000) {
   }
   throw last;
 }
+async function planCapMs() {
+  // 감지 단계 제한시간(분). app_settings의 wm_plan_cap_min으로 조절 가능(기본 15분).
+  // 강제발동 시험 시 이 값을 1로 바꾸면 재배포 없이 타임아웃 경로를 점검할 수 있다.
+  let m = 15;
+  try {
+    const { data } = await sb.from("app_settings").select("value").eq("key", "wm_plan_cap_min").maybeSingle();
+    if (data && data.value != null) { const v = parseInt(data.value, 10); if (v >= 1 && v <= 60) m = v; }
+  } catch {}
+  return m * 60000;
+}
 async function runWmRemoveGpu(job) {
   const base = await gpuEndpointBase();
   const t0 = Date.now() / 1000;
   try { await setJobProgress(job.id, 5); } catch {}
+  const pCap = await planCapMs();
   let plan;
   try {
-    plan = await rpCall(base, { project_id: job.project_id, phase: "plan", t0, scan_step: 12 }, 900000);
+    plan = await rpCall(base, { project_id: job.project_id, phase: "plan", t0, scan_step: 12 }, pCap);
   } catch (e1) {
     console.error("[wm-gpu] 감지 1차 실패, 표본 간격 2배로 재시도:", e1.message);
     try {
       await sb.from("sc_projects").update({ status: "wm_running", status_detail: "감지가 오래 걸려 방식을 바꿔 다시 시도하는 중…" }).eq("id", job.project_id);
     } catch {}
     try {
-      plan = await rpCall(base, { project_id: job.project_id, phase: "plan", t0, scan_step: 24 }, 900000);
+      plan = await rpCall(base, { project_id: job.project_id, phase: "plan", t0, scan_step: 24 }, pCap);
     } catch (e2) {
       try {
         await sb.from("sc_projects").update({ status: "failed_wm", status_detail: "자동 감지에 실패했습니다. [직접 지정] 모드로 자막 위치를 그려주시면 빠르게 처리됩니다." }).eq("id", job.project_id);
