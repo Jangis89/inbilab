@@ -44,7 +44,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v21"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v22"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -1124,7 +1124,8 @@ def _manual_masks(frames, n, reg):
             keep |= white
         tx = keep & sel & near
         tot = int(tx.sum()); miss = int((tx & (dd == 0)).sum())
-        if tot > 0 and miss > max(150, 0.10 * tot):
+        # 작은 그림(이모지 등)도 놓치지 않도록 절대값 기준(200px)을 우선 적용 (v22)
+        if miss > max(200, 0.03 * tot):
             out.append(box)      # 못 덮은 조각 의심 → 통째로 (확실함 우선)
         else:
             out.append(cv2.bitwise_and(dd, box))  # 글자 모양만 → 자연스러움
