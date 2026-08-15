@@ -44,7 +44,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v20"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v21"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -1074,6 +1074,62 @@ def detect_regions(proj, work, info, N, mode):
             if c: regions.append(c)
     return regions
 
+def _manual_masks(frames, n, reg):
+    """직접 지정 네모의 프레임별 마스크(v21 혼합 방식).
+    ① 네모 안에서 만능 글자 감지를 돌려, 글자를 빠짐없이 찾은 프레임은
+       글자 모양만 지운다 → 배경 대부분이 원본 그대로라 티가 안 남.
+    ② 감지가 없거나(그림·장식) 빠뜨린 조각이 의심되는 프레임은 통째로 지운다 → 확실함.
+    판별: 글자 후보 픽셀(진한 색·흰색·검정) 중 감지가 못 덮은 양이 10%를 넘으면 통째로."""
+    box = np.zeros((reg["h"], reg["w"]), np.uint8)
+    pad = 40
+    box[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
+        max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
+    # 감지는 이 네모의 구간 시간 안에서만 (계획 단계 시간 절약 — 구간 밖은 어차피 안 지움)
+    f0r = int(reg.get("f0", 0) or 0); f1r = int(reg.get("f1", n) or n)
+    lo = max(0, f0r - 8); hi = min(n, f1r + 8)
+    try:
+        det_sub, masked = build_subtitle_masks(frames[lo:hi], hi - lo)
+        det = [None] * n
+        for j in range(lo, hi): det[j] = det_sub[j - lo]
+    except Exception:
+        det, masked = None, 0
+    if not masked:
+        return [box] * n
+    kc = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 9))      # 같은 줄의 끊긴 획 잇기
+    kd = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (17, 17))  # 글자 둘레 여유
+    kn = cv2.getStructuringElement(cv2.MORPH_RECT, (161, 41))    # "글자 주변" 판별 범위
+    iy0, iy1 = max(0, reg["ry0"] - 12), min(reg["h"], reg["ry1"] + 13)
+    ix0, ix1 = max(0, reg["rx0"] - 12), min(reg["w"], reg["rx1"] + 13)
+    out = []
+    for i in range(n):
+        d = det[i] if det is not None else None
+        if d is None or not d.any():
+            out.append(box); continue
+        dd = cv2.dilate(cv2.morphologyEx(d, cv2.MORPH_CLOSE, kc), kd)
+        hsv = cv2.cvtColor(frames[i], cv2.COLOR_BGR2HSV)
+        hh, ss, vv = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+        colored = (ss > 110) & (vv > 110)          # 진한 색 후보
+        white = (vv > 215) & (ss < 45)             # 또렷한 흰색 후보
+        sel = np.zeros(dd.shape, bool); sel[iy0:iy1, ix0:ix1] = True
+        near = cv2.dilate(dd, kn) > 0              # 감지된 글자 주변
+        far = sel & (~near)                        # 글자에서 떨어진 배경 표본
+        # 배경에 흔한 색(예: 초록 쓰레기통·파란 문)은 글자 잔여물 후보에서 제외
+        bucket = (hh.astype(np.int16) // 15)
+        keep = np.zeros(dd.shape, bool)
+        for b in range(12):
+            cb = colored & (bucket == b)
+            if int((cb & far).sum()) < 800:
+                keep |= cb
+        if int((white & far).sum()) < 800:
+            keep |= white
+        tx = keep & sel & near
+        tot = int(tx.sum()); miss = int((tx & (dd == 0)).sum())
+        if tot > 0 and miss > max(150, 0.10 * tot):
+            out.append(box)      # 못 덮은 조각 의심 → 통째로 (확실함 우선)
+        else:
+            out.append(cv2.bitwise_and(dd, box))  # 글자 모양만 → 자연스러움
+    return out
+
 def _limit_masks_range(masks, n, reg):
     """구간별 적용: 네모의 시간 범위(f0~f1) 밖 프레임은 지우지 않는다.
     범위 밖(참고용) 프레임에는 "모든 네모의 자리"를 구멍으로 가려서(v19),
@@ -1107,13 +1163,7 @@ def build_region_masks(pid, work, reg, N, frames=None):
         masks, masked = build_subtitle_masks(frames, n, with_labels=not reg["kind"].startswith("subtitle"))
         if masked == 0: return frames, None
     elif reg["kind"].startswith("manual"):
-        # 수강생이 그린 네모는 통째로 지운다 — 글자 감지에 의존하면 장식 글씨·그림이 반만 지워지는 문제(v17)
-        # 여유 40px(v20): "통!" 하고 커지며 나타나는 팝 자막이 네모 밖으로 삐져나가는 것 대비
-        m = np.zeros((reg["h"], reg["w"]), np.uint8)
-        pad = 40
-        m[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
-          max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
-        masks = [m] * n
+        masks = _manual_masks(frames, n, reg)      # v21 혼합: 글자 모양만/통째 자동 판별
         masks = _limit_masks_range(masks, n, reg)
     else:
         masks = [reg["static_mask"]] * n
@@ -1164,13 +1214,7 @@ def phase_plan(proj, tmp, scan_step=12):
             masks, masked = build_subtitle_masks(frames, n, with_labels=not reg["kind"].startswith("subtitle"))
             if masked == 0: masks = None
         elif reg["kind"].startswith("manual"):
-            # 수강생이 그린 네모는 통째로 지운다 — 글자 감지에 의존하면 장식 글씨·그림이 반만 지워지는 문제(v17)
-            # 여유 40px(v20): "통!" 하고 커지며 나타나는 팝 자막이 네모 밖으로 삐져나가는 것 대비
-            m = np.zeros((reg["h"], reg["w"]), np.uint8)
-            pad = 40
-            m[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
-              max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
-            masks = [m] * n
+            masks = _manual_masks(frames, n, reg)  # v21 혼합: 글자 모양만/통째 자동 판별
             masks = _limit_masks_range(masks, n, reg)
         else:
             masks = [reg["static_mask"]] * n
@@ -1220,8 +1264,11 @@ def phase_work(proj, tmp, part, parts):
     t_ai = 0.0; t_encup = 0.0
     for c in my_chunks:
         ri = c["r"]
+        t2 = dict(tier)
+        if plan["regions"][ri]["kind"].startswith("manual") and plan.get("tier") != "fast":
+            t2["scale"] = 1.0   # v21: 직접 지정 영역은 원본 해상도로 복원 (네모 안이 뿌옇던 문제)
         ta = time.time()
-        arr = restore_chunk(frames_by_ri[ri], masks_by_ri[ri], tier, c)
+        arr = restore_chunk(frames_by_ri[ri], masks_by_ri[ri], t2, c)
         t_ai += time.time() - ta
         tb = time.time()
         out = os.path.join(tmp, f"o_{ri}_{c['s']}.mp4")
@@ -1323,7 +1370,7 @@ def phase_mergeseg(proj, tmp, part, parts):
                 if i not in rest: continue
                 reg = plan["regions"][ri]
                 if "f0" in reg and not (int(reg["f0"]) <= i < int(reg["f1"])): continue  # 구간 밖: 참고용 복원은 버림
-                a = cv2.GaussianBlur(masks_all[ri][i], (0, 0), 2).astype(np.float32)[..., None] / 255.0
+                a = cv2.GaussianBlur(masks_all[ri][i], (0, 0), 6 if reg["kind"].startswith("manual") else 2).astype(np.float32)[..., None] / 255.0
                 sub = frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]].astype(np.float32)
                 frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]] = \
                     np.clip(sub * (1 - a) + rest[i].astype(np.float32) * a, 0, 255).astype(np.uint8)
@@ -1417,7 +1464,7 @@ def composite_and_finish(proj, src, work, info, N, results, t0, plan=None):
             reg = res["reg"]
             if i >= len(res["restored"]): continue
             if "f0" in reg and not (int(reg["f0"]) <= i < int(reg["f1"])): continue  # 구간 밖: 참고용 복원은 버림
-            a = cv2.GaussianBlur(res["masks"][i], (0, 0), 2).astype(np.float32)[..., None] / 255.0
+            a = cv2.GaussianBlur(res["masks"][i], (0, 0), 6 if reg["kind"].startswith("manual") else 2).astype(np.float32)[..., None] / 255.0
             sub = frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]].astype(np.float32)
             rest = res["restored"][i].astype(np.float32)
             frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]] = \
@@ -1468,7 +1515,10 @@ def phase_all(proj, tmp, t0):
         def on_step(d, t):
             try: set_proj(pid, "wm_running", f"AI가 배경을 복원하는 중… ({d}/{t} 조각)")
             except Exception: pass
-        merged = restore_region(frames, masks, TIERS.get(proj.get("wm_tier") or "std", TIERS["std"]), on_step,
+        t_all = dict(TIERS.get(proj.get("wm_tier") or "std", TIERS["std"]))
+        if reg["kind"].startswith("manual") and (proj.get("wm_tier") or "std") != "fast":
+            t_all["scale"] = 1.0   # v21: 직접 지정 영역은 원본 해상도로 복원
+        merged = restore_region(frames, masks, t_all, on_step,
                                 frame_range=((reg["f0"], reg["f1"]) if reg["kind"].startswith("manual") and "f0" in reg else None))
         results.append({"reg": reg, "restored": merged, "masks": masks})
     if not results:
