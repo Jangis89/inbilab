@@ -27,9 +27,10 @@
   .mt-btn{flex:1;min-width:110px;padding:9px 8px;border-radius:10px;border:2px solid var(--line);background:#fff;cursor:pointer;font-size:13.5px;font-weight:700;color:var(--ink);font-family:inherit;}
   .mt-btn small{display:block;font-weight:400;font-size:11.5px;color:var(--sub);margin-top:2px;}
   .mt-btn.on{border-color:var(--blue);background:#eff6ff;color:var(--blue);}
-  .ed-scrub{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;}
-  .ed-scrub input[type=range]{flex:1;min-width:200px;height:26px;cursor:pointer;}
-  .ed-time{font-size:13.5px;font-weight:700;color:var(--ink);min-width:86px;text-align:center;}
+  .ed-scrub{margin-top:10px;}
+  .ed-scrub input[type=range]{width:100%;height:30px;cursor:pointer;display:block;}
+  .ed-scrub2{display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap;}
+  .ed-time{font-size:14px;font-weight:700;color:var(--ink);min-width:110px;text-align:center;margin-left:auto;}
   .ed-seg{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;}
   .seg-chip{display:inline-block;font-size:12.5px;font-weight:700;color:var(--sub);background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;padding:4px 10px;cursor:pointer;}
   .seg-chip.on{color:#1d4ed8;background:#eff6ff;border-color:var(--blue);}
@@ -100,13 +101,19 @@
     <input type="file" id="file" accept="video/*" style="display:none;">
 
     <div class="editor" id="editor">
-      <div class="ed-hint">🖱️ 아래 화면에서 <b>지울 부분을 마우스로 끌어 네모를 그려주세요.</b> (구간마다 최대 4개 — 자막칸, 로고 등) 잘못 그렸으면 [이 구간 네모 지우기]를 누르고 다시 그리면 됩니다.<br>🎞️ <b>화면 아래 막대를 움직이면 영상의 다른 장면도 볼 수 있어요.</b><br>✂️ 자막 위치·크기가 중간에 바뀌면, 바뀌는 시점으로 이동해 <b>[이 시간부터 새 구간]</b>을 누른 뒤 새 네모를 그려주세요. 각 구간에 그린 네모는 <b>그 구간의 시간에만</b> 적용되고, 네모 안은 <b>통째로 지워져 배경으로 복원</b>됩니다.</div>
+      <div class="ed-hint">🖱️ 아래 화면에서 <b>지울 부분을 마우스로 끌어 네모를 그려주세요.</b> (구간마다 최대 4개 — 자막칸, 로고 등) 잘못 그렸으면 [이 구간 네모 지우기]를 누르고 다시 그리면 됩니다.<br>🎞️ <b>화면 아래 막대를 움직이면 영상의 다른 장면도 볼 수 있어요.</b><br>✂️ 자막 위치·크기가 중간에 바뀌면, 바뀌는 시점으로 이동해 <b>[이 시간부터 새 구간]</b>을 누른 뒤 새 네모를 그려주세요. 각 구간에 그린 네모는 <b>그 구간의 시간에만</b> 적용되고, 네모 안은 <b>통째로 지워져 배경으로 복원</b>됩니다.<br>💡 "통!" 하고 커지며 나타나는 자막은 [◀ 한 칸] 버튼으로 커진 순간을 찾아 <b>가장 커졌을 때 크기</b>로 그려주세요. (가장자리와 앞뒤 시간의 약간의 여유는 자동으로 더해드립니다)</div>
       <div class="ed-wrap"><canvas id="ed-canvas"></canvas></div>
       <div class="ed-scrub">
-        <button class="ed-btn" onclick="edStep(-5)">◀ 5초 전</button>
         <input type="range" id="ed-slider" min="0" max="10" value="5" oninput="edSeek(this.value)">
-        <button class="ed-btn" onclick="edStep(5)">5초 뒤 ▶</button>
-        <span class="ed-time" id="ed-time">0:00 / 0:00</span>
+      </div>
+      <div class="ed-scrub2">
+        <button class="ed-btn" onclick="edStep(-5)">◀ 5초</button>
+        <button class="ed-btn" onclick="edStep(-1)">◀ 1초</button>
+        <button class="ed-btn" onclick="edStep(-0.1)">◀ 한 칸</button>
+        <button class="ed-btn" onclick="edStep(0.1)">한 칸 ▶</button>
+        <button class="ed-btn" onclick="edStep(1)">1초 ▶</button>
+        <button class="ed-btn" onclick="edStep(5)">5초 ▶</button>
+        <span class="ed-time" id="ed-time">0:00.0 / 0:00.0</span>
       </div>
       <div class="ed-seg">
         <button class="ed-btn" onclick="segNew()">✂️ 이 시간부터 새 구간</button>
@@ -247,7 +254,7 @@
 
   // ---------- 직접 지정: 장면 이동 + 네모 그리기 ----------
   var edVideo=null;
-  function fmtT(s){ s=Math.max(0,Math.round(s)); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); }
+  function fmtT(s){ s=Math.max(0,s); var m=Math.floor(s/60); var sec=s-m*60; return m+":"+(sec<10?"0":"")+sec.toFixed(1); }
   function loadFrame(f){ return new Promise(function(res){
     if(edVideo){ try{ URL.revokeObjectURL(edVideo.src); }catch(e){} }
     var v=document.createElement("video"); v.preload="auto"; v.muted=true; v.playsInline=true;
