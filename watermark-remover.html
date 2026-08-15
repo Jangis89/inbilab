@@ -22,6 +22,14 @@
   @media(max-width:640px){ .modes{grid-template-columns:1fr;} .mode .m-desc{min-height:0;} }
   .eta-line{display:none;font-size:14px;font-weight:700;color:#3730a3;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:10px 14px;margin:10px 0;line-height:1.6;}
   .eta-line.show{display:block;}
+  .man-tiers{display:flex;gap:8px;align-items:stretch;margin:0 0 12px;flex-wrap:wrap;}
+  .man-tiers .mt-label{font-size:13.5px;font-weight:700;color:var(--sub);align-self:center;}
+  .mt-btn{flex:1;min-width:110px;padding:9px 8px;border-radius:10px;border:2px solid var(--line);background:#fff;cursor:pointer;font-size:13.5px;font-weight:700;color:var(--ink);font-family:inherit;}
+  .mt-btn small{display:block;font-weight:400;font-size:11.5px;color:var(--sub);margin-top:2px;}
+  .mt-btn.on{border-color:var(--blue);background:#eff6ff;color:var(--blue);}
+  .ed-scrub{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;}
+  .ed-scrub input[type=range]{flex:1;min-width:200px;height:26px;cursor:pointer;}
+  .ed-time{font-size:13.5px;font-weight:700;color:var(--ink);min-width:86px;text-align:center;}
   .drop{border:2px dashed var(--line);border-radius:16px;padding:30px 20px;text-align:center;background:var(--bg-soft);cursor:pointer;margin-bottom:12px;}
   .drop:hover{border-color:var(--blue);} .drop b{color:var(--blue);} .drop .sub{font-size:13.5px;color:var(--sub);margin-top:6px;}
   .editor{display:none;margin:12px 0;} .editor.show{display:block;}
@@ -73,6 +81,13 @@
     </div>
     <div class="eta-line" id="eta-line"></div>
 
+    <div class="man-tiers" id="man-tiers">
+      <span class="mt-label">복원 화질:</span>
+      <button class="mt-btn" id="mt-fast" onclick="setManTier('fast')">⚡ 빠르게<small>화질 조금 양보</small></button>
+      <button class="mt-btn on" id="mt-std" onclick="setManTier('std')">⚖️ 중간 (추천)<small>속도·화질 균형</small></button>
+      <button class="mt-btn" id="mt-hq" onclick="setManTier('hq')">💎 최고 화질<small>가장 느림</small></button>
+    </div>
+
     <div class="drop" id="drop" onclick="pick()">
       🎬 <b>여기를 눌러 동영상 선택</b> (또는 끌어다 놓기)
       <div class="sub" id="drop-sub">1개씩 · 15분 이하 · 8GB 이하</div>
@@ -80,8 +95,14 @@
     <input type="file" id="file" accept="video/*" style="display:none;">
 
     <div class="editor" id="editor">
-      <div class="ed-hint">🖱️ 아래 화면에서 <b>지울 부분을 마우스로 끌어 네모를 그려주세요.</b> (최대 4개 — 자막칸, 로고 등) 잘못 그렸으면 [모두 지우기]를 누르고 다시 그리면 됩니다.</div>
+      <div class="ed-hint">🖱️ 아래 화면에서 <b>지울 부분을 마우스로 끌어 네모를 그려주세요.</b> (최대 4개 — 자막칸, 로고 등) 잘못 그렸으면 [모두 지우기]를 누르고 다시 그리면 됩니다.<br>🎞️ <b>화면 아래 막대를 움직이면 영상의 다른 장면도 볼 수 있어요.</b> 자막이 가장 커지거나 길어지는 장면까지 확인하고 넉넉하게 그려주세요. 그린 네모는 <b>영상 전체</b>에 적용됩니다.</div>
       <div class="ed-wrap"><canvas id="ed-canvas"></canvas></div>
+      <div class="ed-scrub">
+        <button class="ed-btn" onclick="edStep(-5)">◀ 5초 전</button>
+        <input type="range" id="ed-slider" min="0" max="10" value="5" oninput="edSeek(this.value)">
+        <button class="ed-btn" onclick="edStep(5)">5초 뒤 ▶</button>
+        <span class="ed-time" id="ed-time">0:00 / 0:00</span>
+      </div>
       <div class="ed-act">
         <button class="ed-btn" onclick="clearRects()">🗑 모두 지우기</button>
         <span class="ed-cnt" id="ed-cnt">그린 네모: 0개</span>
@@ -119,21 +140,30 @@
     auto: { wm_mode:"auto",   wm_tier:"fast" },
     hq:   { wm_mode:"auto",   wm_tier:"std" }
   };
+  var MANUAL_TIER="std"; // 빠른 모드(직접 지정)의 복원 화질: fast(빠르게)/std(중간)/hq(최고)
   var UI_MODE="fast";
-  var MODE=UI_MODES[UI_MODE].wm_mode, TIER=UI_MODES[UI_MODE].wm_tier;
+  var MODE=UI_MODES[UI_MODE].wm_mode, TIER=MANUAL_TIER;
   var curFile=null, curDur=0, rects=[], vidW=0, vidH=0;
   var FREE_N=3, USED=0, IS_ADMIN=false;
 
   function setUiMode(m){ UI_MODE=m;
-    MODE=UI_MODES[m].wm_mode; TIER=UI_MODES[m].wm_tier;
+    MODE=UI_MODES[m].wm_mode; TIER=(m==="fast") ? MANUAL_TIER : UI_MODES[m].wm_tier;
     ["fast","auto","hq"].forEach(function(k){ $id("mode-"+k).classList.toggle("on",k===m); });
+    $id("man-tiers").style.display = (m==="fast") ? "flex" : "none";
     refreshEditor(); refreshGo(); refreshEta();
+  }
+  function setManTier(t){ MANUAL_TIER=t; if(UI_MODE==="fast") TIER=t;
+    ["fast","std","hq"].forEach(function(k){ $id("mt-"+k).classList.toggle("on",k===t); });
+    refreshEta();
   }
   function refreshEta(){
     var el=$id("eta-line");
     if(!curFile){ el.classList.remove("show"); return; }
     var mins=Math.max(1,curDur/60), txt="";
-    if(UI_MODE==="fast") txt="⏱ 예상 시간: 약 3~5분 — 아래 화면에서 지울 곳을 네모로 그려주세요.";
+    if(UI_MODE==="fast"){
+      var mt = MANUAL_TIER==="fast" ? "약 2~4분" : MANUAL_TIER==="hq" ? "약 5~10분" : "약 3~5분";
+      txt="⏱ 예상 시간: "+mt+" — 아래 화면에서 지울 곳을 네모로 그려주세요.";
+    }
     else if(UI_MODE==="auto") txt="⏱ 예상 시간: 약 "+Math.max(5,Math.round(mins*5))+"~"+Math.max(8,Math.round(mins*8))+"분 — AI가 알아서 찾아 지워요.";
     else txt="⏱ 예상 시간: 약 "+Math.max(10,Math.round(mins*10))+"분 이상 — 시간이 오래 걸리니 중요한 영상에만 추천해요.";
     el.textContent=txt; el.classList.add("show");
@@ -170,25 +200,30 @@
   }
   function refreshEditor(){ var ed=$id("editor"); if(MODE==="manual"&&curFile){ ed.classList.add("show"); } else ed.classList.remove("show"); }
 
-  // ---------- 직접 지정: 첫 화면 + 네모 그리기 ----------
-  var edImg=null;
+  // ---------- 직접 지정: 장면 이동 + 네모 그리기 ----------
+  var edVideo=null;
+  function fmtT(s){ s=Math.max(0,Math.round(s)); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); }
   function loadFrame(f){ return new Promise(function(res){
-    var v=document.createElement("video"); v.preload="auto"; v.muted=true;
+    if(edVideo){ try{ URL.revokeObjectURL(edVideo.src); }catch(e){} }
+    var v=document.createElement("video"); v.preload="auto"; v.muted=true; v.playsInline=true;
+    edVideo=v;
     v.src=URL.createObjectURL(f);
     v.onloadeddata=function(){ v.currentTime=Math.min(0.5,(v.duration||1)/2); };
     v.onseeked=function(){
       vidW=v.videoWidth; vidH=v.videoHeight;
       var c=$id("ed-canvas"); var maxW=760; var scale=Math.min(1,maxW/vidW);
-      c.width=Math.round(vidW*scale); c.height=Math.round(vidH*scale);
-      var x=c.getContext("2d"); x.drawImage(v,0,0,c.width,c.height);
-      edImg=x.getImageData(0,0,c.width,c.height);
-      URL.revokeObjectURL(v.src); res();
+      if(c.width!==Math.round(vidW*scale)){ c.width=Math.round(vidW*scale); c.height=Math.round(vidH*scale); }
+      var sl=$id("ed-slider"); sl.max=Math.max(10,Math.floor((v.duration||1)*10)); sl.value=Math.round(v.currentTime*10);
+      $id("ed-time").textContent=fmtT(v.currentTime)+" / "+fmtT(v.duration||0);
+      redraw(); res();
     };
     v.onerror=function(){ res(); };
   }); }
+  function edSeek(val){ if(!edVideo) return; var d=edVideo.duration||0; edVideo.currentTime=Math.max(0,Math.min(d>0.3?d-0.15:d, val/10)); }
+  function edStep(sec){ if(!edVideo) return; edSeek((edVideo.currentTime+sec)*10); }
   function redraw(){
-    var c=$id("ed-canvas"); if(!edImg) return; var x=c.getContext("2d");
-    x.putImageData(edImg,0,0);
+    var c=$id("ed-canvas"); if(!edVideo||!vidW) return; var x=c.getContext("2d");
+    x.drawImage(edVideo,0,0,c.width,c.height);
     x.lineWidth=3; x.strokeStyle="#ef4444"; x.fillStyle="rgba(239,68,68,.25)";
     rects.forEach(function(r){ x.fillRect(r.x*c.width,r.y*c.height,r.w*c.width,r.h*c.height); x.strokeRect(r.x*c.width,r.y*c.height,r.w*c.width,r.h*c.height); });
     if(dragCur){ x.setLineDash([6,4]); x.strokeRect(dragCur.x,dragCur.y,dragCur.w,dragCur.h); x.setLineDash([]); }
@@ -200,7 +235,7 @@
     var c=$id("ed-canvas");
     function pos(e){ var b=c.getBoundingClientRect(); var t=e.touches?e.touches[0]:e;
       return { x:(t.clientX-b.left)*(c.width/b.width), y:(t.clientY-b.top)*(c.height/b.height) }; }
-    function down(e){ if(!edImg||rects.length>=4) return; e.preventDefault(); dragStart=pos(e); dragCur=null; }
+    function down(e){ if(!edVideo||rects.length>=4) return; e.preventDefault(); dragStart=pos(e); dragCur=null; }
     function move(e){ if(!dragStart) return; e.preventDefault(); var p=pos(e);
       dragCur={x:Math.min(dragStart.x,p.x),y:Math.min(dragStart.y,p.y),w:Math.abs(p.x-dragStart.x),h:Math.abs(p.y-dragStart.y)}; redraw(); }
     function up(e){ if(!dragStart) return; e.preventDefault();
@@ -241,7 +276,7 @@
         }).select("id,title").single();
         if(ins.error){ showErr("등록 오류: "+ins.error.message); setUp(-1,""); refreshGo(); return; }
         setUp(-1,"");
-        curFile=null; curDur=0; rects=[]; $id("drop-sub").textContent="1개씩 · 15분 이하 · 8GB 이하"; $id("editor").classList.remove("show"); $id("eta-line").classList.remove("show");
+        curFile=null; curDur=0; rects=[]; if(edVideo){ try{ URL.revokeObjectURL(edVideo.src); }catch(e){} edVideo=null; } $id("drop-sub").textContent="1개씩 · 15분 이하 · 8GB 이하"; $id("editor").classList.remove("show"); $id("eta-line").classList.remove("show");
         USED++; refreshQuota(); refreshGo(); ensurePoll();
       }
     });
