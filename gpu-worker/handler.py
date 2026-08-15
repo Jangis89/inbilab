@@ -44,7 +44,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v19"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v20"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -1049,15 +1049,18 @@ def detect_regions(proj, work, info, N, mode):
                 except Exception: f1 = N
             f0 = clamp(f0, 0, N); f1 = clamp(f1, 0, N)
             if f1 <= f0: f0, f1 = 0, N
+            # 시간 여유(v20): 자막이 지정 시각보다 살짝 일찍/늦게 걸치는 경우 대비 앞뒤 0.25초 자동 추가
+            tp = int(round(0.25 * fps))
+            f0 = clamp(f0 - tp, 0, N); f1 = clamp(f1 + tp, 0, N)
             pend.append({"px": px, "py": py, "pw": pw, "ph": ph, "f0": f0, "f1": f1})
-        # 참고 프레임에서 가릴 "모든 네모의 자리표" (여백 12px 포함)
-        ctx_boxes = [{"x0": max(0, q["px"] - 12), "y0": max(0, q["py"] - 12),
-                      "x1": min(W, q["px"] + q["pw"] + 12), "y1": min(H, q["py"] + q["ph"] + 12),
+        # 참고 프레임에서 가릴 "모든 네모의 자리표" (팝 자막 여유 40px 포함)
+        ctx_boxes = [{"x0": max(0, q["px"] - 40), "y0": max(0, q["py"] - 40),
+                      "x1": min(W, q["px"] + q["pw"] + 40), "y1": min(H, q["py"] + q["ph"] + 40),
                       "f0": q["f0"], "f1": q["f1"]} for q in pend]
         for q in pend:
             px, py, pw, ph = q["px"], q["py"], q["pw"], q["ph"]
-            gx = clamp(px - 32, 0, W); gy = clamp(py - 32, 0, H)
-            gw = floor16(min(W - gx, pw + 64)); gh = floor16(min(H - gy, ph + 64))
+            gx = clamp(px - 64, 0, W); gy = clamp(py - 64, 0, H)
+            gw = floor16(min(W - gx, pw + 128)); gh = floor16(min(H - gy, ph + 128))
             if gx + gw > W: gx = W - gw
             if gy + gh > H: gy = H - gh
             reg = {"x": gx, "y": gy, "w": gw, "h": gh, "kind": f"manual{len(regions)}",
@@ -1105,8 +1108,9 @@ def build_region_masks(pid, work, reg, N, frames=None):
         if masked == 0: return frames, None
     elif reg["kind"].startswith("manual"):
         # 수강생이 그린 네모는 통째로 지운다 — 글자 감지에 의존하면 장식 글씨·그림이 반만 지워지는 문제(v17)
+        # 여유 40px(v20): "통!" 하고 커지며 나타나는 팝 자막이 네모 밖으로 삐져나가는 것 대비
         m = np.zeros((reg["h"], reg["w"]), np.uint8)
-        pad = 12
+        pad = 40
         m[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
           max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
         masks = [m] * n
@@ -1161,8 +1165,9 @@ def phase_plan(proj, tmp, scan_step=12):
             if masked == 0: masks = None
         elif reg["kind"].startswith("manual"):
             # 수강생이 그린 네모는 통째로 지운다 — 글자 감지에 의존하면 장식 글씨·그림이 반만 지워지는 문제(v17)
+            # 여유 40px(v20): "통!" 하고 커지며 나타나는 팝 자막이 네모 밖으로 삐져나가는 것 대비
             m = np.zeros((reg["h"], reg["w"]), np.uint8)
-            pad = 12
+            pad = 40
             m[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
               max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
             masks = [m] * n
