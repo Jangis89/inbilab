@@ -12,15 +12,16 @@
   .devnote{background:#fefce8;border:1px solid #fde047;border-radius:10px;padding:9px 14px;font-size:13px;color:#854d0e;margin-bottom:16px;}
   .quota{display:inline-block;background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;border-radius:999px;padding:4px 14px;font-size:13.5px;font-weight:700;margin-bottom:12px;}
   .quota.warn{background:#fef2f2;border-color:#fecaca;color:#b91c1c;}
-  .tabs{display:flex;gap:8px;margin:14px 0 10px;}
-  .tab{flex:1;text-align:center;padding:12px 8px;border:2px solid var(--line);border-radius:12px;background:#fff;cursor:pointer;font-weight:700;font-size:14.5px;color:var(--sub);}
-  .tab.on{border-color:var(--blue);background:#eff6ff;color:var(--blue);}
-  .tab small{display:block;font-weight:400;font-size:12px;margin-top:3px;}
-  .tiers{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0 14px;}
-  .tier{border:2px solid var(--line);border-radius:12px;padding:10px 8px;text-align:center;cursor:pointer;background:#fff;}
-  .tier.on{border-color:var(--blue);background:#eff6ff;}
-  .tier b{display:block;font-size:14.5px;} .tier span{font-size:11.5px;color:var(--sub);line-height:1.5;display:block;margin-top:3px;}
-  @media(max-width:640px){ .tiers{grid-template-columns:1fr;} }
+  .modes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0;}
+  .mode{border:2px solid var(--line);border-radius:14px;padding:14px 10px;text-align:center;cursor:pointer;background:#fff;}
+  .mode.on{border-color:var(--blue);background:#eff6ff;box-shadow:0 0 0 2px #bfdbfe;}
+  .mode b{display:block;font-size:16px;}
+  .mode .m-desc{display:block;font-size:12.5px;color:var(--sub);line-height:1.55;margin-top:5px;min-height:38px;}
+  .mode .m-eta{display:inline-block;font-size:12.5px;font-weight:700;color:#3730a3;background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:3px 10px;margin-top:7px;}
+  .mode.on .m-eta{color:#1d4ed8;}
+  @media(max-width:640px){ .modes{grid-template-columns:1fr;} .mode .m-desc{min-height:0;} }
+  .eta-line{display:none;font-size:14px;font-weight:700;color:#3730a3;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:10px 14px;margin:10px 0;line-height:1.6;}
+  .eta-line.show{display:block;}
   .drop{border:2px dashed var(--line);border-radius:16px;padding:30px 20px;text-align:center;background:var(--bg-soft);cursor:pointer;margin-bottom:12px;}
   .drop:hover{border-color:var(--blue);} .drop b{color:var(--blue);} .drop .sub{font-size:13.5px;color:var(--sub);margin-top:6px;}
   .editor{display:none;margin:12px 0;} .editor.show{display:block;}
@@ -65,16 +66,12 @@
     <p style="font-size:14.5px;margin-bottom:10px;line-height:1.8;">영상 속 <b>박힌 자막(가운데·아래)이나 모서리 워터마크</b>를 AI가 지우고, 그 자리를 자연스러운 배경으로 채워 드립니다. <b>지운 자리 외의 화면은 원본 화질 그대로</b> 유지돼요. (15분 이하 영상 지원)</p>
     <div class="quota" id="quota">이번 달 사용량 확인 중…</div>
 
-    <div class="tabs">
-      <div class="tab on" id="tab-auto" onclick="setMode('auto')">🤖 AI 자동<small>자막·워터마크를 알아서 찾아 지움</small></div>
-      <div class="tab" id="tab-manual" onclick="setMode('manual')">✍️ 직접 지정<small>지울 곳을 네모로 그려서 확실하게</small></div>
+    <div class="modes">
+      <div class="mode on" id="mode-fast" onclick="setUiMode('fast')"><b>⚡ 빠른 모드 (추천)</b><span class="m-desc">지울 곳을 직접 네모로 그려요<br>가장 빠르고 확실해요</span><span class="m-eta">⏱ 약 3~5분</span></div>
+      <div class="mode" id="mode-auto" onclick="setUiMode('auto')"><b>🤖 자동 모드</b><span class="m-desc">AI가 자막·워터마크를<br>알아서 찾아 지워요</span><span class="m-eta">⏱ 3분 영상 기준 15~25분</span></div>
+      <div class="mode" id="mode-hq" onclick="setUiMode('hq')"><b>💎 고화질 모드</b><span class="m-desc">AI 자동 + 가장 정밀한 복원<br>중요한 영상에만 추천</span><span class="m-eta">⏱ 30분 이상 걸릴 수 있어요</span></div>
     </div>
-
-    <div class="tiers">
-      <div class="tier" id="tier-fast" onclick="setTier('fast')"><b>⚡ 빠름</b><span>제일 빠르고 저렴<br>지운 자리가 살짝 부드러움</span></div>
-      <div class="tier on" id="tier-std" onclick="setTier('std')"><b>⚖️ 표준 (추천)</b><span>속도·품질 균형<br>대부분 이걸로 충분</span></div>
-      <div class="tier" id="tier-hq" onclick="setTier('hq')"><b>💎 고화질</b><span>가장 정밀한 복원<br>느리지만 중요 영상용</span></div>
-    </div>
+    <div class="eta-line" id="eta-line"></div>
 
     <div class="drop" id="drop" onclick="pick()">
       🎬 <b>여기를 눌러 동영상 선택</b> (또는 끌어다 놓기)
@@ -116,17 +113,30 @@
 <script>
   var cfg = window.INBILAB_CONFIG || {};
   var pollTimer=null, rows={};
-  var MODE="auto", TIER="std";
-  var curFile=null, rects=[], vidW=0, vidH=0;
+  // 화면 모드 3종 → 내부 설정 짝: 빠른=직접지정, 자동=AI+빠른복원, 고화질=AI+정밀복원
+  var UI_MODES = {
+    fast: { wm_mode:"manual", wm_tier:"std" },
+    auto: { wm_mode:"auto",   wm_tier:"fast" },
+    hq:   { wm_mode:"auto",   wm_tier:"std" }
+  };
+  var UI_MODE="fast";
+  var MODE=UI_MODES[UI_MODE].wm_mode, TIER=UI_MODES[UI_MODE].wm_tier;
+  var curFile=null, curDur=0, rects=[], vidW=0, vidH=0;
   var FREE_N=3, USED=0, IS_ADMIN=false;
 
-  function setMode(m){ MODE=m;
-    $id("tab-auto").classList.toggle("on",m==="auto");
-    $id("tab-manual").classList.toggle("on",m==="manual");
-    refreshEditor(); refreshGo();
+  function setUiMode(m){ UI_MODE=m;
+    MODE=UI_MODES[m].wm_mode; TIER=UI_MODES[m].wm_tier;
+    ["fast","auto","hq"].forEach(function(k){ $id("mode-"+k).classList.toggle("on",k===m); });
+    refreshEditor(); refreshGo(); refreshEta();
   }
-  function setTier(t){ TIER=t;
-    ["fast","std","hq"].forEach(function(k){ $id("tier-"+k).classList.toggle("on",k===t); });
+  function refreshEta(){
+    var el=$id("eta-line");
+    if(!curFile){ el.classList.remove("show"); return; }
+    var mins=Math.max(1,curDur/60), txt="";
+    if(UI_MODE==="fast") txt="⏱ 예상 시간: 약 3~5분 — 아래 화면에서 지울 곳을 네모로 그려주세요.";
+    else if(UI_MODE==="auto") txt="⏱ 예상 시간: 약 "+Math.max(5,Math.round(mins*5))+"~"+Math.max(8,Math.round(mins*8))+"분 — AI가 알아서 찾아 지워요.";
+    else txt="⏱ 예상 시간: 약 "+Math.max(10,Math.round(mins*10))+"분 이상 — 시간이 오래 걸리니 중요한 영상에만 추천해요.";
+    el.textContent=txt; el.classList.add("show");
   }
   function showErr(m){ var e=$id("err"); e.textContent=m; e.classList.add("show"); setTimeout(function(){e.classList.remove("show");},8000); }
   function setUp(p,t){ var w=$id("prog"); if(p<0){w.classList.remove("show");return;} w.classList.add("show"); $id("prog-fill").style.width=Math.max(1,p)+"%"; $id("prog-txt").textContent=t; }
@@ -147,9 +157,9 @@
     if(f.size>8*1024*1024*1024){ showErr("영상이 너무 큽니다 (8GB 이하)."); return; }
     var dur=await readDuration(f);
     if(dur&&dur>900){ showErr("\""+f.name+"\"은(는) "+fmt(dur)+" 영상이라 처리할 수 없어요. (15분 이하만 지원)"); return; }
-    curFile=f; rects=[];
+    curFile=f; curDur=dur||0; rects=[];
     $id("drop-sub").innerHTML="선택됨: <b>"+escapeHtml(f.name)+"</b> · "+(dur?fmt(dur)+" · ":"")+fmtSize(f.size);
-    await loadFrame(f); refreshEditor(); refreshGo();
+    await loadFrame(f); refreshEditor(); refreshGo(); refreshEta();
   }
   function refreshGo(){
     var g=$id("go");
@@ -231,7 +241,7 @@
         }).select("id,title").single();
         if(ins.error){ showErr("등록 오류: "+ins.error.message); setUp(-1,""); refreshGo(); return; }
         setUp(-1,"");
-        curFile=null; rects=[]; $id("drop-sub").textContent="1개씩 · 15분 이하 · 8GB 이하"; $id("editor").classList.remove("show");
+        curFile=null; curDur=0; rects=[]; $id("drop-sub").textContent="1개씩 · 15분 이하 · 8GB 이하"; $id("editor").classList.remove("show"); $id("eta-line").classList.remove("show");
         USED++; refreshQuota(); refreshGo(); ensurePoll();
       }
     });
