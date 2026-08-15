@@ -44,7 +44,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v18"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v19"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -887,12 +887,15 @@ def get_pipe():
         _PIPE.to("cuda:0")
     return _PIPE
 
-def plan_text_chunks(masks, N, pad=4):
+def plan_text_chunks(masks, N, pad=4, frame_range=None):
     """글자가 실제로 있는 프레임 구간만 4k+1 조각으로 계획 (겹침 12)
-    pad=0: 직접 지정 구간용 — 범위 밖 프레임을 조각에 넣지 않는다.
-    (경계 밖 프레임에 다른 구간의 자막이 그대로 보이면, 복원 AI가 그 글자를
-     참고해 지운 자리에 도로 그려 넣는 사고가 남 — v18에서 수정)"""
-    txt = [i for i in range(N) if masks[i].any()]
+    frame_range=(f0,f1): 직접 지정 구간용 — 조각 계획은 구간 안에서만 세우고,
+    앞뒤 pad 프레임은 참고용으로만 붙는다(그 프레임의 다른 자막 자리는 마스크로 가림)."""
+    if frame_range:
+        lo, hi = int(frame_range[0]), int(frame_range[1])
+        txt = [i for i in range(max(0, lo), min(N, hi)) if masks[i].any()]
+    else:
+        txt = [i for i in range(N) if masks[i].any()]
     if not txt: return []
     # 밴드가 기준(360px)보다 높으면 조각 길이를 비례 축소 → GPU 메모리 사용량을 기존 수준으로 유지
     h0 = masks[0].shape[0]
@@ -947,10 +950,10 @@ def merge_chunks_into(merged, outs):
         written_to = max(written_to, o["e"])
     return merged
 
-def restore_region(frames, masks, tier, on_step=None, pad=4):
+def restore_region(frames, masks, tier, on_step=None, frame_range=None):
     """단독(비병렬) 경로: 글자 구간만 복원"""
     N = len(frames)
-    chunks = plan_text_chunks(masks, N, pad=pad)
+    chunks = plan_text_chunks(masks, N, frame_range=frame_range)
     merged = np.stack(frames)
     outs = []
     for ci, c in enumerate(chunks):
@@ -1033,15 +1036,10 @@ def detect_regions(proj, work, info, N, mode):
         rects = proj.get("wm_rects") or []
         if not rects: raise RuntimeError("지울 영역이 지정되지 않았어요")
         fps = float(info.get("fps") or 30)
+        pend = []
         for r0 in rects[:12]:
             px = clamp(round(r0["x"] * W), 0, W - 8); py = clamp(round(r0["y"] * H), 0, H - 8)
             pw = clamp(round(r0["w"] * W), 8, W - px); ph = clamp(round(r0["h"] * H), 8, H - py)
-            gx = clamp(px - 32, 0, W); gy = clamp(py - 32, 0, H)
-            gw = floor16(min(W - gx, pw + 64)); gh = floor16(min(H - gy, ph + 64))
-            if gx + gw > W: gx = W - gw
-            if gy + gh > H: gy = H - gh
-            reg = {"x": gx, "y": gy, "w": gw, "h": gh, "kind": f"manual{len(regions)}",
-                   "rx0": px - gx, "rx1": px - gx + pw - 1, "ry0": py - gy, "ry1": py - gy + ph - 1}
             # 구간별 적용: 네모에 t0~t1(초)이 있으면 그 시간 범위의 프레임에서만 지운다
             try: f0 = int(round(float(r0.get("t0") or 0) * fps))
             except Exception: f0 = 0
@@ -1051,7 +1049,20 @@ def detect_regions(proj, work, info, N, mode):
                 except Exception: f1 = N
             f0 = clamp(f0, 0, N); f1 = clamp(f1, 0, N)
             if f1 <= f0: f0, f1 = 0, N
-            reg["f0"] = f0; reg["f1"] = f1
+            pend.append({"px": px, "py": py, "pw": pw, "ph": ph, "f0": f0, "f1": f1})
+        # 참고 프레임에서 가릴 "모든 네모의 자리표" (여백 12px 포함)
+        ctx_boxes = [{"x0": max(0, q["px"] - 12), "y0": max(0, q["py"] - 12),
+                      "x1": min(W, q["px"] + q["pw"] + 12), "y1": min(H, q["py"] + q["ph"] + 12),
+                      "f0": q["f0"], "f1": q["f1"]} for q in pend]
+        for q in pend:
+            px, py, pw, ph = q["px"], q["py"], q["pw"], q["ph"]
+            gx = clamp(px - 32, 0, W); gy = clamp(py - 32, 0, H)
+            gw = floor16(min(W - gx, pw + 64)); gh = floor16(min(H - gy, ph + 64))
+            if gx + gw > W: gx = W - gw
+            if gy + gh > H: gy = H - gh
+            reg = {"x": gx, "y": gy, "w": gw, "h": gh, "kind": f"manual{len(regions)}",
+                   "rx0": px - gx, "rx1": px - gx + pw - 1, "ry0": py - gy, "ry1": py - gy + ph - 1,
+                   "f0": q["f0"], "f1": q["f1"], "ctx_boxes": ctx_boxes}
             regions.append(reg)
     else:
         regions.extend(detect_sub_bands(work, W, H, N))
@@ -1061,11 +1072,28 @@ def detect_regions(proj, work, info, N, mode):
     return regions
 
 def _limit_masks_range(masks, n, reg):
-    """구간별 적용: 네모의 시간 범위(f0~f1) 밖 프레임은 지우지 않는다"""
+    """구간별 적용: 네모의 시간 범위(f0~f1) 밖 프레임은 지우지 않는다.
+    범위 밖(참고용) 프레임에는 "모든 네모의 자리"를 구멍으로 가려서(v19),
+    복원 AI가 다른 구간의 자막을 보고 따라 그리는 사고를 막으면서도
+    깨끗한 배경은 참고할 수 있게 한다. (합치기는 범위 안에서만 수행)"""
     f0 = int(reg.get("f0", 0) or 0); f1 = int(reg.get("f1", n) or n)
     if f0 <= 0 and f1 >= n: return masks
+    boxes = reg.get("ctx_boxes") or []
     z = np.zeros_like(masks[0])
-    return [masks[i] if f0 <= i < f1 else z for i in range(n)]
+    out = []
+    for i in range(n):
+        if f0 <= i < f1:
+            out.append(masks[i]); continue
+        m = None
+        for b in boxes:
+            if b["f0"] <= i < b["f1"]:
+                x0 = max(b["x0"] - reg["x"], 0); x1 = min(b["x1"] - reg["x"], reg["w"])
+                y0 = max(b["y0"] - reg["y"], 0); y1 = min(b["y1"] - reg["y"], reg["h"])
+                if x1 > x0 and y1 > y0:
+                    if m is None: m = z.copy()
+                    m[y0:y1, x0:x1] = 255
+        out.append(m if m is not None else z)
+    return out
 
 def build_region_masks(pid, work, reg, N, frames=None):
     """영역 마스크 목록 생성 (frames 미리 있으면 재사용)"""
@@ -1145,7 +1173,8 @@ def phase_plan(proj, tmp, scan_step=12):
         del frames
         if masks is None: continue
         tmp_upload(f"wmtmp/{pid}/m{len(plan_regions)}.bin", masks_pack(masks))
-        chunks = plan_text_chunks(masks, N, pad=0 if reg["kind"].startswith("manual") else 4)
+        fr = (reg["f0"], reg["f1"]) if reg["kind"].startswith("manual") and "f0" in reg else None
+        chunks = plan_text_chunks(masks, N, frame_range=fr)
         for c in chunks: all_chunks.append({"r": len(plan_regions), "s": c["s"], "e": c["e"]})
         reg2 = {k: v for k, v in reg.items() if k != "static_mask"}
         plan_regions.append(reg2)
@@ -1288,6 +1317,7 @@ def phase_mergeseg(proj, tmp, part, parts):
             for ri, rest in seg_rest.items():
                 if i not in rest: continue
                 reg = plan["regions"][ri]
+                if "f0" in reg and not (int(reg["f0"]) <= i < int(reg["f1"])): continue  # 구간 밖: 참고용 복원은 버림
                 a = cv2.GaussianBlur(masks_all[ri][i], (0, 0), 2).astype(np.float32)[..., None] / 255.0
                 sub = frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]].astype(np.float32)
                 frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]] = \
@@ -1381,6 +1411,7 @@ def composite_and_finish(proj, src, work, info, N, results, t0, plan=None):
         for res in results:
             reg = res["reg"]
             if i >= len(res["restored"]): continue
+            if "f0" in reg and not (int(reg["f0"]) <= i < int(reg["f1"])): continue  # 구간 밖: 참고용 복원은 버림
             a = cv2.GaussianBlur(res["masks"][i], (0, 0), 2).astype(np.float32)[..., None] / 255.0
             sub = frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]].astype(np.float32)
             rest = res["restored"][i].astype(np.float32)
@@ -1433,7 +1464,7 @@ def phase_all(proj, tmp, t0):
             try: set_proj(pid, "wm_running", f"AI가 배경을 복원하는 중… ({d}/{t} 조각)")
             except Exception: pass
         merged = restore_region(frames, masks, TIERS.get(proj.get("wm_tier") or "std", TIERS["std"]), on_step,
-                                pad=0 if reg["kind"].startswith("manual") else 4)
+                                frame_range=((reg["f0"], reg["f1"]) if reg["kind"].startswith("manual") and "f0" in reg else None))
         results.append({"reg": reg, "restored": merged, "masks": masks})
     if not results:
         set_proj(pid, "wm_done", {"note": "no_target",
