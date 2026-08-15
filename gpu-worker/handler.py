@@ -44,7 +44,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v14"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v16"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -190,30 +190,84 @@ def read_all_crops(path, W, H, regions):
 # ---------------- 글자 감지 (wmremove.js 포팅, numpy 벡터화) ----------------
 import cv2
 
-def glyph_clusters(frame):
-    """흰 글자(저채도 고명도)+검은 테두리 → CC → 가로줄 클러스터. frame: (h,w,3) uint8"""
-    h, w = frame.shape[:2]
+def _text_planes(frame, only=None):
+    """만능 색상 판: [(이름, 글자후보 마스크 u8, 테두리 지도 u8)]. 비어있는 판은 생략.
+    흰색 1장 + 검정 1장 + 색상환 12장 — 어떤 색 자막이든 이 중 한 판에 잡힌다.
+    only: 판 이름 집합이 주어지면 그 판만 생성 (2단계 정밀 판정 고속화)."""
     r = frame[:, :, 0].astype(np.int32); g = frame[:, :, 1].astype(np.int32); b = frame[:, :, 2].astype(np.int32)
     mx = np.maximum(np.maximum(r, g), b); mn = np.minimum(np.minimum(r, g), b)
     sat = np.where(mx > 0, (mx - mn) * 255 // np.maximum(mx, 1), 0)
     white = ((mx > 200) & (sat < 50)).astype(np.uint8)
     dark = (mx < 75).astype(np.uint8)
-    darkD = cv2.dilate(dark, np.ones((3, 3), np.uint8), iterations=4)
-    nlab, lab, stats, _ = cv2.connectedComponentsWithStats(white, 8)
+    lightm = (mx > 170).astype(np.uint8)
+    dw = (dark | white)
+    planes = []
+    if only is None or "w" in only:
+        planes.append(("w", white, dark))
+    if only is None or "k" in only:
+        black = (mx < 60).astype(np.uint8)
+        planes.append(("k", black, lightm))
+    hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
+    Hh = hsv[..., 0]; S = hsv[..., 1]; V = hsv[..., 2]
+    colored = ((S > 90) & (V > 110)).astype(np.uint8)
+    hist = np.bincount(Hh[colored > 0].ravel(), minlength=180).astype(np.int64)
+    if hist.sum() >= 300:
+        _ar = np.arange(180)
+        for hc in range(0, 180, 15):
+            name = "c" + str(hc)
+            if only is not None and name not in only: continue
+            idx = (_ar - (hc + 7)) % 180
+            wl = (np.minimum(idx, 180 - idx) <= 10)
+            if int(hist[wl].sum()) < 300: continue
+            band = colored & wl.astype(np.uint8)[Hh]
+            planes.append((name, band, dw))
+    return planes, mx, dark, white
+
+def glyph_clusters(frame, with_singles=False, only_planes=None):
+    """만능 색상 자막 감지: 색상 판별 CC → 테두리 대비 검사 → 가로줄 클러스터.
+    흰·검정·노랑·빨강·초록·파랑 등 어떤 색 자막이든 잡는다. frame: (h,w,3) uint8
+    with_singles=True면 (클러스터 목록, 단글자 후보 목록)을 함께 반환.
+    only_planes: 판 이름 집합 — 표본 스캔에서 확인된 판만 검사해 고속화."""
+    h, w = frame.shape[:2]
+    planes, mx, dmap, wmap = _text_planes(frame, only=only_planes)
+    k3 = np.ones((3, 3), np.uint8)
     good = []
-    for i in range(1, nlab):
-        x, y, cw, ch, area = stats[i]
-        if not (20 <= area <= 7000 and 8 <= ch <= 85 and cw <= 240): continue
-        m = (lab == i)
-        sig = int(np.count_nonzero(m & (darkD > 0)))
-        if sig < max(4, 0.06 * area):
-            # 보조 조건: 테두리 없는 흰 글자 — 주변이 글자보다 충분히 어두우면 인정
-            md = cv2.dilate(m.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=3).astype(bool)
-            ring = md & ~m
+    for pname, pmask, omap in planes:
+        nlab, lab, stats, _ = cv2.connectedComponentsWithStats(pmask, 8)
+        for i in range(1, nlab):
+            x, y, cw, ch, area = stats[i]
+            if not (20 <= area <= 7000 and 8 <= ch <= 85 and cw <= 240): continue
+            if pname != "w" and (area < 80 or ch < 12): continue   # 색·검정 글자는 더 커야 함 (얼룩 차단)
+            # 국소 창(테두리 검사 비용 절약)
+            x0w = max(0, x - 6); y0w = max(0, y - 6)
+            x1w = min(w, x + cw + 6); y1w = min(h, y + ch + 6)
+            msub = (lab[y0w:y1w, x0w:x1w] == i)
+            m8 = msub.astype(np.uint8)
+            ring = (cv2.dilate(m8, k3, iterations=3) > 0) & (~msub)
             if not ring.any(): continue
-            gmean = float(mx[m].mean()); rmean = float(mx[ring].mean())
-            if not (gmean - rmean >= 60 and rmean < 150): continue
-        good.append({"x0": x, "x1": x + cw - 1, "y0": y, "y1": y + ch - 1, "h": ch, "mask": m})
+            strict = False
+            if pname == "w":
+                dfrac = float(dmap[y0w:y1w, x0w:x1w][ring].mean())
+                strict = dfrac >= 0.20
+                if not strict:
+                    # 보조: 테두리 없는 흰 글자 — 주변이 충분히 어두우면 인정
+                    mxs = mx[y0w:y1w, x0w:x1w]
+                    gmean = float(mxs[msub].mean()); rmean = float(mxs[ring].mean())
+                    if not (gmean - rmean >= 60 and rmean < 150): continue
+            elif pname == "k":
+                if float(omap[y0w:y1w, x0w:x1w][ring].mean()) < 0.40: continue  # 밝은 테두리 필수
+                strict = True
+            else:
+                # 색 글자: '한 종류'의 테두리(검정 또는 흰)가 35% 이상 둘러야 함
+                dfrac = float(dmap[y0w:y1w, x0w:x1w][ring].mean())
+                wfrac = float(wmap[y0w:y1w, x0w:x1w][ring].mean())
+                if max(dfrac, wfrac) < 0.35: continue
+                strict = True
+            m = np.zeros((h, w), bool)
+            m[y0w:y1w, x0w:x1w] = msub
+            good.append({"x0": x, "x1": x + cw - 1, "y0": y, "y1": y + ch - 1, "h": ch,
+                         "area": int(area), "strict": strict, "plane": pname,
+                         "omap": omap, "mask": m})
     good.sort(key=lambda c: c["y0"] + c["y1"])
     clusters = []
     for c in good:
@@ -227,16 +281,40 @@ def glyph_clusters(frame):
         else:
             clusters.append({"cy": cy, "items": [c]})
     out = []
+    singles = []
     for cl in clusters:
         its = cl["items"]
-        if len(its) < 2: continue
-        x0 = min(i["x0"] for i in its); x1 = max(i["x1"] for i in its)
-        if x1 - x0 < 90: continue
-        hs = sorted(i["h"] for i in its); med = hs[len(hs) // 2]
-        if med < 16 or med > 80: continue
-        if (x1 - x0) < 0.45 * w and (x0 < 0.07 * w or x1 > 0.93 * w): continue
+        accepted = True
+        # 줄 판정 통계는 '정상 크기 글자(core)'만으로 계산 — 작은 얼룩이 줄을 오염시키지 못하게
+        core = [i for i in its if i["h"] >= 16]
+        x0 = min(i["x0"] for i in (core or its)); x1 = max(i["x1"] for i in (core or its))
+        hs = sorted(i["h"] for i in core); med = hs[len(hs) // 2] if hs else 0
+        if len(core) < 2: accepted = False
+        elif x1 - x0 < 90: accepted = False
+        elif med < 16 or med > 80: accepted = False
+        elif (x1 - x0) < 0.45 * w and (x0 < 0.07 * w or x1 > 0.93 * w): accepted = False
+        if accepted:
+            # 줄에 남길 글자: core + core 높이와 비슷한 작은 조각(획 조각)만
+            its = [i for i in its if i["h"] >= 12]
+            cl["items"] = its
         y0 = min(i["y0"] for i in its); y1 = max(i["y1"] for i in its)
-        out.append({"x0": x0, "x1": x1, "y0": y0, "y1": y1, "items": its, "dark": dark})
+        # 이 줄의 테두리 지도 = 소속 글자들의 테두리 지도 합집합
+        omaps = []
+        for i2 in its:
+            if not any(o is i2["omap"] for o in omaps): omaps.append(i2["omap"])
+        dk = omaps[0] if len(omaps) == 1 else np.bitwise_or.reduce(np.stack(omaps), axis=0)
+        if accepted:
+            out.append({"x0": x0, "x1": x1, "y0": y0, "y1": y1, "items": its, "dark": dk})
+        elif with_singles:
+            # 단글자 후보: 테두리 뚜렷(strict) + 글자 크기 정상 + 덩어리 너비 짧음 (검정 판 제외)
+            sits = [i2 for i2 in its
+                    if i2["strict"] and i2["plane"] != "k" and 16 <= i2["h"] <= 85 and i2["area"] >= 90]
+            if sits and (x1 - x0) <= 170:
+                sx0 = min(i["x0"] for i in sits); sx1 = max(i["x1"] for i in sits)
+                sy0 = min(i["y0"] for i in sits); sy1 = max(i["y1"] for i in sits)
+                singles.append({"x0": sx0, "x1": sx1, "y0": sy0, "y1": sy1,
+                                "items": sits, "dark": dk})
+    if with_singles: return out, singles
     return out
 
 def glyph_labels(frame, ref=None):
@@ -487,7 +565,7 @@ def _bands_from_hits(hits, W, H):
     groups.sort(key=lambda g: -len(g["items"]))
     bands = []
     for g in groups:
-        if len(bands) >= 3: break
+        if len(bands) >= 4: break   # 최대 4줄, 단 총높이 1280px 한도(메모리 보호)
         top = max(0, int(min(a for a, b in g["items"]) - 40))
         bot = min(H, int(max(b for a, b in g["items"]) + 40))
         bh = floor16(bot - top)
@@ -496,6 +574,7 @@ def _bands_from_hits(hits, W, H):
         bx = (W - bw) // 2
         by = clamp(top, 0, H - bh)
         if any(not (by + bh <= b2["y"] or b2["y"] + b2["h"] <= by) for b2 in bands): continue
+        if sum(b2["h"] for b2 in bands) + bh > 1280: continue   # 총높이 한도
         bands.append({"x": bx, "y": by, "w": bw, "h": bh, "kind": "subtitle" + str(len(bands))})
     return bands
 
@@ -620,10 +699,29 @@ def build_subtitle_masks(band_frames, N, with_labels=True):
     zones = [z for z in zones if z["cnt"] >= 4]
     for z in zones:
         z["hue"] = sorted(z["hues"])[len(z["hues"]) // 2]   # 구역 대표 색상(중앙값)
+    # 색상 판 프루닝: 15프레임 간격 표본에서 이 띠에 실제로 나타나는 색상 판만 확정
+    # → 프레임별 정밀 검사는 그 판만 수행 (만능 색상이어도 속도 유지)
+    active = set()
+    if not with_labels:
+        for i in range(0, N, 15):
+            cl0, ss0 = glyph_clusters(band_frames[i], with_singles=True)
+            for c in cl0:
+                for i2 in c.get("items") or []:
+                    if "plane" in i2: active.add(i2["plane"])
+            for s in ss0:
+                for i2 in s["items"]:
+                    if "plane" in i2: active.add(i2["plane"])
     # 2단계: 프레임별 클러스터 (자막 줄 + 구역 안 라벨)
     per = []
+    sing = []
     for i, f in enumerate(band_frames):
-        cl = glyph_clusters(f)
+        if with_labels:
+            cl = glyph_clusters(f)
+            ss = []
+        elif not active:
+            cl, ss = [], []
+        else:
+            cl, ss = glyph_clusters(f, with_singles=True, only_planes=active)
         for z in zones:
             if z["lo"] - 36 <= i <= z["hi"] + 36:
                 for g in glyph_labels(f, None):
@@ -633,6 +731,44 @@ def build_subtitle_masks(band_frames, N, with_labels=True):
                 if zf is not None: cl.append(zf)
                 break
         per.append(cl)
+        sing.append(ss)
+    # 한 글자 대사 보강: '여러 글자 자막 줄'이 실제로 나타났던 줄 위치·크기에서만 단글자 허용.
+    # (줄 위치 밖의 흰 물체·반사광은 절대 승인 안 됨 — 오탐 차단)
+    lines = []   # {"yc","n","ys","hs","x0","x1","fr"}
+    for fi, cls in enumerate(per):
+        for c in cls:
+            its = c.get("items") or []
+            if len(its) < 2 or "h" not in its[0]: continue
+            yc = (c["y0"] + c["y1"]) / 2
+            hmed = sorted(i2["h"] for i2 in its)[len(its) // 2]
+            put = None
+            for L in lines:
+                if abs(L["yc"] - yc) < 25: put = L; break
+            if put:
+                put["n"] += 1; put["ys"].append(yc); put["hs"].append(hmed)
+                put["x0"] = min(put["x0"], c["x0"]); put["x1"] = max(put["x1"], c["x1"])
+                put["yc"] = sum(put["ys"]) / len(put["ys"])
+                put["fr"].append(fi)
+            else:
+                lines.append({"yc": yc, "n": 1, "ys": [yc], "hs": [hmed], "x0": c["x0"], "x1": c["x1"], "fr": [fi]})
+    lines = [L for L in lines if L["n"] >= 8]   # 8프레임 이상 관측된 진짜 자막 줄만
+    for L in lines:
+        L["hmed"] = sorted(L["hs"])[len(L["hs"]) // 2]
+        act = np.zeros(N + 1, np.int32)
+        for fi in L["fr"]: act[fi] = 1
+        L["cum"] = np.cumsum(act)   # 시간 근접 검사용 누적합
+    def _near(L, i, win=90):
+        a = max(0, i - win); b = min(N - 1, i + win)
+        return (L["cum"][b + 1] - L["cum"][a]) > 0
+    if lines:
+        for i in range(N):
+            for s in sing[i]:
+                syc = (s["y0"] + s["y1"]) / 2
+                sh = max(i2["h"] for i2 in s["items"])
+                for L in lines:
+                    if abs(L["yc"] - syc) < 30 and L["x0"] - 30 <= s["x0"] and s["x1"] <= L["x1"] + 30 \
+                       and 0.6 * L["hmed"] <= sh <= 1.45 * L["hmed"] and _near(L, i):
+                        per[i].append(s); break
     def stable(i, box):
         cnt = 0
         for j in range(max(0, i - 6), min(N - 1, i + 6) + 1):
@@ -684,14 +820,25 @@ def tmp_delete(prefix, names):
         pass
 
 def masks_pack(masks):
-    """마스크 목록(N,h,w u8 0/255) → 압축 바이트"""
+    """마스크 목록(N,h,w u8 0/255) → 압축 바이트 (v2: 프레임 간 차이만 저장 → 수십 배 작아짐)"""
     N = len(masks); h, w = masks[0].shape
-    bits = np.packbits(np.stack(masks) > 20)
-    raw = N.to_bytes(4, "big") + h.to_bytes(4, "big") + w.to_bytes(4, "big") + bits.tobytes()
-    return zlib.compress(raw, 6)
+    st = (np.stack(masks) > 20)
+    delta = st.copy()
+    delta[1:] ^= st[:-1]          # 앞 프레임과 달라진 픽셀만 1
+    bits = np.packbits(delta)
+    raw = b"D2" + N.to_bytes(4, "big") + h.to_bytes(4, "big") + w.to_bytes(4, "big") + bits.tobytes()
+    return zlib.compress(raw, 7)
 
 def masks_unpack(data):
     raw = zlib.decompress(data)
+    if raw[:2] == b"D2":
+        N = int.from_bytes(raw[2:6], "big"); h = int.from_bytes(raw[6:10], "big"); w = int.from_bytes(raw[10:14], "big")
+        bits = np.frombuffer(raw[14:], np.uint8)
+        delta = np.unpackbits(bits, count=N * h * w).reshape(N, h, w).astype(bool)
+        st = np.bitwise_xor.accumulate(delta, axis=0)
+        arr = st.astype(np.uint8) * 255
+        return [arr[i] for i in range(N)]
+    # 구버전(v1) 형식 호환
     N = int.from_bytes(raw[0:4], "big"); h = int.from_bytes(raw[4:8], "big"); w = int.from_bytes(raw[8:12], "big")
     bits = np.frombuffer(raw[12:], np.uint8)
     arr = np.unpackbits(bits, count=N * h * w).reshape(N, h, w).astype(np.uint8) * 255
@@ -915,7 +1062,7 @@ def build_region_masks(pid, work, reg, N, frames=None):
     return frames, masks
 
 # ---------------- 단계: 계획 (v2: 단일 해독 + 멀티코어) ----------------
-def phase_plan(proj, tmp):
+def phase_plan(proj, tmp, scan_step=12):
     pid = proj["id"]
     sw = SW()
     set_proj(pid, "wm_running", "영상을 받아 오는 중…")
@@ -933,7 +1080,7 @@ def phase_plan(proj, tmp):
         regions = detect_regions(proj, work, info, N, "manual")
     else:
         set_proj(pid, "wm_running", "자막·워터마크를 찾는 중…")
-        samples = list(stream_frames(work, W, H, sample_every=12))
+        samples = list(stream_frames(work, W, H, sample_every=scan_step))
         sw.mark("scan_dec")
         regions.extend(detect_sub_bands_from(samples, W, H))
         for side in ("tl", "tr"):
@@ -1024,6 +1171,11 @@ def phase_work(proj, tmp, part, parts):
         os.remove(out)
         t_encup += time.time() - tb
         done += 1
+        try:
+            set_proj(pid, "wm_running",
+                     f"AI가 배경을 복원하는 중… (일꾼{part + 1}: {done}/{len(my_chunks)} 조각 완료)")
+        except Exception:
+            pass
     sw.t["ai"] = round(t_ai, 1); sw.t["enc_up"] = round(t_encup, 1)
     return {"phase": "work", "part": part, "done": done, "tms": sw.out()}
 
@@ -1228,7 +1380,7 @@ def composite_and_finish(proj, src, work, info, N, results, t0, plan=None):
     sec = round(time.time() - t0)
     mode = "manual" if proj.get("wm_mode") == "manual" else "auto"
     detail = {"url": url_out, "mode": mode, "tier": proj.get("wm_tier") or "std",
-              "regions": [r["reg"]["kind"] for r in results], "sec": sec, "gpu": "runpod"}
+              "regions": [r["reg"]["kind"] for r in results], "sec": sec, "gpu": "runpod", "ver": VERSION}
     set_proj(pid, "wm_done", detail)
     print("[gpu-wm] 완료", pid, json.dumps({**detail, "url": "(생략)"}, ensure_ascii=False))
     return detail
@@ -1274,7 +1426,7 @@ def handler(event):
     try:
         proj = sb_select_one("sc_projects", {"id": "eq." + pid})
         if not proj: return {"error": "프로젝트를 찾을 수 없어요: " + pid}
-        if phase == "plan": return phase_plan(proj, tmp)
+        if phase == "plan": return phase_plan(proj, tmp, scan_step=int(inp.get("scan_step") or 12))
         if phase == "work": return phase_work(proj, tmp, int(inp.get("part", 0)), int(inp.get("parts", 1)))
         if phase == "mergeseg": return phase_mergeseg(proj, tmp, int(inp.get("part", 0)), int(inp.get("parts", 1)))
         if phase == "finish": return phase_finish(proj, tmp, t0, int(inp.get("parts", 1)), inp.get("tms"))
