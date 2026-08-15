@@ -67,7 +67,11 @@ def sb_select_one(table, match, cols="*"):
     return rows[0] if rows else None
 
 def set_proj(pid, status, detail):
-    sb_update("sc_projects", {"id": "eq." + pid},
+    m = {"id": "eq." + pid}
+    if status == "wm_running":
+        # 진행 문구는 진행 중일 때만 기록: 취소된(좀비) 일꾼이 실패/완료 상태를 덮어쓰는 사고 방지
+        m["status"] = "in.(wm_queued,wm_running)"
+    sb_update("sc_projects", m,
               {"status": status, "status_detail": detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False),
                "updated_at": now_iso()})
 
