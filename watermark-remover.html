@@ -101,7 +101,12 @@
     <input type="file" id="file" accept="video/*" style="display:none;">
 
     <div class="editor" id="editor">
-      <div class="ed-hint">🖱️ 아래 화면에서 <b>지울 부분을 마우스로 끌어 네모를 그려주세요.</b> (구간마다 최대 4개 — 자막칸, 로고 등) 잘못 그렸으면 [이 구간 네모 지우기]를 누르고 다시 그리면 됩니다.<br>🎞️ <b>화면 아래 막대를 움직이면 영상의 다른 장면도 볼 수 있어요.</b><br>✂️ 자막 위치·크기가 중간에 바뀌면, 바뀌는 시점으로 이동해 <b>[이 시간부터 새 구간]</b>을 누른 뒤 새 네모를 그려주세요. 각 구간에 그린 네모는 <b>그 구간의 시간에만</b> 적용되고, 네모 안은 <b>통째로 지워져 배경으로 복원</b>됩니다.<br>💡 "통!" 하고 커지며 나타나는 자막은 [◀ 한 칸] 버튼으로 커진 순간을 찾아 <b>가장 커졌을 때 크기</b>로 그려주세요. (가장자리와 앞뒤 시간의 약간의 여유는 자동으로 더해드립니다)</div>
+      <div class="ed-hint"><b>📋 사용 방법 — 순서대로 따라 하세요</b><br>
+        <b>①</b> 화면 속 지울 자막 위에 <b>마우스로 끌어서 네모</b>를 그립니다. (자막보다 조금 넉넉하게)<br>
+        <b>②</b> 아래 <b>막대를 옆으로 밀어</b> 영상을 끝까지 훑어봅니다. 자막이 계속 같은 자리에 나오면 그대로 두면 됩니다.<br>
+        <b>③</b> 자막의 <b>위치나 크기가 달라지는 장면</b>이 나오면 → <b>[✂️ 여기부터 다르게 지우기]</b>를 누르세요. 지금까지 그린 네모는 저장되고, 화면이 비워지니 <b>새 자리에 네모를 다시</b> 그리면 됩니다.<br>
+        <b>④</b> 끝까지 확인했으면 아래 <b>파란 [지우기 시작] 버튼</b>을 누르세요.<br>
+        💡 잘못 그렸으면 [🗑 네모 다시 그리기] · "통!" 하고 커지며 나타나는 자막은 [◀ 0.1초]로 커진 순간을 찾아 <b>그 크기로</b> 그려주세요.</div>
       <div class="ed-wrap"><canvas id="ed-canvas"></canvas></div>
       <div class="ed-scrub">
         <input type="range" id="ed-slider" min="0" max="10" value="5" oninput="edSeek(this.value)">
@@ -109,19 +114,19 @@
       <div class="ed-scrub2">
         <button class="ed-btn" onclick="edStep(-5)">◀ 5초</button>
         <button class="ed-btn" onclick="edStep(-1)">◀ 1초</button>
-        <button class="ed-btn" onclick="edStep(-0.1)">◀ 한 칸</button>
-        <button class="ed-btn" onclick="edStep(0.1)">한 칸 ▶</button>
+        <button class="ed-btn" onclick="edStep(-0.1)">◀ 0.1초</button>
+        <button class="ed-btn" onclick="edStep(0.1)">0.1초 ▶</button>
         <button class="ed-btn" onclick="edStep(1)">1초 ▶</button>
         <button class="ed-btn" onclick="edStep(5)">5초 ▶</button>
         <span class="ed-time" id="ed-time">0:00.0 / 0:00.0</span>
       </div>
       <div class="ed-seg">
-        <button class="ed-btn" onclick="segNew()">✂️ 이 시간부터 새 구간</button>
-        <button class="ed-btn" onclick="segDel()">구간 나누기 취소</button>
+        <button class="ed-btn" onclick="segNew()">✂️ 여기부터 다르게 지우기</button>
+        <button class="ed-btn" onclick="segDel()">나누기 취소</button>
         <span class="ed-seglist" id="ed-seglist"></span>
       </div>
       <div class="ed-act">
-        <button class="ed-btn" onclick="clearRects()">🗑 이 구간 네모 지우기</button>
+        <button class="ed-btn" onclick="clearRects()">🗑 네모 다시 그리기</button>
         <span class="ed-cnt" id="ed-cnt">이 구간 네모: 0개</span>
       </div>
     </div>
@@ -173,9 +178,9 @@
     var el=$id("ed-seglist"); if(!el) return;
     var parts=[];
     for(var k=0;k<segs.length;k++){
-      var end = (k+1<segs.length) ? fmtT(segs[k+1].start) : "끝";
+      var end = (k+1<segs.length) ? fmtTs(segs[k+1].start) : "끝";
       var cls = (k===segIdx) ? "seg-chip on" : "seg-chip";
-      parts.push('<span class="'+cls+'" onclick="edSeek('+Math.round(segs[k].start*10)+')">'+(k+1)+'구간 '+fmtT(segs[k].start)+'~'+end+' · '+segs[k].rects.length+'개</span>');
+      parts.push('<span class="'+cls+'" onclick="edSeek('+Math.round(segs[k].start*10)+')">'+(k+1)+'번: '+fmtTs(segs[k].start)+'~'+(end==="끝"?"끝":end)+' · 네모'+segs[k].rects.length+'</span>');
     }
     el.innerHTML=parts.join('');
     var c=$id("ed-cnt"); if(c) c.textContent="이 구간 네모: "+rects.length+"개";
@@ -183,8 +188,8 @@
   function segNew(){
     if(!edVideo){ showErr("먼저 영상을 선택해 주세요."); return; }
     var t=Math.round(edVideo.currentTime*10)/10;
-    if(t<0.5){ showErr("구간은 0.5초 이후 시점부터 나눌 수 있어요. 막대를 움직여 원하는 시점으로 이동해 주세요."); return; }
-    for(var k=0;k<segs.length;k++){ if(Math.abs(segs[k].start-t)<0.5){ showErr("이 위치에는 이미 구간 나누기가 있어요."); return; } }
+    if(t<0.5){ showErr("먼저 아래 막대를 밀어, 자막이 달라지는 장면으로 이동한 뒤 눌러주세요."); return; }
+    for(var k=0;k<segs.length;k++){ if(Math.abs(segs[k].start-t)<0.5){ showErr("이 장면에서는 이미 나눠져 있어요. 막대를 조금 더 옮긴 뒤 눌러주세요."); return; } }
     segs.push({start:t, rects:[]});
     segs.sort(function(a,b){ return a.start-b.start; });
     segIdx=curSegIdx(); rects=segs[segIdx].rects;
@@ -192,7 +197,7 @@
   }
   function segDel(){
     var i=curSegIdx();
-    if(i===0){ showErr("첫 구간(0:00부터)은 없앨 수 없어요. 네모만 지우려면 [이 구간 네모 지우기]를 누르세요."); return; }
+    if(i===0){ showErr("영상 맨 처음 부분은 취소할 것이 없어요. 네모만 다시 그리려면 [🗑 네모 다시 그리기]를 누르세요."); return; }
     segs.splice(i,1);
     segIdx=curSegIdx(); rects=segs[segIdx].rects;
     refreshSegUI(); redraw();
@@ -255,6 +260,7 @@
   // ---------- 직접 지정: 장면 이동 + 네모 그리기 ----------
   var edVideo=null;
   function fmtT(s){ s=Math.max(0,s); var m=Math.floor(s/60); var sec=s-m*60; return m+":"+(sec<10?"0":"")+sec.toFixed(1); }
+  function fmtTs(s){ s=Math.max(0,Math.round(s)); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); }
   function loadFrame(f){ return new Promise(function(res){
     if(edVideo){ try{ URL.revokeObjectURL(edVideo.src); }catch(e){} }
     var v=document.createElement("video"); v.preload="auto"; v.muted=true; v.playsInline=true;
