@@ -44,7 +44,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v22"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v23"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -1287,6 +1287,89 @@ def phase_work(proj, tmp, part, parts):
     sw.t["ai"] = round(t_ai, 1); sw.t["enc_up"] = round(t_encup, 1)
     return {"phase": "work", "part": part, "done": done, "tms": sw.out()}
 
+# ---------------- 단계: 작업 (조각 바구니) — v23: 빠른 일꾼이 조각을 더 가져가는 방식 ----------------
+def _claim_chunk(pid):
+    """바구니(wm_chunks)에서 아직 안 한 조각 하나를 선점한다.
+    같은 조각을 두 일꾼이 동시에 잡지 못하도록, '상태가 todo일 때만 바꾸기' 조건으로 선점.
+    성공하면 조각 번호(ci), 남은 조각이 없으면 None."""
+    for _ in range(8):
+        r = requests.get(f"{SB_URL}/rest/v1/wm_chunks",
+                         params={"project_id": "eq." + pid, "status": "eq.todo",
+                                 "select": "ci", "order": "ci.asc", "limit": "1"},
+                         headers=sb_headers(), timeout=30)
+        r.raise_for_status()
+        rows = r.json()
+        if not rows:
+            return None
+        ci = int(rows[0]["ci"])
+        r2 = requests.patch(f"{SB_URL}/rest/v1/wm_chunks",
+                            params={"project_id": "eq." + pid, "ci": "eq." + str(ci), "status": "eq.todo"},
+                            headers=sb_headers({"Content-Type": "application/json",
+                                                "Prefer": "return=representation"}),
+                            data=json.dumps({"status": "doing", "claimed_at": now_iso()}), timeout=30)
+        r2.raise_for_status()
+        if r2.json():   # 내가 선점 성공 (다른 일꾼이 먼저 가져갔으면 빈 목록)
+            return ci
+    return None
+
+def phase_workpool(proj, tmp, wid):
+    pid = proj["id"]
+    sw = SW()
+    plan = json.loads(tmp_download(f"wmtmp/{pid}/plan.json"))
+    tier = TIERS.get(plan["tier"], TIERS["std"])
+    chunks = plan["chunks"]
+    total = len(chunks)
+    if not total:
+        return {"phase": "workpool", "wid": wid, "done": 0, "tms": sw.out()}
+    src, work = fetch_lite(proj, tmp, plan)
+    sw.mark("dl")
+    get_pipe()
+    sw.mark("model")
+    frames_by_ri = {}   # 영역별 프레임: 처음 그 영역 조각을 잡을 때 한 번만 해독
+    masks_by_ri = {}
+    done = 0
+    t_ai = 0.0; t_encup = 0.0; t_dec = 0.0
+    while True:
+        ci = _claim_chunk(pid)
+        if ci is None:
+            break
+        c = chunks[ci]
+        ri = c["r"]
+        if ri not in frames_by_ri:
+            td = time.time()
+            crops = read_all_crops(work, plan["W"], plan["H"], [plan["regions"][ri]])
+            frames_by_ri[ri] = crops[0]
+            masks_by_ri[ri] = masks_unpack(tmp_download(f"wmtmp/{pid}/m{ri}.bin"))
+            t_dec += time.time() - td
+        t2 = dict(tier)
+        if plan["regions"][ri]["kind"].startswith("manual") and plan.get("tier") != "fast":
+            t2["scale"] = 1.0   # v21: 직접 지정 영역은 원본 해상도로 복원
+        ta = time.time()
+        arr = restore_chunk(frames_by_ri[ri], masks_by_ri[ri], t2, c)
+        t_ai += time.time() - ta
+        tb = time.time()
+        out = os.path.join(tmp, f"o_{ri}_{c['s']}.mp4")
+        encode_chunk_mp4(arr, plan["fps"], out)
+        with open(out, "rb") as f:
+            tmp_upload(f"wmtmp/{pid}/o_{ri}_{c['s']}.mp4", f.read(), "video/mp4")
+        os.remove(out)
+        t_encup += time.time() - tb
+        done += 1
+        try:
+            sb_update("wm_chunks", {"project_id": "eq." + pid, "ci": "eq." + str(ci)}, {"status": "done"})
+        except Exception:
+            traceback.print_exc()
+        try:
+            rr = requests.get(f"{SB_URL}/rest/v1/wm_chunks",
+                              params={"project_id": "eq." + pid, "status": "eq.done", "select": "ci"},
+                              headers=sb_headers(), timeout=30)
+            nd = len(rr.json()) if rr.ok else 0
+            set_proj(pid, "wm_running", f"AI가 배경을 복원하는 중… (전체 {nd}/{total} 조각 완료)")
+        except Exception:
+            pass
+    sw.t["dec"] = round(t_dec, 1); sw.t["ai"] = round(t_ai, 1); sw.t["enc_up"] = round(t_encup, 1)
+    return {"phase": "workpool", "wid": wid, "done": done, "tms": sw.out()}
+
 # ---------------- 단계: 병합 ----------------
 def phase_merge(proj, tmp, t0):
     pid = proj["id"]
@@ -1542,6 +1625,7 @@ def handler(event):
         if not proj: return {"error": "프로젝트를 찾을 수 없어요: " + pid}
         if phase == "plan": return phase_plan(proj, tmp, scan_step=int(inp.get("scan_step") or 12))
         if phase == "work": return phase_work(proj, tmp, int(inp.get("part", 0)), int(inp.get("parts", 1)))
+        if phase == "workpool": return phase_workpool(proj, tmp, int(inp.get("wid") or 0))
         if phase == "mergeseg": return phase_mergeseg(proj, tmp, int(inp.get("part", 0)), int(inp.get("parts", 1)))
         if phase == "finish": return phase_finish(proj, tmp, t0, int(inp.get("parts", 1)), inp.get("tms"))
         if phase == "merge": return phase_merge(proj, tmp, t0)
