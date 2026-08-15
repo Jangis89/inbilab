@@ -44,7 +44,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v13"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v14"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -74,24 +74,42 @@ def set_proj(pid, status, detail):
 def now_iso():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
+def _retry(fn, tries=4, base_wait=3):
+    """저장소 통신 재시도: 일시적 오류(400/5xx/네트워크)로 전체 작업이 죽는 것을 방지.
+    3초 → 9초 → 27초 간격으로 재시도 후에도 실패하면 그때 예외를 올린다."""
+    last = None
+    for i in range(tries):
+        try:
+            return fn()
+        except Exception as e:
+            last = e
+            if i < tries - 1: time.sleep(base_wait * (3 ** i))
+    raise last
+
 def signed_url(path, expires):
-    r = requests.post(f"{SB_URL}/storage/v1/object/sign/videos-source/{path}",
-                      headers=sb_headers({"Content-Type": "application/json"}),
-                      data=json.dumps({"expiresIn": expires}), timeout=30)
-    r.raise_for_status()
-    return SB_URL + "/storage/v1" + r.json()["signedURL"]
+    def _do():
+        r = requests.post(f"{SB_URL}/storage/v1/object/sign/videos-source/{path}",
+                          headers=sb_headers({"Content-Type": "application/json"}),
+                          data=json.dumps({"expiresIn": expires}), timeout=30)
+        r.raise_for_status()
+        return SB_URL + "/storage/v1" + r.json()["signedURL"]
+    return _retry(_do)
 
 def upload_clip(path_in_bucket, filepath):
-    with open(filepath, "rb") as f:
-        r = requests.post(f"{SB_URL}/storage/v1/object/videos-clips/{path_in_bucket}",
-                          headers=sb_headers({"Content-Type": "video/mp4", "x-upsert": "true"}),
-                          data=f, timeout=600)
-    r.raise_for_status()
-    r2 = requests.post(f"{SB_URL}/storage/v1/object/sign/videos-clips/{path_in_bucket}",
-                       headers=sb_headers({"Content-Type": "application/json"}),
-                       data=json.dumps({"expiresIn": 86400}), timeout=30)
-    r2.raise_for_status()
-    return SB_URL + "/storage/v1" + r2.json()["signedURL"]
+    def _up():
+        with open(filepath, "rb") as f:
+            r = requests.post(f"{SB_URL}/storage/v1/object/videos-clips/{path_in_bucket}",
+                              headers=sb_headers({"Content-Type": "video/mp4", "x-upsert": "true"}),
+                              data=f, timeout=600)
+        r.raise_for_status()
+    _retry(_up)
+    def _sign():
+        r2 = requests.post(f"{SB_URL}/storage/v1/object/sign/videos-clips/{path_in_bucket}",
+                           headers=sb_headers({"Content-Type": "application/json"}),
+                           data=json.dumps({"expiresIn": 86400}), timeout=30)
+        r2.raise_for_status()
+        return SB_URL + "/storage/v1" + r2.json()["signedURL"]
+    return _retry(_sign)
 
 # ---------------- ffmpeg helpers ----------------
 def run(cmd, **kw):
@@ -642,16 +660,20 @@ def build_subtitle_masks(band_frames, N, with_labels=True):
 import zlib, io as _io
 
 def tmp_upload(path_in_bucket, data_bytes, ctype="application/octet-stream"):
-    r = requests.post(f"{SB_URL}/storage/v1/object/videos-clips/{path_in_bucket}",
-                      headers=sb_headers({"Content-Type": ctype, "x-upsert": "true"}),
-                      data=data_bytes, timeout=600)
-    r.raise_for_status()
+    def _do():
+        r = requests.post(f"{SB_URL}/storage/v1/object/videos-clips/{path_in_bucket}",
+                          headers=sb_headers({"Content-Type": ctype, "x-upsert": "true"}),
+                          data=data_bytes, timeout=600)
+        r.raise_for_status()
+    _retry(_do)
 
 def tmp_download(path_in_bucket):
-    r = requests.get(f"{SB_URL}/storage/v1/object/videos-clips/{path_in_bucket}",
-                     headers=sb_headers(), timeout=600)
-    r.raise_for_status()
-    return r.content
+    def _do():
+        r = requests.get(f"{SB_URL}/storage/v1/object/videos-clips/{path_in_bucket}",
+                         headers=sb_headers(), timeout=600)
+        r.raise_for_status()
+        return r.content
+    return _retry(_do)
 
 def tmp_delete(prefix, names):
     try:
@@ -785,10 +807,12 @@ def restore_region(frames, masks, tier, on_step=None):
 
 # ---------------- 공통 준비 ----------------
 def download_to(url, dest):
-    with requests.get(url, stream=True, timeout=600) as r:
-        r.raise_for_status()
-        with open(dest, "wb") as f:
-            for chunk in r.iter_content(1024 * 1024): f.write(chunk)
+    def _do():
+        with requests.get(url, stream=True, timeout=600) as r:
+            r.raise_for_status()
+            with open(dest, "wb") as f:
+                for chunk in r.iter_content(1024 * 1024): f.write(chunk)
+    _retry(_do)
 
 def fetch_lite(proj, tmp, plan):
     """plan 이후 단계용: 원본만 내려받고 계획서의 값(N 등)을 재사용 — 재검사·재인코딩 없음"""
