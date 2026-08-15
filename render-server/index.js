@@ -973,23 +973,33 @@ async function rpCall(base, input) {
     if (Date.now() - t0 > 3900000) throw new Error("GPU 처리 시간 초과");
   }
 }
+async function rpCallRetry(base, input, tries = 2) {
+  // 조각 단위 재시도: 일시 오류(저장소 삐끗, 일꾼 교체 등) 1번으로 전체 작업이
+  // 값비싼 예비 경로(Replicate)로 넘어가는 것을 방지. 각 단계는 재실행해도 안전(멱등).
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try { return await rpCall(base, input); }
+    catch (e) { last = e; if (i < tries - 1) await new Promise((res) => setTimeout(res, 8000)); }
+  }
+  throw last;
+}
 async function runWmRemoveGpu(job) {
   const base = await gpuEndpointBase();
   const t0 = Date.now() / 1000;
-  const plan = await rpCall(base, { project_id: job.project_id, phase: "plan", t0 });
+  const plan = await rpCallRetry(base, { project_id: job.project_id, phase: "plan", t0 });
   if (plan.note === "no_target") return;
   const total = plan.chunks || 0;
   const PARTS = total >= 6 ? 3 : total >= 2 ? 2 : 1;
   try {
     await sb.from("sc_projects").update({ status: "wm_running", status_detail: "AI가 배경을 복원하는 중… (GPU " + PARTS + "대 동시 작업)" }).eq("id", job.project_id);
   } catch {}
-  const works = await Promise.all(Array.from({ length: PARTS }, (_, k) => rpCall(base, { project_id: job.project_id, phase: "work", part: k, parts: PARTS, t0 })));
+  const works = await Promise.all(Array.from({ length: PARTS }, (_, k) => rpCallRetry(base, { project_id: job.project_id, phase: "work", part: k, parts: PARTS, t0 })));
   try {
     await sb.from("sc_projects").update({ status: "wm_running", status_detail: "복원한 부분을 원본에 합치는 중… (GPU " + PARTS + "대 동시 작업)" }).eq("id", job.project_id);
   } catch {}
-  const segs = await Promise.all(Array.from({ length: PARTS }, (_, k) => rpCall(base, { project_id: job.project_id, phase: "mergeseg", part: k, parts: PARTS, t0 })));
+  const segs = await Promise.all(Array.from({ length: PARTS }, (_, k) => rpCallRetry(base, { project_id: job.project_id, phase: "mergeseg", part: k, parts: PARTS, t0 })));
   const tms = { plan: plan.tms || {}, work: works.map(w => (w && w.tms) || {}), seg: segs.map(s => (s && s.tms) || {}) };
-  await rpCall(base, { project_id: job.project_id, phase: "finish", parts: PARTS, t0, tms });
+  await rpCallRetry(base, { project_id: job.project_id, phase: "finish", parts: PARTS, t0, tms });
 }
 
 // ---------- 메인 루프 ----------
