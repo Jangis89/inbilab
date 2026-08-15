@@ -44,7 +44,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v17"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v18"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -887,8 +887,11 @@ def get_pipe():
         _PIPE.to("cuda:0")
     return _PIPE
 
-def plan_text_chunks(masks, N):
-    """글자가 실제로 있는 프레임 구간만 4k+1 조각으로 계획 (겹침 12)"""
+def plan_text_chunks(masks, N, pad=4):
+    """글자가 실제로 있는 프레임 구간만 4k+1 조각으로 계획 (겹침 12)
+    pad=0: 직접 지정 구간용 — 범위 밖 프레임을 조각에 넣지 않는다.
+    (경계 밖 프레임에 다른 구간의 자막이 그대로 보이면, 복원 AI가 그 글자를
+     참고해 지운 자리에 도로 그려 넣는 사고가 남 — v18에서 수정)"""
     txt = [i for i in range(N) if masks[i].any()]
     if not txt: return []
     # 밴드가 기준(360px)보다 높으면 조각 길이를 비례 축소 → GPU 메모리 사용량을 기존 수준으로 유지
@@ -901,11 +904,11 @@ def plan_text_chunks(masks, N):
     ivs.append((s0, p))
     chunks = []
     for a, b in ivs:
-        a = max(0, a - 4); b = min(N - 1, b + 4)
+        a = max(0, a - pad); b = min(N - 1, b + pad)
         s = a
         while True:
             e = min(b, s + CL - 1)
-            if e - s + 1 < 9: s = max(0, e - 8)  # 너무 짧은 조각 방지
+            if e - s + 1 < 9: s = max(a if pad == 0 else 0, e - 8)  # 너무 짧은 조각 방지 (pad=0이면 범위 안 유지)
             n = e - s + 1
             n_use = ((n - 1) // 4) * 4 + 1
             e = min(N - 1, s + n_use - 1)
@@ -944,10 +947,10 @@ def merge_chunks_into(merged, outs):
         written_to = max(written_to, o["e"])
     return merged
 
-def restore_region(frames, masks, tier, on_step=None):
+def restore_region(frames, masks, tier, on_step=None, pad=4):
     """단독(비병렬) 경로: 글자 구간만 복원"""
     N = len(frames)
-    chunks = plan_text_chunks(masks, N)
+    chunks = plan_text_chunks(masks, N, pad=pad)
     merged = np.stack(frames)
     outs = []
     for ci, c in enumerate(chunks):
@@ -1142,7 +1145,7 @@ def phase_plan(proj, tmp, scan_step=12):
         del frames
         if masks is None: continue
         tmp_upload(f"wmtmp/{pid}/m{len(plan_regions)}.bin", masks_pack(masks))
-        chunks = plan_text_chunks(masks, N)
+        chunks = plan_text_chunks(masks, N, pad=0 if reg["kind"].startswith("manual") else 4)
         for c in chunks: all_chunks.append({"r": len(plan_regions), "s": c["s"], "e": c["e"]})
         reg2 = {k: v for k, v in reg.items() if k != "static_mask"}
         plan_regions.append(reg2)
@@ -1429,7 +1432,8 @@ def phase_all(proj, tmp, t0):
         def on_step(d, t):
             try: set_proj(pid, "wm_running", f"AI가 배경을 복원하는 중… ({d}/{t} 조각)")
             except Exception: pass
-        merged = restore_region(frames, masks, TIERS.get(proj.get("wm_tier") or "std", TIERS["std"]), on_step)
+        merged = restore_region(frames, masks, TIERS.get(proj.get("wm_tier") or "std", TIERS["std"]), on_step,
+                                pad=0 if reg["kind"].startswith("manual") else 4)
         results.append({"reg": reg, "restored": merged, "masks": masks})
     if not results:
         set_proj(pid, "wm_done", {"note": "no_target",
