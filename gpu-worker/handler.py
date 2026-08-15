@@ -44,7 +44,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v16"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v17"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -1073,13 +1073,12 @@ def build_region_masks(pid, work, reg, N, frames=None):
         masks, masked = build_subtitle_masks(frames, n, with_labels=not reg["kind"].startswith("subtitle"))
         if masked == 0: return frames, None
     elif reg["kind"].startswith("manual"):
-        masks, masked = build_subtitle_masks(frames, n)
-        if masked < max(10, math.ceil(n * 0.03)):
-            m = np.zeros((reg["h"], reg["w"]), np.uint8)
-            pad = 12
-            m[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
-              max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
-            masks = [m] * n
+        # 수강생이 그린 네모는 통째로 지운다 — 글자 감지에 의존하면 장식 글씨·그림이 반만 지워지는 문제(v17)
+        m = np.zeros((reg["h"], reg["w"]), np.uint8)
+        pad = 12
+        m[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
+          max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
+        masks = [m] * n
         masks = _limit_masks_range(masks, n, reg)
     else:
         masks = [reg["static_mask"]] * n
@@ -1130,13 +1129,12 @@ def phase_plan(proj, tmp, scan_step=12):
             masks, masked = build_subtitle_masks(frames, n, with_labels=not reg["kind"].startswith("subtitle"))
             if masked == 0: masks = None
         elif reg["kind"].startswith("manual"):
-            masks, masked = build_subtitle_masks(frames, n)
-            if masked < max(10, math.ceil(n * 0.03)):
-                m = np.zeros((reg["h"], reg["w"]), np.uint8)
-                pad = 12
-                m[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
-                  max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
-                masks = [m] * n
+            # 수강생이 그린 네모는 통째로 지운다 — 글자 감지에 의존하면 장식 글씨·그림이 반만 지워지는 문제(v17)
+            m = np.zeros((reg["h"], reg["w"]), np.uint8)
+            pad = 12
+            m[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
+              max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
+            masks = [m] * n
             masks = _limit_masks_range(masks, n, reg)
         else:
             masks = [reg["static_mask"]] * n
