@@ -1023,11 +1023,31 @@ async function runWmRemoveGpu(job) {
   if (plan.note === "no_target") return;
   try { await setJobProgress(job.id, 30); } catch {}
   const total = plan.chunks || 0;
-  const PARTS = total >= 6 ? 3 : total >= 2 ? 2 : 1;
+  const PARTS = total >= 6 ? 3 : total >= 2 ? 2 : 1;   // 합치기(mergeseg) 분할 수 — 기존과 동일
+  const WK = Math.min(3, Math.max(1, total));           // 복원 일꾼 수 (조각 바구니 방식)
   try {
-    await sb.from("sc_projects").update({ status: "wm_running", status_detail: "AI가 배경을 복원하는 중… (GPU " + PARTS + "대 동시 작업)" }).eq("id", job.project_id);
+    await sb.from("sc_projects").update({ status: "wm_running", status_detail: "AI가 배경을 복원하는 중… (GPU " + WK + "대 동시 작업)" }).eq("id", job.project_id);
   } catch {}
-  const works = await Promise.all(Array.from({ length: PARTS }, (_, k) => rpCallRetry(base, { project_id: job.project_id, phase: "work", part: k, parts: PARTS, t0 })));
+  // 조각 바구니 준비: 조각 번호표(0..total-1)를 바구니 표에 채워 넣는다
+  await sb.from("wm_chunks").delete().eq("project_id", job.project_id);
+  {
+    const rows = Array.from({ length: total }, (_, ci) => ({ project_id: job.project_id, ci }));
+    const { error: ce } = await sb.from("wm_chunks").insert(rows);
+    if (ce) throw new Error("조각 바구니 준비 실패: " + ce.message);
+  }
+  const works = await Promise.all(Array.from({ length: WK }, (_, k) => rpCallRetry(base, { project_id: job.project_id, phase: "workpool", wid: k, t0 })));
+  // 빠뜨린 조각 검사: 남았으면 되돌려 넣고 한 번 더 (일꾼이 중간에 죽어도 안전)
+  {
+    const { data: left } = await sb.from("wm_chunks").select("ci").eq("project_id", job.project_id).neq("status", "done");
+    if (left && left.length) {
+      console.log("[wm-gpu] 남은 조각 " + left.length + "개 → 재작업");
+      await sb.from("wm_chunks").update({ status: "todo" }).eq("project_id", job.project_id).neq("status", "done");
+      works.push(await rpCallRetry(base, { project_id: job.project_id, phase: "workpool", wid: 99, t0 }));
+      const { data: left2 } = await sb.from("wm_chunks").select("ci").eq("project_id", job.project_id).neq("status", "done");
+      if (left2 && left2.length) throw new Error("복원 조각 " + left2.length + "개가 끝내 완료되지 않았습니다");
+    }
+  }
+  try { await sb.from("wm_chunks").delete().eq("project_id", job.project_id); } catch {}
   try {
     await sb.from("sc_projects").update({ status: "wm_running", status_detail: "복원한 부분을 원본에 합치는 중… (GPU " + PARTS + "대 동시 작업)" }).eq("id", job.project_id);
   } catch {}
