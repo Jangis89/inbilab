@@ -1029,21 +1029,40 @@ def detect_regions(proj, work, info, N, mode):
     if mode == "manual":
         rects = proj.get("wm_rects") or []
         if not rects: raise RuntimeError("지울 영역이 지정되지 않았어요")
-        for r0 in rects[:4]:
+        fps = float(info.get("fps") or 30)
+        for r0 in rects[:12]:
             px = clamp(round(r0["x"] * W), 0, W - 8); py = clamp(round(r0["y"] * H), 0, H - 8)
             pw = clamp(round(r0["w"] * W), 8, W - px); ph = clamp(round(r0["h"] * H), 8, H - py)
             gx = clamp(px - 32, 0, W); gy = clamp(py - 32, 0, H)
             gw = floor16(min(W - gx, pw + 64)); gh = floor16(min(H - gy, ph + 64))
             if gx + gw > W: gx = W - gw
             if gy + gh > H: gy = H - gh
-            regions.append({"x": gx, "y": gy, "w": gw, "h": gh, "kind": f"manual{len(regions)}",
-                            "rx0": px - gx, "rx1": px - gx + pw - 1, "ry0": py - gy, "ry1": py - gy + ph - 1})
+            reg = {"x": gx, "y": gy, "w": gw, "h": gh, "kind": f"manual{len(regions)}",
+                   "rx0": px - gx, "rx1": px - gx + pw - 1, "ry0": py - gy, "ry1": py - gy + ph - 1}
+            # 구간별 적용: 네모에 t0~t1(초)이 있으면 그 시간 범위의 프레임에서만 지운다
+            try: f0 = int(round(float(r0.get("t0") or 0) * fps))
+            except Exception: f0 = 0
+            f1 = N
+            if r0.get("t1") is not None:
+                try: f1 = int(round(float(r0["t1"]) * fps))
+                except Exception: f1 = N
+            f0 = clamp(f0, 0, N); f1 = clamp(f1, 0, N)
+            if f1 <= f0: f0, f1 = 0, N
+            reg["f0"] = f0; reg["f1"] = f1
+            regions.append(reg)
     else:
         regions.extend(detect_sub_bands(work, W, H, N))
         for side in ("tl", "tr"):
             c = detect_corner(work, W, H, side, N)
             if c: regions.append(c)
     return regions
+
+def _limit_masks_range(masks, n, reg):
+    """구간별 적용: 네모의 시간 범위(f0~f1) 밖 프레임은 지우지 않는다"""
+    f0 = int(reg.get("f0", 0) or 0); f1 = int(reg.get("f1", n) or n)
+    if f0 <= 0 and f1 >= n: return masks
+    z = np.zeros_like(masks[0])
+    return [masks[i] if f0 <= i < f1 else z for i in range(n)]
 
 def build_region_masks(pid, work, reg, N, frames=None):
     """영역 마스크 목록 생성 (frames 미리 있으면 재사용)"""
@@ -1061,6 +1080,7 @@ def build_region_masks(pid, work, reg, N, frames=None):
             m[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
               max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
             masks = [m] * n
+        masks = _limit_masks_range(masks, n, reg)
     else:
         masks = [reg["static_mask"]] * n
     return frames, masks
@@ -1117,6 +1137,7 @@ def phase_plan(proj, tmp, scan_step=12):
                 m[max(0, reg["ry0"] - pad):min(reg["h"], reg["ry1"] + pad + 1),
                   max(0, reg["rx0"] - pad):min(reg["w"], reg["rx1"] + pad + 1)] = 255
                 masks = [m] * n
+            masks = _limit_masks_range(masks, n, reg)
         else:
             masks = [reg["static_mask"]] * n
         crops[ri] = None
