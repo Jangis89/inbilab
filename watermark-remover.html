@@ -408,13 +408,22 @@
   }
   async function listMine(){
     var user=await getUser(); if(!user) return;
-    var r=await sb.from("sc_projects").select("id,title,status,status_detail")
+    var r=await sb.from("sc_projects").select("id,title,status,status_detail,created_at")
       .eq("user_id",user.id).eq("objective","wm_remove")
       .order("created_at",{ascending:false}).limit(10);
     if(r.error||!r.data) return;
     var active=false;
-    r.data.forEach(function(p){ var w=rows[p.id]||makeRow(p.id,p.title); updateRow(w,p); $id("worklist").appendChild(w);
+    // 처리 중인 작업은 무조건 맨 위, 나머지는 최신순
+    var arr=r.data.slice().sort(function(a,b){
+      function fin(p){ var st=p.status||""; return (st==="wm_done"||st.indexOf("failed")===0)?1:0; }
+      var d=fin(a)-fin(b); if(d) return d;
+      return a.created_at<b.created_at?1:(a.created_at>b.created_at?-1:0);
+    });
+    var keep={};
+    arr.forEach(function(p){ keep[p.id]=1; var w=rows[p.id]||makeRow(p.id,p.title); updateRow(w,p); $id("worklist").appendChild(w);
       if(p.status!=="wm_done" && (p.status||"").indexOf("failed")!==0) active=true; });
+    // 목록(최신 10개)에서 밀려난 옛 화면 조각은 제거 — 안 지우면 맨 위에 눌러앉아 순서가 꼬임
+    Object.keys(rows).forEach(function(id){ if(!keep[id]&&rows[id]){ if(rows[id].parentNode) rows[id].parentNode.removeChild(rows[id]); delete rows[id]; } });
     if(!active&&pollTimer){ clearInterval(pollTimer); pollTimer=null; }
   }
   function ensurePoll(){ listMine(); if(!pollTimer) pollTimer=setInterval(listMine,5000); }
