@@ -51,6 +51,7 @@
   .prog-fill{height:100%;width:0%;background:var(--blue);transition:width .3s;}
   .prog-txt{font-size:14px;color:var(--sub);margin-top:8px;text-align:center;}
   .vs-err{display:none;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:12px;padding:12px 15px;margin:12px 0;font-size:14px;} .vs-err.show{display:block;}
+  .started{display:none;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;border-radius:12px;padding:12px 15px;margin:12px 0;font-size:14.5px;font-weight:700;line-height:1.7;} .started.show{display:block;}
   .wl-item{border:1px solid var(--line);border-radius:14px;padding:14px;margin:12px 0;background:#fff;}
   .wl-title{font-weight:700;font-size:14.5px;word-break:keep-all;}
   .wl-video{width:100%;max-height:420px;border-radius:10px;background:#000;margin:6px 0;}
@@ -99,7 +100,7 @@
     <input type="file" id="file" accept="video/*" style="display:none;">
 
     <div class="editor" id="editor">
-      <div class="ed-hint">🖱️ 아래 화면에서 <b>지울 부분을 마우스로 끌어 네모를 그려주세요.</b> (구간마다 최대 4개 — 자막칸, 로고 등) 잘못 그렸으면 [이 구간 네모 지우기]를 누르고 다시 그리면 됩니다.<br>🎞️ <b>화면 아래 막대를 움직이면 영상의 다른 장면도 볼 수 있어요.</b><br>✂️ 자막 위치·크기가 중간에 바뀌면, 바뀌는 시점으로 이동해 <b>[이 시간부터 새 구간]</b>을 누른 뒤 새 네모를 그려주세요. 각 구간에 그린 네모는 <b>그 구간의 시간에만</b> 적용됩니다.</div>
+      <div class="ed-hint">🖱️ 아래 화면에서 <b>지울 부분을 마우스로 끌어 네모를 그려주세요.</b> (구간마다 최대 4개 — 자막칸, 로고 등) 잘못 그렸으면 [이 구간 네모 지우기]를 누르고 다시 그리면 됩니다.<br>🎞️ <b>화면 아래 막대를 움직이면 영상의 다른 장면도 볼 수 있어요.</b><br>✂️ 자막 위치·크기가 중간에 바뀌면, 바뀌는 시점으로 이동해 <b>[이 시간부터 새 구간]</b>을 누른 뒤 새 네모를 그려주세요. 각 구간에 그린 네모는 <b>그 구간의 시간에만</b> 적용되고, 네모 안은 <b>통째로 지워져 배경으로 복원</b>됩니다.</div>
       <div class="ed-wrap"><canvas id="ed-canvas"></canvas></div>
       <div class="ed-scrub">
         <button class="ed-btn" onclick="edStep(-5)">◀ 5초 전</button>
@@ -123,6 +124,7 @@
 
     <div class="prog-wrap" id="prog"><div class="prog-bar"><div class="prog-fill" id="prog-fill"></div></div><div class="prog-txt" id="prog-txt"></div></div>
     <div class="vs-err" id="err"></div>
+    <div class="started" id="started-note">✅ 접수 완료! 잠시 후 아래 <b>[내 작업]</b>에 단계별 진행 상황이 실시간으로 표시됩니다. 화면을 닫아도 작업은 계속 진행돼요.</div>
 
     <div class="adm" id="adm-panel">
       <h3>👑 관리자 설정</h3>
@@ -330,6 +332,7 @@
         setUp(-1,"");
         curFile=null; curDur=0; segs=[{start:0, rects:[]}]; segIdx=0; rects=segs[0].rects; if(edVideo){ try{ URL.revokeObjectURL(edVideo.src); }catch(e){} edVideo=null; } $id("drop-sub").textContent="1개씩 · 15분 이하 · 8GB 이하"; $id("editor").classList.remove("show"); $id("eta-line").classList.remove("show");
         USED++; refreshQuota(); refreshGo(); ensurePoll();
+        showStarted(ins.data && ins.data.id);
       }
     });
     upload.start();
@@ -379,6 +382,16 @@
     }
     setSteps(w,n);
     msg.textContent = st==="wm_queued"||st==="wm_waiting" ? "대기열에서 순서를 기다리는 중…" : (d||"처리 중…");
+  }
+  function showStarted(pid){
+    var e=$id("started-note");
+    if(e){ e.classList.add("show"); setTimeout(function(){ e.classList.remove("show"); }, 20000); }
+    var tries=0;
+    (function go(){
+      var w=pid?$id("wl-"+pid):null;
+      if(w){ w.scrollIntoView({behavior:"smooth", block:"center"}); }
+      else if(++tries<6){ setTimeout(go, 800); }
+    })();
   }
   async function listMine(){
     var user=await getUser(); if(!user) return;
