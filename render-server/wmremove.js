@@ -520,7 +520,7 @@ export async function runWmRemove(job) {
       if (u) await sb.from("wm_usage").update({ used: u.used + 1, updated_at: new Date().toISOString() }).eq("id", u.id);
       else await sb.from("wm_usage").insert({ user_id: proj.user_id, ym, used: 1 });
     } catch (e) { console.error("[wm] 사용량 기록 실패:", e.message); }
-    const detail = { url: rs && rs.signedUrl, mode, tier: proj.wm_tier || "std", regions: results.map((r) => r.region.kind), sec: Math.round((Date.now() - t0) / 1000), gpu_sec: Math.round(gpuSec) };
+    const detail = { url: rs && rs.signedUrl, mode, tier: proj.wm_tier || "std", regions: results.map((r) => r.region.kind), sec: Math.round((Date.now() - t0) / 1000), gpu_sec: Math.round(gpuSec), ver: "replicate-old" };
     await setProj(proj.id, "wm_done", JSON.stringify(detail));
     console.log("[wm] 완료 " + proj.id + " " + JSON.stringify({ ...detail, url: "(생략)" }));
   } catch (err) {

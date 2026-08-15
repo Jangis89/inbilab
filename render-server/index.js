@@ -954,7 +954,7 @@ async function gpuEndpointBase() {
   } catch {}
   return "https://api.runpod.ai/v2/" + ep;
 }
-async function rpCall(base, input) {
+async function rpCall(base, input, capMs = 2400000) {
   const hdr = { "Authorization": "Bearer " + process.env.RUNPOD_API_KEY, "Content-Type": "application/json" };
   const r = await fetch(base + "/run", { method: "POST", headers: hdr, body: JSON.stringify({ input }) });
   if (!r.ok) throw new Error("RunPod /run HTTP " + r.status + " " + (await r.text()).slice(0, 200));
@@ -970,15 +970,18 @@ async function rpCall(base, input) {
       return j.output || {};
     }
     if (j.status === "FAILED" || j.status === "CANCELLED" || j.status === "TIMED_OUT") throw new Error("RunPod 상태: " + j.status);
-    if (Date.now() - t0 > 3900000) throw new Error("GPU 처리 시간 초과");
+    if (Date.now() - t0 > capMs) {
+      try { await fetch(base + "/cancel/" + id, { method: "POST", headers: hdr }); } catch {}
+      throw new Error("GPU 단계 시간 초과(" + Math.round(capMs / 60000) + "분)");
+    }
   }
 }
-async function rpCallRetry(base, input, tries = 2) {
+async function rpCallRetry(base, input, tries = 2, capMs = 2400000) {
   // 조각 단위 재시도: 일시 오류(저장소 삐끗, 일꾼 교체 등) 1번으로 전체 작업이
   // 값비싼 예비 경로(Replicate)로 넘어가는 것을 방지. 각 단계는 재실행해도 안전(멱등).
   let last;
   for (let i = 0; i < tries; i++) {
-    try { return await rpCall(base, input); }
+    try { return await rpCall(base, input, capMs); }
     catch (e) { last = e; if (i < tries - 1) await new Promise((res) => setTimeout(res, 8000)); }
   }
   throw last;
@@ -986,8 +989,28 @@ async function rpCallRetry(base, input, tries = 2) {
 async function runWmRemoveGpu(job) {
   const base = await gpuEndpointBase();
   const t0 = Date.now() / 1000;
-  const plan = await rpCallRetry(base, { project_id: job.project_id, phase: "plan", t0 });
+  try { await setJobProgress(job.id, 5); } catch {}
+  let plan;
+  try {
+    plan = await rpCall(base, { project_id: job.project_id, phase: "plan", t0, scan_step: 12 }, 900000);
+  } catch (e1) {
+    console.error("[wm-gpu] 감지 1차 실패, 표본 간격 2배로 재시도:", e1.message);
+    try {
+      await sb.from("sc_projects").update({ status: "wm_running", status_detail: "감지가 오래 걸려 방식을 바꿔 다시 시도하는 중…" }).eq("id", job.project_id);
+    } catch {}
+    try {
+      plan = await rpCall(base, { project_id: job.project_id, phase: "plan", t0, scan_step: 24 }, 900000);
+    } catch (e2) {
+      try {
+        await sb.from("sc_projects").update({ status: "failed_wm", status_detail: "자동 감지에 실패했습니다. [직접 지정] 모드로 자막 위치를 그려주시면 빠르게 처리됩니다." }).eq("id", job.project_id);
+      } catch {}
+      const err = new Error("감지 단계 2회 실패: " + e2.message);
+      err.noFallback = true;
+      throw err;
+    }
+  }
   if (plan.note === "no_target") return;
+  try { await setJobProgress(job.id, 30); } catch {}
   const total = plan.chunks || 0;
   const PARTS = total >= 6 ? 3 : total >= 2 ? 2 : 1;
   try {
@@ -997,7 +1020,9 @@ async function runWmRemoveGpu(job) {
   try {
     await sb.from("sc_projects").update({ status: "wm_running", status_detail: "복원한 부분을 원본에 합치는 중… (GPU " + PARTS + "대 동시 작업)" }).eq("id", job.project_id);
   } catch {}
+  try { await setJobProgress(job.id, 85); } catch {}
   const segs = await Promise.all(Array.from({ length: PARTS }, (_, k) => rpCallRetry(base, { project_id: job.project_id, phase: "mergeseg", part: k, parts: PARTS, t0 })));
+  try { await setJobProgress(job.id, 95); } catch {}
   const tms = { plan: plan.tms || {}, work: works.map(w => (w && w.tms) || {}), seg: segs.map(s => (s && s.tms) || {}) };
   await rpCallRetry(base, { project_id: job.project_id, phase: "finish", parts: PARTS, t0, tms });
 }
@@ -1464,6 +1489,7 @@ async function loop() {
           if (process.env.RUNPOD_API_KEY && process.env.RUNPOD_ENDPOINT_ID) {
             try { await runWmRemoveGpu(job); }
             catch (e) {
+              if (e && e.noFallback) throw e;
               console.error("[wm-gpu] GPU 서버 실패, 예비(Replicate)로 전환:", e.message);
               if (process.env.REPLICATE_API_TOKEN) await runWmRemove(job); else throw e;
             }
