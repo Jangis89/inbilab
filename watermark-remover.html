@@ -30,6 +30,10 @@
   .ed-scrub{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;}
   .ed-scrub input[type=range]{flex:1;min-width:200px;height:26px;cursor:pointer;}
   .ed-time{font-size:13.5px;font-weight:700;color:var(--ink);min-width:86px;text-align:center;}
+  .ed-seg{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;}
+  .seg-chip{display:inline-block;font-size:12.5px;font-weight:700;color:var(--sub);background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;padding:4px 10px;cursor:pointer;}
+  .seg-chip.on{color:#1d4ed8;background:#eff6ff;border-color:var(--blue);}
+  .ed-seglist{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
   .drop{border:2px dashed var(--line);border-radius:16px;padding:30px 20px;text-align:center;background:var(--bg-soft);cursor:pointer;margin-bottom:12px;}
   .drop:hover{border-color:var(--blue);} .drop b{color:var(--blue);} .drop .sub{font-size:13.5px;color:var(--sub);margin-top:6px;}
   .editor{display:none;margin:12px 0;} .editor.show{display:block;}
@@ -95,7 +99,7 @@
     <input type="file" id="file" accept="video/*" style="display:none;">
 
     <div class="editor" id="editor">
-      <div class="ed-hint">🖱️ 아래 화면에서 <b>지울 부분을 마우스로 끌어 네모를 그려주세요.</b> (최대 4개 — 자막칸, 로고 등) 잘못 그렸으면 [모두 지우기]를 누르고 다시 그리면 됩니다.<br>🎞️ <b>화면 아래 막대를 움직이면 영상의 다른 장면도 볼 수 있어요.</b> 자막이 가장 커지거나 길어지는 장면까지 확인하고 넉넉하게 그려주세요. 그린 네모는 <b>영상 전체</b>에 적용됩니다.</div>
+      <div class="ed-hint">🖱️ 아래 화면에서 <b>지울 부분을 마우스로 끌어 네모를 그려주세요.</b> (구간마다 최대 4개 — 자막칸, 로고 등) 잘못 그렸으면 [이 구간 네모 지우기]를 누르고 다시 그리면 됩니다.<br>🎞️ <b>화면 아래 막대를 움직이면 영상의 다른 장면도 볼 수 있어요.</b><br>✂️ 자막 위치·크기가 중간에 바뀌면, 바뀌는 시점으로 이동해 <b>[이 시간부터 새 구간]</b>을 누른 뒤 새 네모를 그려주세요. 각 구간에 그린 네모는 <b>그 구간의 시간에만</b> 적용됩니다.</div>
       <div class="ed-wrap"><canvas id="ed-canvas"></canvas></div>
       <div class="ed-scrub">
         <button class="ed-btn" onclick="edStep(-5)">◀ 5초 전</button>
@@ -103,9 +107,14 @@
         <button class="ed-btn" onclick="edStep(5)">5초 뒤 ▶</button>
         <span class="ed-time" id="ed-time">0:00 / 0:00</span>
       </div>
+      <div class="ed-seg">
+        <button class="ed-btn" onclick="segNew()">✂️ 이 시간부터 새 구간</button>
+        <button class="ed-btn" onclick="segDel()">구간 나누기 취소</button>
+        <span class="ed-seglist" id="ed-seglist"></span>
+      </div>
       <div class="ed-act">
-        <button class="ed-btn" onclick="clearRects()">🗑 모두 지우기</button>
-        <span class="ed-cnt" id="ed-cnt">그린 네모: 0개</span>
+        <button class="ed-btn" onclick="clearRects()">🗑 이 구간 네모 지우기</button>
+        <span class="ed-cnt" id="ed-cnt">이 구간 네모: 0개</span>
       </div>
     </div>
 
@@ -143,8 +152,42 @@
   var MANUAL_TIER="std"; // 빠른 모드(직접 지정)의 복원 화질: fast(빠르게)/std(중간)/hq(최고)
   var UI_MODE="fast";
   var MODE=UI_MODES[UI_MODE].wm_mode, TIER=MANUAL_TIER;
-  var curFile=null, curDur=0, rects=[], vidW=0, vidH=0;
+  var curFile=null, curDur=0, vidW=0, vidH=0;
+  // 구간별 네모: segs[k] = { start: 시작초, rects: [네모…] }, rects는 현재 구간의 네모 배열을 가리킴
+  var segs=[{start:0, rects:[]}], segIdx=0, rects=segs[0].rects;
   var FREE_N=3, USED=0, IS_ADMIN=false;
+
+  function totalRects(){ var t=0; for(var k=0;k<segs.length;k++) t+=segs[k].rects.length; return t; }
+  function curSegIdx(){ var t=edVideo?edVideo.currentTime:0; var i=0; for(var k=0;k<segs.length;k++){ if(t>=segs[k].start-0.001) i=k; } return i; }
+  function syncSeg(){ var i=curSegIdx(); if(i!==segIdx){ segIdx=i; rects=segs[segIdx].rects; } refreshSegUI(); }
+  function refreshSegUI(){
+    var el=$id("ed-seglist"); if(!el) return;
+    var parts=[];
+    for(var k=0;k<segs.length;k++){
+      var end = (k+1<segs.length) ? fmtT(segs[k+1].start) : "끝";
+      var cls = (k===segIdx) ? "seg-chip on" : "seg-chip";
+      parts.push('<span class="'+cls+'" onclick="edSeek('+Math.round(segs[k].start*10)+')">'+(k+1)+'구간 '+fmtT(segs[k].start)+'~'+end+' · '+segs[k].rects.length+'개</span>');
+    }
+    el.innerHTML=parts.join('');
+    var c=$id("ed-cnt"); if(c) c.textContent="이 구간 네모: "+rects.length+"개";
+  }
+  function segNew(){
+    if(!edVideo){ showErr("먼저 영상을 선택해 주세요."); return; }
+    var t=Math.round(edVideo.currentTime*10)/10;
+    if(t<0.5){ showErr("구간은 0.5초 이후 시점부터 나눌 수 있어요. 막대를 움직여 원하는 시점으로 이동해 주세요."); return; }
+    for(var k=0;k<segs.length;k++){ if(Math.abs(segs[k].start-t)<0.5){ showErr("이 위치에는 이미 구간 나누기가 있어요."); return; } }
+    segs.push({start:t, rects:[]});
+    segs.sort(function(a,b){ return a.start-b.start; });
+    segIdx=curSegIdx(); rects=segs[segIdx].rects;
+    refreshSegUI(); redraw();
+  }
+  function segDel(){
+    var i=curSegIdx();
+    if(i===0){ showErr("첫 구간(0:00부터)은 없앨 수 없어요. 네모만 지우려면 [이 구간 네모 지우기]를 누르세요."); return; }
+    segs.splice(i,1);
+    segIdx=curSegIdx(); rects=segs[segIdx].rects;
+    refreshSegUI(); redraw();
+  }
 
   function setUiMode(m){ UI_MODE=m;
     MODE=UI_MODES[m].wm_mode; TIER=(m==="fast") ? MANUAL_TIER : UI_MODES[m].wm_tier;
@@ -187,7 +230,7 @@
     if(f.size>8*1024*1024*1024){ showErr("영상이 너무 큽니다 (8GB 이하)."); return; }
     var dur=await readDuration(f);
     if(dur&&dur>900){ showErr("\""+f.name+"\"은(는) "+fmt(dur)+" 영상이라 처리할 수 없어요. (15분 이하만 지원)"); return; }
-    curFile=f; curDur=dur||0; rects=[];
+    curFile=f; curDur=dur||0; segs=[{start:0, rects:[]}]; segIdx=0; rects=segs[0].rects;
     $id("drop-sub").innerHTML="선택됨: <b>"+escapeHtml(f.name)+"</b> · "+(dur?fmt(dur)+" · ":"")+fmtSize(f.size);
     await loadFrame(f); refreshEditor(); refreshGo(); refreshEta();
   }
@@ -215,7 +258,7 @@
       if(c.width!==Math.round(vidW*scale)){ c.width=Math.round(vidW*scale); c.height=Math.round(vidH*scale); }
       var sl=$id("ed-slider"); sl.max=Math.max(10,Math.floor((v.duration||1)*10)); sl.value=Math.round(v.currentTime*10);
       $id("ed-time").textContent=fmtT(v.currentTime)+" / "+fmtT(v.duration||0);
-      redraw(); res();
+      syncSeg(); redraw(); res();
     };
     v.onerror=function(){ res(); };
   }); }
@@ -227,9 +270,9 @@
     x.lineWidth=3; x.strokeStyle="#ef4444"; x.fillStyle="rgba(239,68,68,.25)";
     rects.forEach(function(r){ x.fillRect(r.x*c.width,r.y*c.height,r.w*c.width,r.h*c.height); x.strokeRect(r.x*c.width,r.y*c.height,r.w*c.width,r.h*c.height); });
     if(dragCur){ x.setLineDash([6,4]); x.strokeRect(dragCur.x,dragCur.y,dragCur.w,dragCur.h); x.setLineDash([]); }
-    $id("ed-cnt").textContent="그린 네모: "+rects.length+"개";
+    refreshSegUI();
   }
-  function clearRects(){ rects=[]; dragCur=null; redraw(); }
+  function clearRects(){ rects.length=0; dragCur=null; redraw(); }
   var dragStart=null, dragCur=null;
   (function(){
     var c=$id("ed-canvas");
@@ -249,7 +292,8 @@
   async function start(){
     if(!curFile) return;
     if(!$id("rights").checked){ showErr("영상 처리 권리 확인에 체크해 주세요."); return; }
-    if(MODE==="manual"&&rects.length===0){ showErr("지울 부분을 네모로 하나 이상 그려주세요."); return; }
+    if(MODE==="manual"&&totalRects()===0){ showErr("지울 부분을 네모로 하나 이상 그려주세요."); return; }
+    if(MODE==="manual"&&totalRects()>12){ showErr("네모가 너무 많아요. 전체 12개 이하로 줄여주세요."); return; }
     if(USED>=FREE_N&&!IS_ADMIN){ showErr("이번 달 무료 편수를 모두 사용했어요. 관리자에게 문의해 주세요."); return; }
     var user=await getUser(); if(!user){ location.replace("login.html?next=watermark-remover.html"); return; }
     $id("go").disabled=true;
@@ -271,12 +315,20 @@
         var ins=await sb.from("sc_projects").insert({
           user_id:user.id, title:f.name, source_path:objectName, source_bytes:f.size,
           objective:"wm_remove", status:"wm_queued",
-          wm_mode:MODE, wm_tier:TIER, wm_rects:(MODE==="manual"?rects:null),
+          wm_mode:MODE, wm_tier:TIER, wm_rects:(MODE==="manual"?(function(){
+            var out=[];
+            for(var k=0;k<segs.length;k++){
+              var t0s=segs[k].start, t1s=(k+1<segs.length)?segs[k+1].start:null;
+              for(var q=0;q<segs[k].rects.length;q++){ var r0=segs[k].rects[q];
+                out.push(segs.length===1?{x:r0.x,y:r0.y,w:r0.w,h:r0.h}:{x:r0.x,y:r0.y,w:r0.w,h:r0.h,t0:t0s,t1:t1s}); }
+            }
+            return out;
+          })():null),
           rights_agreed_at:new Date().toISOString()
         }).select("id,title").single();
         if(ins.error){ showErr("등록 오류: "+ins.error.message); setUp(-1,""); refreshGo(); return; }
         setUp(-1,"");
-        curFile=null; curDur=0; rects=[]; if(edVideo){ try{ URL.revokeObjectURL(edVideo.src); }catch(e){} edVideo=null; } $id("drop-sub").textContent="1개씩 · 15분 이하 · 8GB 이하"; $id("editor").classList.remove("show"); $id("eta-line").classList.remove("show");
+        curFile=null; curDur=0; segs=[{start:0, rects:[]}]; segIdx=0; rects=segs[0].rects; if(edVideo){ try{ URL.revokeObjectURL(edVideo.src); }catch(e){} edVideo=null; } $id("drop-sub").textContent="1개씩 · 15분 이하 · 8GB 이하"; $id("editor").classList.remove("show"); $id("eta-line").classList.remove("show");
         USED++; refreshQuota(); refreshGo(); ensurePoll();
       }
     });
