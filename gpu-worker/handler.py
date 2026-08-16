@@ -45,7 +45,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v28"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v29"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -1824,12 +1824,33 @@ def _hb_start(pid, phase, part):
     threading.Thread(target=_loop, daemon=True).start()
     return stop
 
+# ---------------- v29: 자가 건강검진 — GPU가 진짜 잡히는 일꾼만 일한다 ----------------
+def _gpu_healthy():
+    """GPU가 실제로 감지되는지 즉석 검사(약 0.1초).
+    - nvidia-smi가 실행돼서 GPU 목록이 보이면 → 건강
+    - nvidia-smi가 실행됐는데 GPU가 없거나 드라이버 오류면 → 확실한 불량 (이때만 작업 반납)
+    - 검사 도구 자체가 없거나 검사가 실패하면 → 판단 보류(통과) — 오탐으로 전체 서비스가 멎는 사고 방지"""
+    try:
+        r = subprocess.run(["nvidia-smi", "-L"], capture_output=True, timeout=10)
+    except FileNotFoundError:
+        return True
+    except Exception:
+        return True
+    if r.returncode == 0 and b"GPU" in (r.stdout or b""):
+        return True
+    return False
+
 # ---------------- 진입점 ----------------
 def handler(event):
     inp = event.get("input") or {}
     pid = inp.get("project_id")
     phase = inp.get("phase") or "all"
     if not pid: return {"error": "project_id가 없습니다"}
+    # v29 자가 건강검진: GPU가 안 잡히는 병든 일꾼이면 일을 시작하기 전에 즉시 반납
+    # (감시원이 이 신호를 받으면 다른 일꾼에게 재배정 — 수강생은 몇 초 지연만 느낌)
+    if not _gpu_healthy():
+        print("[gpu-wm] 자가 건강검진 실패: GPU 미감지 — 작업 반납")
+        return {"error": "SICK_WORKER: GPU 미감지 — 이 일꾼은 작업 불가, 재배정 필요"}
     t0 = inp.get("t0") or time.time()
     tmp = tempfile.mkdtemp(prefix="ibwm-")
     _p = inp.get("part"); _w = inp.get("wid")
