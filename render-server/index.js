@@ -1000,7 +1000,16 @@ async function rpCall(base, input, capMs = 2400000, opts = {}) {
     if (!s.ok) throw new Error("RunPod /status HTTP " + s.status);
     const j = await s.json();
     if (j.status === "COMPLETED") {
-      if (j.output && j.output.error) throw new Error("GPU 처리 오류: " + String(j.output.error).slice(0, 200));
+      if (j.output && j.output.error) {
+        const emsg = String(j.output.error);
+        if (emsg.includes("SICK_WORKER")) {
+          // v29 자가 건강검진: 병든 일꾼이 스스로 작업을 반납 — 기록 남기고 재시도(=다른 일꾼 재배정)
+          await logIncident("sick_worker", String(input.phase || ""), input.project_id || null,
+            { worker: j.workerId || "", request_id: id },
+            "병든 일꾼(GPU 미감지) 자가 신고 — 작업 반납, 재배정").catch(() => {});
+        }
+        throw new Error("GPU 처리 오류: " + emsg.slice(0, 200));
+      }
       const out = j.output || {};
       if (j.executionTime) out.__exec_ms = j.executionTime;   // 지각 감지용 실측 실행 시간
       return out;
