@@ -53,7 +53,7 @@ const GEMINI_UPLOAD = "https://generativelanguage.googleapis.com/upload/v1beta/f
 const GEMINI_MODELS = ["gemini-flash-latest", "gemini-pro-latest"];
 
 const WORKER_ID = "worker-" + Math.random().toString(36).slice(2, 8);
-const POLL_MS = 5000;
+const POLL_MS = 2000;   // v26(항목7): 대기열 확인 간격 단축 — 맡긴 뒤 시작까지 수 초 단축
 const CHUNK_SEC = 600; // 전사용 오디오를 10분 단위로 잘라 처리 (안정성·재시도 용이)
 const PROMPT_VER = "a3-ingredients"; // a1=대본만, a2=통짜 영상, a3=재료(장면) 기반
 const VIDEO_CHUNK_SEC = 1200;   // 작업용 영상을 20분 단위로 처리
@@ -961,7 +961,7 @@ async function rpCall(base, input, capMs = 2400000) {
   const { id } = await r.json();
   const t0 = Date.now();
   for (;;) {
-    await new Promise((res) => setTimeout(res, 5000));
+    await new Promise((res) => setTimeout(res, 3000));   // v26(항목7): 단계 완료 감지 간격 단축
     const s = await fetch(base + "/status/" + id, { headers: hdr });
     if (!s.ok) throw new Error("RunPod /status HTTP " + s.status);
     const j = await s.json();
@@ -1054,29 +1054,51 @@ async function runWmRemoveGpu(job) {
       .then((v) => { works.push(v); })
       .catch((e) => { console.error("[wm-gpu] 복원 일꾼 오류(조각 검사로 만회):", e.message); }));
   Promise.allSettled(wp).then(() => { settled = true; });
+  // v26(항목8): 복원·합치기 겹치기 — 어떤 구간의 조각이 전부 끝나면, 나머지 복원이 진행되는 동안
+  // 그 구간의 합치기를 미리 시작한다 (계단식 → 에스컬레이터식). 구형 GPU 프로그램이면 기존 방식으로 동작.
+  const N = plan.N || 0;
+  const cl = plan.chunk_list || null;   // 각 조각의 담당 프레임 범위 (v26 GPU 프로그램부터 제공)
+  const segPromises = new Array(PARTS).fill(null);
+  const segResults = new Array(PARTS).fill(null);
+  const segRange = (k) => [Math.floor(k * N / PARTS), Math.floor((k + 1) * N / PARTS)];   // [F0, F1)
+  const canStart = (k, doneSet) => {
+    if (!cl || !N) return false;
+    const [F0, F1] = segRange(k);
+    for (let i = 0; i < cl.length; i++) { const c = cl[i]; if (c.s <= F1 - 1 && c.e >= F0 && !doneSet.has(i)) return false; }
+    return true;
+  };
+  const fireSeg = (k) => {
+    if (segPromises[k]) return;
+    segPromises[k] = rpCallRetry(base, { project_id: job.project_id, phase: "mergeseg", part: k, parts: PARTS, t0 })
+      .then((v) => { segResults[k] = v; });
+  };
   let retried = false;
   for (;;) {
-    const { data: left, error: le } = await sb.from("wm_chunks").select("ci").eq("project_id", job.project_id).neq("status", "done");
-    if (!le) {
-      if (!left || !left.length) break;   // 전 조각 완료 → 즉시 합치기로
+    const { data: rows, error: le } = await sb.from("wm_chunks").select("ci,status").eq("project_id", job.project_id);
+    if (!le && rows && rows.length) {
+      const doneSet = new Set(rows.filter((r) => r.status === "done").map((r) => r.ci));
+      for (let k = 0; k < PARTS; k++) if (!segPromises[k] && canStart(k, doneSet)) fireSeg(k);   // 완료 구간 합치기 선시작
+      if (doneSet.size >= rows.length) break;   // 전 조각 완료
       if (settled) {
         // 일꾼이 전부 돌아왔는데 조각이 남음 (일꾼이 중간에 죽은 경우) → 되돌려 넣고 한 번 더
-        if (retried) throw new Error("복원 조각 " + left.length + "개가 끝내 완료되지 않았습니다");
-        console.log("[wm-gpu] 남은 조각 " + left.length + "개 → 재작업");
+        if (retried) throw new Error("복원 조각 " + (rows.length - doneSet.size) + "개가 끝내 완료되지 않았습니다");
+        console.log("[wm-gpu] 남은 조각 " + (rows.length - doneSet.size) + "개 → 재작업");
         await sb.from("wm_chunks").update({ status: "todo" }).eq("project_id", job.project_id).neq("status", "done");
         settled = false; retried = true;
         rpCallRetry(base, { project_id: job.project_id, phase: "workpool", wid: 99, t0 })
           .then((v) => { works.push(v); }).catch(() => {}).finally(() => { settled = true; });
       }
     }
-    await new Promise((res) => setTimeout(res, 4000));
+    await new Promise((res) => setTimeout(res, 2500));
   }
   try { await sb.from("wm_chunks").delete().eq("project_id", job.project_id); } catch {}
   try {
     await sb.from("sc_projects").update({ status: "wm_running", status_detail: "복원한 부분을 원본에 합치는 중… (GPU " + PARTS + "대 동시 작업)" }).eq("id", job.project_id);
   } catch {}
   try { await setJobProgress(job.id, 85); } catch {}
-  const segs = await Promise.all(Array.from({ length: PARTS }, (_, k) => rpCallRetry(base, { project_id: job.project_id, phase: "mergeseg", part: k, parts: PARTS, t0 })));
+  for (let k = 0; k < PARTS; k++) fireSeg(k);   // 아직 안 시작한 구간 마저 시작
+  await Promise.all(segPromises);
+  const segs = segResults;
   try { await setJobProgress(job.id, 95); } catch {}
   const tms = { plan: plan.tms || {}, work: works.map(w => (w && w.tms) || {}), seg: segs.map(s => (s && s.tms) || {}) };
   await rpCallRetry(base, { project_id: job.project_id, phase: "finish", parts: PARTS, t0, tms });
