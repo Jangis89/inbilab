@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "deploy | equiv | bench"
+        description: "deploy | equiv | bench | verify"
         required: true
         default: "deploy"
       ref:
@@ -70,6 +70,12 @@ jobs:
             --k "${{ github.event.inputs.k }}" \
             --warm "${{ github.event.inputs.warm }}" \
             --label "${{ github.event.inputs.label }}"
+      - name: Verify output quality
+        if: ${{ github.event.inputs.action == 'verify' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: python gpu-worker/scripts/verify_v31.py
       - name: Upload bench artifacts
         if: ${{ always() && github.event.inputs.action == 'bench' }}
         uses: actions/upload-artifact@v4
