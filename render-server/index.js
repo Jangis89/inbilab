@@ -996,6 +996,15 @@ async function planCapMs() {
   } catch {}
   return m * 60000;
 }
+async function wmWorkersPerJob() {
+  // 영상 1개에 투입할 복원 일꾼 수(기본 5). app_settings의 wm_workers_per_job으로 재배포 없이 조절 가능(1~8).
+  let n = 5;
+  try {
+    const { data } = await sb.from("app_settings").select("value").eq("key", "wm_workers_per_job").maybeSingle();
+    if (data && data.value != null) { const v = parseInt(data.value, 10); if (v >= 1 && v <= 8) n = v; }
+  } catch {}
+  return n;
+}
 async function runWmRemoveGpu(job) {
   const base = await gpuEndpointBase();
   const t0 = Date.now() / 1000;
@@ -1023,8 +1032,9 @@ async function runWmRemoveGpu(job) {
   if (plan.note === "no_target") return;
   try { await setJobProgress(job.id, 30); } catch {}
   const total = plan.chunks || 0;
-  const PARTS = total >= 6 ? 3 : total >= 2 ? 2 : 1;   // 합치기(mergeseg) 분할 수 — 기존과 동일
-  const WK = Math.min(3, Math.max(1, total));           // 복원 일꾼 수 (조각 바구니 방식)
+  const WKMAX = await wmWorkersPerJob();                 // 기본 5 (app_settings.wm_workers_per_job)
+  const WK = Math.min(WKMAX, Math.max(1, total));        // 복원 일꾼 수 (조각 바구니 방식)
+  const PARTS = total >= 6 ? WK : total >= 2 ? 2 : 1;    // v24: 합치기(mergeseg) 분할도 일꾼 수만큼 확대
   try {
     await sb.from("sc_projects").update({ status: "wm_running", status_detail: "AI가 배경을 복원하는 중… (GPU " + WK + "대 동시 작업)" }).eq("id", job.project_id);
   } catch {}
@@ -1035,17 +1045,31 @@ async function runWmRemoveGpu(job) {
     const { error: ce } = await sb.from("wm_chunks").insert(rows);
     if (ce) throw new Error("조각 바구니 준비 실패: " + ce.message);
   }
-  const works = await Promise.all(Array.from({ length: WK }, (_, k) => rpCallRetry(base, { project_id: job.project_id, phase: "workpool", wid: k, t0 })));
-  // 빠뜨린 조각 검사: 남았으면 되돌려 넣고 한 번 더 (일꾼이 중간에 죽어도 안전)
-  {
-    const { data: left } = await sb.from("wm_chunks").select("ci").eq("project_id", job.project_id).neq("status", "done");
-    if (left && left.length) {
-      console.log("[wm-gpu] 남은 조각 " + left.length + "개 → 재작업");
-      await sb.from("wm_chunks").update({ status: "todo" }).eq("project_id", job.project_id).neq("status", "done");
-      works.push(await rpCallRetry(base, { project_id: job.project_id, phase: "workpool", wid: 99, t0 }));
-      const { data: left2 } = await sb.from("wm_chunks").select("ci").eq("project_id", job.project_id).neq("status", "done");
-      if (left2 && left2.length) throw new Error("복원 조각 " + left2.length + "개가 끝내 완료되지 않았습니다");
+  // v24: 일꾼 전원의 보고를 기다리지 않는다 — 바구니의 모든 조각이 '완료'가 되는 순간 다음 단계로.
+  // (지각 일꾼은 v24 GPU 프로그램이 준비 전에 바구니를 확인하므로 몇 초 만에 빈손 복귀)
+  const works = [];
+  let settled = false;
+  const wp = Array.from({ length: WK }, (_, k) =>
+    rpCallRetry(base, { project_id: job.project_id, phase: "workpool", wid: k, t0 })
+      .then((v) => { works.push(v); })
+      .catch((e) => { console.error("[wm-gpu] 복원 일꾼 오류(조각 검사로 만회):", e.message); }));
+  Promise.allSettled(wp).then(() => { settled = true; });
+  let retried = false;
+  for (;;) {
+    const { data: left, error: le } = await sb.from("wm_chunks").select("ci").eq("project_id", job.project_id).neq("status", "done");
+    if (!le) {
+      if (!left || !left.length) break;   // 전 조각 완료 → 즉시 합치기로
+      if (settled) {
+        // 일꾼이 전부 돌아왔는데 조각이 남음 (일꾼이 중간에 죽은 경우) → 되돌려 넣고 한 번 더
+        if (retried) throw new Error("복원 조각 " + left.length + "개가 끝내 완료되지 않았습니다");
+        console.log("[wm-gpu] 남은 조각 " + left.length + "개 → 재작업");
+        await sb.from("wm_chunks").update({ status: "todo" }).eq("project_id", job.project_id).neq("status", "done");
+        settled = false; retried = true;
+        rpCallRetry(base, { project_id: job.project_id, phase: "workpool", wid: 99, t0 })
+          .then((v) => { works.push(v); }).catch(() => {}).finally(() => { settled = true; });
+      }
     }
+    await new Promise((res) => setTimeout(res, 4000));
   }
   try { await sb.from("wm_chunks").delete().eq("project_id", job.project_id); } catch {}
   try {
