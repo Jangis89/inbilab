@@ -1,0 +1,79 @@
+# 인비랩 V31 스테이징 — 배포·동일성 검증·벤치마크 (workflow_dispatch 전용)
+# 운영 배포 workflow(modal-deploy.yml)와 완전 분리. 운영 앱(inbilab-wm-gpu)은 건드리지 않는다.
+name: V31 staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "deploy | equiv | bench"
+        required: true
+        default: "deploy"
+      ref:
+        description: "체크아웃할 브랜치/커밋"
+        required: true
+        default: "perf/wm-v31-speed"
+      runs:
+        description: "bench 반복 횟수"
+        required: false
+        default: "3"
+      k:
+        description: "세그먼트 수 K"
+        required: false
+        default: "5"
+      warm:
+        description: "사전 예열 GPU 수 (0=냉시동)"
+        required: false
+        default: "5"
+      label:
+        description: "bench 라벨 (warm/cold 등)"
+        required: false
+        default: "warm"
+
+jobs:
+  v31:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install -q modal numpy==1.26.4 opencv-python-headless==4.10.0.84 requests
+      - name: Deploy V31 staging app
+        if: ${{ github.event.inputs.action == 'deploy' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal deploy gpu-worker/modal_app_v31.py
+      - name: Equivalence tests (byte equality)
+        if: ${{ github.event.inputs.action == 'equiv' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: python gpu-worker/tests/test_equivalence_v31.py
+      - name: Benchmark
+        if: ${{ github.event.inputs.action == 'bench' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: |
+          python gpu-worker/scripts/benchmark_v31.py \
+            --runs "${{ github.event.inputs.runs }}" \
+            --k "${{ github.event.inputs.k }}" \
+            --warm "${{ github.event.inputs.warm }}" \
+            --label "${{ github.event.inputs.label }}"
+      - name: Upload bench artifacts
+        if: ${{ always() && github.event.inputs.action == 'bench' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-v31-${{ github.run_id }}
+          path: BENCHMARK_V31.json
+          if-no-files-found: ignore
