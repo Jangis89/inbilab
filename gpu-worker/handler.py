@@ -9,6 +9,7 @@ import os, io, json, time, math, subprocess, tempfile, shutil, traceback
 import numpy as np
 import requests
 from multiprocessing import Pool
+from concurrent.futures import ThreadPoolExecutor
 
 def _usable_cpus():
     try:
@@ -44,7 +45,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v26"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v27"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -246,12 +247,45 @@ def stream_frames(path, W, H, sample_every=1, stop_after=None):
         except Exception: pass
         p.wait()
 
+def _stream_crop(path, x, y, w, h):
+    """ffmpeg 쪽에서 미리 잘라(crop) 필요한 부분만 파이프로 받는 발생기 (v27)"""
+    # format=rgb24를 먼저 거쳐야 홀수 좌표·크기도 반올림 없이 정확히 잘린다 (픽셀 동일 보장)
+    p = subprocess.Popen(["ffmpeg", "-v", "error"] + hw_dec_args() + ["-i", path,
+                          "-vf", f"format=rgb24,crop={w}:{h}:{x}:{y}",
+                          "-vsync", "0", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                         stdout=subprocess.PIPE)
+    fsz = w * h * 3
+    try:
+        while True:
+            buf = p.stdout.read(fsz)
+            if not buf or len(buf) < fsz: break
+            yield np.frombuffer(buf, np.uint8).reshape(h, w, 3)
+    finally:
+        try: p.stdout.close()
+        except Exception: pass
+        p.wait()
+
 def read_all_crops(path, W, H, regions):
-    """단일 해독으로 여러 영역의 잘라낸 프레임을 동시에 수집. regions: [{'x','y','w','h'}] → {ri: [frames]}"""
+    """단일 해독으로 여러 영역의 잘라낸 프레임을 동시에 수집. regions: [{'x','y','w','h'}] → {ri: [frames]}
+    v27: 화면 전체 대신 모든 영역을 덮는 최소 직사각형만 ffmpeg에서 잘라 전송
+    (같은 픽셀을 같은 방법으로 자름 — 결과 동일, 전송량만 수 배~수십 배 감소)"""
+    if not regions: return {}
     out = {ri: [] for ri in range(len(regions))}
-    for fr in stream_frames(path, W, H):
+    ux0 = max(0, min(int(r["x"]) for r in regions))
+    uy0 = max(0, min(int(r["y"]) for r in regions))
+    ux1 = min(W, max(int(r["x"]) + int(r["w"]) for r in regions))
+    uy1 = min(H, max(int(r["y"]) + int(r["h"]) for r in regions))
+    uw, uh = ux1 - ux0, uy1 - uy0
+    if uw <= 0 or uh <= 0 or (uw == W and uh == H):
+        # 방어(잘못된 영역) 또는 화면 전체가 필요한 경우: 기존 방식 그대로
+        for fr in stream_frames(path, W, H):
+            for ri, r in enumerate(regions):
+                out[ri].append(fr[r["y"]:r["y"] + r["h"], r["x"]:r["x"] + r["w"]].copy())
+        return out
+    for fr in _stream_crop(path, ux0, uy0, uw, uh):
         for ri, r in enumerate(regions):
-            out[ri].append(fr[r["y"]:r["y"] + r["h"], r["x"]:r["x"] + r["w"]].copy())
+            y0 = r["y"] - uy0; x0 = r["x"] - ux0
+            out[ri].append(fr[y0:y0 + r["h"], x0:x0 + r["w"]].copy())
     return out
 
 # ---------------- 글자 감지 (wmremove.js 포팅, numpy 벡터화) ----------------
@@ -736,6 +770,64 @@ def _zone_fill(frame, z):
     return {"x0": x0, "y0": y0, "x1": x1, "y1": y1,
             "items": [{"mask": full.astype(bool)}], "dark": whitem}
 
+# ---------------- v27: 글자 감지 멀티코어 (같은 함수·같은 인자 → 같은 결과, 나눠서만 계산) ----------------
+# spawn 방식: 자식 프로세스를 깨끗하게 새로 띄움 → 부모 상태 물려받다 멈추는 사고(fork 위험) 원천 차단.
+# 자식 준비 비용이 있어 풀은 한 번 만들어 계속 재사용.
+
+def _gc_block(args):
+    data, mode, planes = args
+    try:
+        import cv2 as _c; _c.setNumThreads(1)   # 프로세스들이 이미 병렬 — 내부 스레드 중복 방지
+    except Exception:
+        pass
+    if mode == "labels":
+        return [glyph_labels(f, ref) for f, ref in data]
+    if mode == "cl":
+        return [glyph_clusters(f) for f in data]
+    if mode == "prune":
+        return [glyph_clusters(f, with_singles=True) for f in data]
+    return [glyph_clusters(f, with_singles=True, only_planes=planes) for f in data]
+
+_GC_POOL = None
+def _gc_pool():
+    global _GC_POOL
+    if _GC_POOL is None:
+        import multiprocessing as _mp
+        _GC_POOL = _mp.get_context("spawn").Pool(NPROC)
+    return _GC_POOL
+
+def _par_sweep(mode, frames, N, step, planes=None):
+    """프레임별 감지를 여러 CPU로 나눠 실행. 실패하거나 양이 적으면 None(기존 한 줄 방식으로)"""
+    global _GC_POOL
+    try:
+        idxs = list(range(0, N, step))
+        if len(idxs) < NPROC * 4: return None   # 짧은 영상: 나누는 비용이 더 큼
+        per_b = (len(idxs) + NPROC * 2 - 1) // (NPROC * 2)
+        jobs = []
+        for a in range(0, len(idxs), per_b):
+            blk = idxs[a:a + per_b]
+            if mode == "labels":
+                pairs = []
+                for i in blk:
+                    j = i - 12 if i >= 12 else min(N - 1, i + 12)
+                    pairs.append((frames[i], frames[j] if j != i else None))
+                jobs.append((pairs, mode, None))
+            else:
+                jobs.append(([frames[i] for i in blk], mode, planes))
+        # 시간 제한: 무슨 일이 있어도 여기서 멈춰 있지 않는다 — 초과하면 기존 한 줄 방식으로 복귀
+        limit = max(120, int(0.4 * len(idxs)) + 60)
+        parts = _gc_pool().map_async(_gc_block, jobs).get(timeout=limit)
+        out = []
+        for pt in parts: out.extend(pt)
+        return out
+    except Exception:
+        try:
+            if _GC_POOL is not None: _GC_POOL.terminate()
+        except Exception:
+            pass
+        _GC_POOL = None   # 고장난 풀은 버림 — 다음엔 새로 만들거나 기존 방식으로
+        return None
+
 def build_subtitle_masks(band_frames, N, with_labels=True):
     """프레임별 클러스터(자막 줄+장식 글자) → 시간 안정성(±6 중 5) → ±6 링 합집합 마스크 목록.
     장식 글자는 2단계: (1) 정지 통과 감지로 '라벨 구역·시간대' 등록(오탐 방지) →
@@ -744,12 +836,18 @@ def build_subtitle_masks(band_frames, N, with_labels=True):
     def _ref(i):
         j = i - 12 if i >= 12 else min(N - 1, i + 12)
         return band_frames[j] if j != i else None
-    # 1단계: 라벨 구역 등록 (3프레임 간격 스캔)
+    # 1단계: 라벨 구역 등록 (3프레임 간격 스캔) — v27: 멀티코어(결과 동일)
     hits = []   # (frame_i, box, hue)
     if with_labels:
-        for i in range(0, N, 3):
-            for g in glyph_labels(band_frames[i], _ref(i)):
-                hits.append((i, (g["x0"], g["y0"], g["x1"], g["y1"]), g["hue"]))
+        _r1 = _par_sweep("labels", band_frames, N, 3)
+        if _r1 is not None:
+            for k, i in enumerate(range(0, N, 3)):
+                for g in _r1[k]:
+                    hits.append((i, (g["x0"], g["y0"], g["x1"], g["y1"]), g["hue"]))
+        else:
+            for i in range(0, N, 3):
+                for g in glyph_labels(band_frames[i], _ref(i)):
+                    hits.append((i, (g["x0"], g["y0"], g["x1"], g["y1"]), g["hue"]))
     zones = []  # {"box":(..), "cnt":n, "lo":f, "hi":f, "hues":[..]}
     for fi, b, hu in hits:
         put = None
@@ -770,25 +868,32 @@ def build_subtitle_masks(band_frames, N, with_labels=True):
     # → 프레임별 정밀 검사는 그 판만 수행 (만능 색상이어도 속도 유지)
     active = set()
     if not with_labels:
-        for i in range(0, N, 15):
-            cl0, ss0 = glyph_clusters(band_frames[i], with_singles=True)
+        _r2 = _par_sweep("prune", band_frames, N, 15)
+        _seq2 = _r2 if _r2 is not None else \
+            [glyph_clusters(band_frames[i], with_singles=True) for i in range(0, N, 15)]
+        for cl0, ss0 in _seq2:
             for c in cl0:
                 for i2 in c.get("items") or []:
                     if "plane" in i2: active.add(i2["plane"])
             for s in ss0:
                 for i2 in s["items"]:
                     if "plane" in i2: active.add(i2["plane"])
-    # 2단계: 프레임별 클러스터 (자막 줄 + 구역 안 라벨)
+    # 2단계: 프레임별 클러스터 (자막 줄 + 구역 안 라벨) — v27: 프레임별 계산을 멀티코어로 선계산
+    _base = None
+    if with_labels:
+        _base = _par_sweep("cl", band_frames, N, 1)
+    elif active:
+        _base = _par_sweep("cl_ss", band_frames, N, 1, planes=active)
     per = []
     sing = []
     for i, f in enumerate(band_frames):
         if with_labels:
-            cl = glyph_clusters(f)
+            cl = _base[i] if _base is not None else glyph_clusters(f)
             ss = []
         elif not active:
             cl, ss = [], []
         else:
-            cl, ss = glyph_clusters(f, with_singles=True, only_planes=active)
+            cl, ss = _base[i] if _base is not None else glyph_clusters(f, with_singles=True, only_planes=active)
         for z in zones:
             if z["lo"] - 36 <= i <= z["hi"] + 36:
                 for g in glyph_labels(f, None):
@@ -921,8 +1026,8 @@ def encode_chunk_mp4(frames_arr, fps, path):
     p.stdin.write(frames_arr.tobytes()); p.stdin.close(); p.wait()
     if p.returncode != 0: raise RuntimeError("조각 인코딩 실패")
 
-def decode_chunk_mp4(path, w, h):
-    p = subprocess.Popen(["ffmpeg", "-v", "error"] + hw_dec_args() + ["-i", path, "-vsync", "0",
+def decode_chunk_mp4(path, w, h, hw=True):
+    p = subprocess.Popen(["ffmpeg", "-v", "error"] + (hw_dec_args() if hw else []) + ["-i", path, "-vsync", "0",
                           "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
     frames = []
     fsz = w * h * 3
@@ -1489,30 +1594,37 @@ def phase_mergeseg(proj, tmp, part, parts):
     src, work = fetch_lite(proj, tmp, plan)
     sw.mark("dl")
     # 각 영역: 소유권 계산 → 담당 구간과 겹치는 조각만 내려받아 프레임별 복원 결과 준비
+    # v27: 조각 내려받기+풀기를 6개 동시 진행 (내용·순서·배치 동일, 기다림만 겹침)
     seg_rest = {}   # ri -> {frame_i: (h,w,3) uint8}
     masks_all = {}  # ri -> masks 목록
+    tasks = []      # (ri, o)
     for ri, reg in enumerate(plan["regions"]):
         rcs = [c for c in plan["chunks"] if c["r"] == ri]
         if not rcs: continue
         own = [o for o in ownership(rcs) if o["e"] >= F0 and o["s"] < F1]
         if not own: continue
         masks_all[ri] = masks_unpack(tmp_download(f"wmtmp/{pid}/m{ri}.bin"))
-        rest = {}
-        for o in own:
-            c = o["c"]
-            name = f"o_{ri}_{c['s']}.mp4"
-            p = os.path.join(tmp, name)
-            with open(p, "wb") as f: f.write(tmp_download(f"wmtmp/{pid}/{name}"))
-            arr = decode_chunk_mp4(p, reg["w"], reg["h"])
-            os.remove(p)
-            n_expect = c["e"] - c["s"] + 1
-            if len(arr) > n_expect: arr = arr[:n_expect]
-            if len(arr) < n_expect: arr = np.concatenate([arr, np.repeat(arr[-1:], n_expect - len(arr), 0)])
+        seg_rest[ri] = {}
+        for o in own: tasks.append((ri, o))
+    def _fetch_one(t):
+        ri, o = t
+        c = o["c"]; reg = plan["regions"][ri]
+        name = f"o_{ri}_{c['s']}.mp4"
+        p = os.path.join(tmp, f"seg{part}_{name}")
+        with open(p, "wb") as f: f.write(tmp_download(f"wmtmp/{pid}/{name}"))
+        arr = decode_chunk_mp4(p, reg["w"], reg["h"], hw=False)  # 동시 6개 → GPU 해독 세션 한도 회피(CPU로도 조각은 순식간)
+        os.remove(p)
+        n_expect = c["e"] - c["s"] + 1
+        if len(arr) > n_expect: arr = arr[:n_expect]
+        if len(arr) < n_expect: arr = np.concatenate([arr, np.repeat(arr[-1:], n_expect - len(arr), 0)])
+        return ri, o, c, arr
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        for ri, o, c, arr in ex.map(_fetch_one, tasks):
             a = max(o["s"], F0); b = min(o["e"], F1 - 1)
+            rest = seg_rest[ri]
             for i in range(a, b + 1):
                 rest[i] = arr[i - c["s"]]
             del arr
-        seg_rest[ri] = rest
     sw.mark("chunks")
     # 담당 구간만 합성해 조각 영상으로 인코딩 (오디오 없음)
     outp = os.path.join(tmp, f"seg_{part}.mp4")
@@ -1555,11 +1667,13 @@ def phase_finish(proj, tmp, t0, parts, tms_in=None):
     tmp_names = ["plan.json"] + [f"m{ri}.bin" for ri in range(len(plan["regions"]))]
     if plan.get("cfr"): tmp_names.append("work.mp4")
     for c in plan["chunks"]: tmp_names.append(f"o_{c['r']}_{c['s']}.mp4")
-    for k in range(parts):
+    def _dl_seg(k):   # v27: 구간 영상 동시 내려받기 (이어붙이는 순서는 아래에서 그대로 보장)
         p = os.path.join(tmp, f"seg_{k}.mp4")
         with open(p, "wb") as f: f.write(tmp_download(f"wmtmp/{pid}/seg_{k}.mp4"))
-        seg_paths.append(p)
-        tmp_names.append(f"seg_{k}.mp4")
+        return p
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        seg_paths = list(ex.map(_dl_seg, range(parts)))
+    for k in range(parts): tmp_names.append(f"seg_{k}.mp4")
     sw.mark("dl")
     lst = os.path.join(tmp, "list.txt")
     with open(lst, "w") as f:
