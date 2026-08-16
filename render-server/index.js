@@ -1429,6 +1429,51 @@ async function recoverStuck() {
   } catch (e) { console.error("[복구] 오류:", e.message); }
 }
 
+// ---------- v29 고아 청소부 ----------
+// 감시원(이 프로그램)이 재시작·중단되면 진행 중이던 자막 제거 작업이 '처리 중' 표시인 채 방치된다.
+// 감시원은 작업을 잡고 있는 동안 30초마다 작업 단위 생존 신고(wm_heartbeat, phase='job')를 남기고,
+// 모든 감시원이 1분마다 검사: 신고가 기준(기본 10분, wm_orphan_min) 넘게 끊긴 running 작업을
+// 자동으로 다시 대기열에 넣는다 (3대 중 누가 하든 1대만 성공하도록 조건부 갱신 — 중복 없음).
+let lastOrphanSweep = 0;
+async function sweepOrphans() {
+  const now = Date.now();
+  if (now - lastOrphanSweep < 60000) return;
+  lastOrphanSweep = now;
+  try {
+    const orphanMin = await getNumSetting("wm_orphan_min", 10, 2, 60);
+    const { data: jobs } = await sb.from("sc_render_jobs")
+      .select("id, project_id, started_at").eq("job_type", "wmremove").eq("status", "running").limit(20);
+    for (const j of (jobs || [])) {
+      const startedMs = new Date(j.started_at).getTime();
+      let beatMs = 0;
+      try {
+        const { data: hb } = await sb.from("wm_heartbeat").select("at")
+          .eq("project_id", j.project_id).eq("phase", "job").eq("part", -2).maybeSingle();
+        if (hb && hb.at) beatMs = new Date(hb.at).getTime();
+      } catch {}
+      const idleMs = now - Math.max(beatMs, startedMs);   // 신고가 아예 없으면 시작 시각 기준
+      if (idleMs < orphanMin * 60000) continue;
+      // 조건부 갱신: 아직 running일 때만 — 다른 감시원이 이미 처리했으면 0건 갱신되어 조용히 넘어감
+      const { data: upd } = await sb.from("sc_render_jobs")
+        .update({ status: "queued", attempts: 0, progress: 0,
+                  error: "고아 복구: 진행 신고가 " + Math.round(idleMs / 60000) + "분 끊겨 자동 재시작" })
+        .eq("id", j.id).eq("status", "running").select("id");
+      if (!upd || !upd.length) continue;
+      try { await sb.from("wm_heartbeat").delete().eq("project_id", j.project_id); } catch {}
+      try { await sb.from("wm_chunks").delete().eq("project_id", j.project_id); } catch {}
+      try {
+        await sb.from("sc_projects").update({ status: "wm_queued",
+            status_detail: "처리가 중단된 것을 발견해 자동으로 다시 시작했어요…" })
+          .eq("id", j.project_id).in("status", ["wm_running", "wm_waiting"]);
+      } catch {}
+      await logIncident("orphan", null, j.project_id,
+        { idle_min: Math.round(idleMs / 60000), job_id: j.id },
+        "방치된 작업 자동 재대기열 등록");
+      console.log("[고아청소] 방치 작업 재대기열 job " + j.id);
+    }
+  } catch (e) { console.error("[고아청소] 오류:", e.message); }
+}
+
 
 // ================= 유튜브 대본 따기 (yt-dlp → Soniox 정밀 받아쓰기 → 화자 라벨) =================
 const SONIOX_KEY = String(process.env.SONIOX_API_KEY || "").trim();
@@ -1689,6 +1734,7 @@ async function loop() {
   try {
     if (!flagsEnsured) { await ensureFlags(); flagsEnsured = true; }
     if (Date.now() - lastCleanup > 300000) { lastCleanup = Date.now(); cleanupExpired(); recoverStuck(); cleanupWmExpired(); }
+    await sweepOrphans();   // v29: 1분에 한 번, 방치된 자막 제거 작업 자동 구조
     await scanWmQueued();
     const job = await claimJob();
     if (!job) { await tryYtTranscriptJob(); }
@@ -1701,18 +1747,32 @@ async function loop() {
         else if (job.job_type === "render") await runRender(job);
         else if (job.job_type === "desilence") await runDesilence(job);
         else if (job.job_type === "wmremove") {
-          if (process.env.RUNPOD_API_KEY && process.env.RUNPOD_ENDPOINT_ID) {
-            try { await runWmRemoveGpu(job); }
-            catch (e) {
-              if (e && e.noFallback) throw e;
-              console.error("[wm-gpu] GPU 서버 실패, 예비(Replicate)로 전환:", e.message);
-              // v28 반복 실패 감지: 예비 경로 전환도 사건 기록부에 남긴다
-              await logIncident("fallback", null, job.project_id,
-                { error: String(e.message || e).slice(0, 300), attempts: (job.attempts || 0) + 1 },
-                process.env.REPLICATE_API_TOKEN ? "예비 경로(Replicate)로 자동 전환" : "예비 경로 없음 — 실패 처리").catch(() => {});
-              if (process.env.REPLICATE_API_TOKEN) await runWmRemove(job); else throw e;
-            }
-          } else await runWmRemove(job);
+          // v29: 작업 단위 생존 신고 — 감시원이 이 작업을 살아서 붙잡고 있음을 30초마다 기록
+          // (감시원이 재시작으로 죽으면 신고가 끊기고, 고아 청소부가 10분 안에 작업을 구조)
+          const jobBeatWrite = () => {
+            sb.from("wm_heartbeat").upsert(
+              { project_id: job.project_id, phase: "job", part: -2, at: new Date().toISOString() },
+              { onConflict: "project_id,phase,part" }).then(() => {}, () => {});
+          };
+          jobBeatWrite();
+          const jobBeat = setInterval(jobBeatWrite, 30000);
+          try {
+            if (process.env.RUNPOD_API_KEY && process.env.RUNPOD_ENDPOINT_ID) {
+              try { await runWmRemoveGpu(job); }
+              catch (e) {
+                if (e && e.noFallback) throw e;
+                console.error("[wm-gpu] GPU 서버 실패, 예비(Replicate)로 전환:", e.message);
+                // v28 반복 실패 감지: 예비 경로 전환도 사건 기록부에 남긴다
+                await logIncident("fallback", null, job.project_id,
+                  { error: String(e.message || e).slice(0, 300), attempts: (job.attempts || 0) + 1 },
+                  process.env.REPLICATE_API_TOKEN ? "예비 경로(Replicate)로 자동 전환" : "예비 경로 없음 — 실패 처리").catch(() => {});
+                if (process.env.REPLICATE_API_TOKEN) await runWmRemove(job); else throw e;
+              }
+            } else await runWmRemove(job);
+          } finally {
+            clearInterval(jobBeat);
+            try { await sb.from("wm_heartbeat").delete().eq("project_id", job.project_id).eq("phase", "job"); } catch {}
+          }
         }
         else throw new Error("아직 지원하지 않는 작업 유형: " + job.job_type);
         await finishJob(job.id, true);
