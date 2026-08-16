@@ -171,7 +171,8 @@ def hw_enc_args(crf):
         _HW["enc"] = ok
         print("[gpu-wm] GPU 인코딩(NVENC):", "사용" if ok else "미지원 - CPU로 진행")
     if _HW["enc"]:
-        return _NVENC_ARGS + ["-cq", str(crf)]
+        # NVENC의 cq는 x264의 crf보다 후하게(=파일 크게) 나오므로 +2 보정해 화질·용량을 기존과 맞춘다
+        return _NVENC_ARGS + ["-cq", str(crf + 2)]
     return ["-c:v", "libx264", "-crf", str(crf), "-preset", "veryfast", "-pix_fmt", "yuv420p"]
 
 # ---------------- v25: 일꾼 임시 캐시 — 단계 사이 같은 영상 재다운로드 방지 ----------------
