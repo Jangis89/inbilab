@@ -44,7 +44,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v25"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v26"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -1311,7 +1311,8 @@ def phase_plan(proj, tmp, scan_step=12):
     tmp_upload(f"wmtmp/{pid}/plan.json", json.dumps(plan).encode(), "application/json")
     sw.mark("plan_up")
     return {"phase": "plan", "chunks": len(all_chunks), "regions": len(plan_regions),
-            "ver": VERSION, "tms": sw.out()}
+            "N": N, "chunk_list": [{"r": c["r"], "s": c["s"], "e": c["e"]} for c in all_chunks],
+            "ver": VERSION, "tms": sw.out()}   # v26: 감시원이 합치기 겹치기를 판단할 수 있게 조각 범위 제공
 
 # ---------------- 단계: 작업 (part k / parts) — v2: 이어진 구간 배정 + 단일 해독 ----------------
 def phase_work(proj, tmp, part, parts):
