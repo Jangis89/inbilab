@@ -946,13 +946,33 @@ async function runRender(job) {
 }
 
 // ---------- GPU 일꾼(RunPod) 위임: 계획 → 3대 병렬 작업 → 병합 ----------
-async function gpuEndpointBase() {
+// ---------- v30: GPU 창구 선택 (본선 Modal ↔ 예비 RunPod — 완전 이중화) ----------
+// app_settings.wm_backend = 'modal' | 'runpod' (기본 runpod). 재배포 없이 전환 가능.
+// Modal 창구는 RunPod과 같은 모양(/run /status /cancel)이라 아래 rpCall이 그대로 통한다.
+async function gpuBackend(force) {
+  let kind = "runpod";
+  try {
+    const { data } = await sb.from("app_settings").select("value").eq("key", "wm_backend").maybeSingle();
+    if (data && data.value) kind = String(data.value).toLowerCase();
+  } catch {}
+  if (force) kind = force;
+  if (kind === "modal" && process.env.MODAL_API_BASE && process.env.MODAL_KEY && process.env.MODAL_SECRET) {
+    return {
+      kind: "modal",
+      base: String(process.env.MODAL_API_BASE).replace(/\/+$/, ""),
+      hdr: { "Modal-Key": process.env.MODAL_KEY, "Modal-Secret": process.env.MODAL_SECRET, "Content-Type": "application/json" },
+    };
+  }
   let ep = process.env.RUNPOD_ENDPOINT_ID;
   try {
     const { data } = await sb.from("app_settings").select("value").eq("key", "wm_gpu_tier").maybeSingle();
     if (data && String(data.value).toLowerCase() === "h100" && process.env.RUNPOD_ENDPOINT_ID_H100) ep = process.env.RUNPOD_ENDPOINT_ID_H100;
   } catch {}
-  return "https://api.runpod.ai/v2/" + ep;
+  return {
+    kind: "runpod",
+    base: "https://api.runpod.ai/v2/" + ep,
+    hdr: { "Authorization": "Bearer " + process.env.RUNPOD_API_KEY, "Content-Type": "application/json" },
+  };
 }
 // ---------- v28: 사건 기록부 + 설정 읽기 ----------
 async function logIncident(kind, stage, projectId, detail, action) {
@@ -972,10 +992,12 @@ async function getNumSetting(key, def, min, max) {
   return def;
 }
 
-async function rpCall(base, input, capMs = 2400000, opts = {}) {
-  const hdr = { "Authorization": "Bearer " + process.env.RUNPOD_API_KEY, "Content-Type": "application/json" };
+async function rpCall(be, input, capMs = 2400000, opts = {}) {
+  // v30: be = gpuBackend() 결과 {kind, base, hdr} — RunPod·Modal 공용 (창구 모양 동일)
+  const base = be.base;
+  const hdr = be.hdr;
   const r = await fetch(base + "/run", { method: "POST", headers: hdr, body: JSON.stringify({ input }) });
-  if (!r.ok) throw new Error("RunPod /run HTTP " + r.status + " " + (await r.text()).slice(0, 200));
+  if (!r.ok) throw new Error(be.kind + " /run HTTP " + r.status + " " + (await r.text()).slice(0, 200));
   const { id } = await r.json();
   const t0 = Date.now();
   // v28 멈춤 감지: 일꾼 심장박동(wm_heartbeat, 20초 간격)을 지켜본다.
@@ -997,7 +1019,7 @@ async function rpCall(base, input, capMs = 2400000, opts = {}) {
   for (;;) {
     await new Promise((res) => setTimeout(res, 3000));   // v26(항목7): 단계 완료 감지 간격 단축
     const s = await fetch(base + "/status/" + id, { headers: hdr });
-    if (!s.ok) throw new Error("RunPod /status HTTP " + s.status);
+    if (!s.ok) throw new Error(be.kind + " /status HTTP " + s.status);
     const j = await s.json();
     if (j.status === "COMPLETED") {
       if (j.output && j.output.error) {
@@ -1014,7 +1036,7 @@ async function rpCall(base, input, capMs = 2400000, opts = {}) {
       if (j.executionTime) out.__exec_ms = j.executionTime;   // 지각 감지용 실측 실행 시간
       return out;
     }
-    if (j.status === "FAILED" || j.status === "CANCELLED" || j.status === "TIMED_OUT") throw new Error("RunPod 상태: " + j.status);
+    if (j.status === "FAILED" || j.status === "CANCELLED" || j.status === "TIMED_OUT") throw new Error(be.kind + " 상태: " + j.status);
     if (j.status === "IN_PROGRESS" && execStart === null) execStart = Date.now();
     if (Date.now() - t0 > capMs) {
       try { await fetch(base + "/cancel/" + id, { method: "POST", headers: hdr }); } catch {}
@@ -1104,8 +1126,8 @@ async function wmWorkersPerJob() {
   } catch {}
   return n;
 }
-async function runWmRemoveGpu(job) {
-  const base = await gpuEndpointBase();
+async function runWmRemoveGpu(job, forceBackend) {
+  const base = await gpuBackend(forceBackend);   // v30: 본선/예비 창구 선택
   const t0 = Date.now() / 1000;
   try { await setJobProgress(job.id, 5); } catch {}
   const pCap = await planCapMs();
@@ -1770,12 +1792,25 @@ async function loop() {
               try { await runWmRemoveGpu(job); }
               catch (e) {
                 if (e && e.noFallback) throw e;
-                console.error("[wm-gpu] GPU 서버 실패, 예비(Replicate)로 전환:", e.message);
-                // v28 반복 실패 감지: 예비 경로 전환도 사건 기록부에 남긴다
-                await logIncident("fallback", null, job.project_id,
-                  { error: String(e.message || e).slice(0, 300), attempts: (job.attempts || 0) + 1 },
-                  process.env.REPLICATE_API_TOKEN ? "예비 경로(Replicate)로 자동 전환" : "예비 경로 없음 — 실패 처리").catch(() => {});
-                if (process.env.REPLICATE_API_TOKEN) await runWmRemove(job); else throw e;
+                let lastErr = e;
+                // v30 완전 이중화: 본선이 Modal이면 → 예비(RunPod)로 한 번 더 → 그래도 안 되면 Replicate
+                const be0 = await gpuBackend();
+                if (be0.kind === "modal") {
+                  console.error("[wm-gpu] 본선(Modal) 실패, 예비(RunPod)로 전환:", e.message);
+                  await logIncident("failover", null, job.project_id,
+                    { from: "modal", to: "runpod", error: String(e.message || e).slice(0, 300) },
+                    "본선(Modal) 실패 — 예비(RunPod)로 자동 전환").catch(() => {});
+                  try { await runWmRemoveGpu(job, "runpod"); lastErr = null; }
+                  catch (e2) { if (e2 && e2.noFallback) throw e2; lastErr = e2; }
+                }
+                if (lastErr) {
+                  console.error("[wm-gpu] GPU 서버 실패, 예비(Replicate)로 전환:", lastErr.message);
+                  // v28 반복 실패 감지: 예비 경로 전환도 사건 기록부에 남긴다
+                  await logIncident("fallback", null, job.project_id,
+                    { error: String(lastErr.message || lastErr).slice(0, 300), attempts: (job.attempts || 0) + 1 },
+                    process.env.REPLICATE_API_TOKEN ? "예비 경로(Replicate)로 자동 전환" : "예비 경로 없음 — 실패 처리").catch(() => {});
+                  if (process.env.REPLICATE_API_TOKEN) await runWmRemove(job); else throw lastErr;
+                }
               }
             } else await runWmRemove(job);
           } finally {
