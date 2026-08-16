@@ -45,7 +45,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v27"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v28"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -1803,6 +1803,27 @@ def phase_all(proj, tmp, t0):
     set_proj(pid, "wm_running", "복원한 부분을 원본에 합치는 중…")
     return composite_and_finish(proj, src, work, info, N, results, t0)
 
+# ---------------- v28: 심장박동 — 감시원이 일꾼 멈춤을 60초 안에 알아채도록 20초마다 생존 신고 ----------------
+import threading
+
+def _hb_start(pid, phase, part):
+    """20초 간격으로 wm_heartbeat에 생존 신고. 실패해도 조용히 넘어감(작업에 영향 없음)."""
+    stop = threading.Event()
+    def _loop():
+        while True:
+            try:
+                requests.post(f"{SB_URL}/rest/v1/wm_heartbeat",
+                              params={"on_conflict": "project_id,phase,part"},
+                              headers=sb_headers({"Content-Type": "application/json",
+                                                  "Prefer": "resolution=merge-duplicates,return=minimal"}),
+                              data=json.dumps({"project_id": pid, "phase": phase, "part": part,
+                                               "at": now_iso()}), timeout=10)
+            except Exception:
+                pass
+            if stop.wait(20): return
+    threading.Thread(target=_loop, daemon=True).start()
+    return stop
+
 # ---------------- 진입점 ----------------
 def handler(event):
     inp = event.get("input") or {}
@@ -1811,6 +1832,8 @@ def handler(event):
     if not pid: return {"error": "project_id가 없습니다"}
     t0 = inp.get("t0") or time.time()
     tmp = tempfile.mkdtemp(prefix="ibwm-")
+    _p = inp.get("part"); _w = inp.get("wid")
+    hb = _hb_start(pid, phase, int(_p if _p is not None else (_w if _w is not None else -1)))
     try:
         proj = sb_select_one("sc_projects", {"id": "eq." + pid})
         if not proj: return {"error": "프로젝트를 찾을 수 없어요: " + pid}
@@ -1830,6 +1853,8 @@ def handler(event):
             pass
         return {"error": str(e)[:500]}
     finally:
+        try: hb.set()   # 심장박동 종료
+        except Exception: pass
         shutil.rmtree(tmp, ignore_errors=True)
 
 if __name__ == "__main__":
