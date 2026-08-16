@@ -1059,8 +1059,8 @@ async function rpCall(be, input, capMs = 2400000, opts = {}) {
     if (opts.deadlineMs && execStart !== null && Date.now() - execStart > opts.deadlineMs) {
       try { await fetch(base + "/cancel/" + id, { method: "POST", headers: hdr }); } catch {}
       await logIncident("slow", String(input.phase || ""), input.project_id || null,
-        { expected_x15_sec: Math.round(opts.deadlineMs / 1000), part: hbPart, request_id: id },
-        "평소의 1.5배 초과 — 취소 후 재배정");
+        { deadline_sec: Math.round(opts.deadlineMs / 1000), part: hbPart, request_id: id },
+        "평소 예상의 여유 기준 초과 — 취소 후 재배정");
       throw new Error("일꾼 지각 감지 — 재배정");
     }
   }
@@ -1088,11 +1088,13 @@ function statMedian(arr) {
   const s = [...arr].sort((a, b) => a - b);
   return s[Math.floor(s.length / 2)];
 }
-function stageDeadlineMs(stats, stage, frames) {
-  // 예상 = (평소 프레임당 초의 중앙값) × 프레임 수, 기준은 그 1.5배 (최소 90초 바닥 — 짧은 영상 오탐 방지)
+function stageDeadlineMs(stats, stage, frames, mult) {
+  // 예상 = (평소 프레임당 초의 중앙값) × 프레임 수, 기준은 그 mult배 (기본 2.5배, app_settings wm_slow_mult_x10으로 조절)
+  // v30.1: 회사 이사 등으로 시간표가 낡았을 때 오탐(멀쩡한 작업을 지각으로 오해) 방지 위해 여유를 넉넉히.
+  const m = (mult && mult >= 1.5 && mult <= 6) ? mult : 2.5;
   const med = statMedian(stats[stage]);
   if (med == null || !frames) return null;
-  return Math.max(90000, Math.round(med * frames * 1.5 * 1000));
+  return Math.max(180000, Math.round(med * frames * m * 1000));   // 최소 3분 바닥
 }
 async function saveStageSample(stats, stage, frames, execMs) {
   if (!execMs || !frames || frames < 1) return;
@@ -1136,6 +1138,8 @@ async function runWmRemoveGpu(job, forceBackend) {
   const stallFirstSec = await getNumSetting("wm_stall_first_sec", 120, 30, 900); // 첫 박동 유예(시동 50초 실측 감안)
   const wOpts = { stallSec, stallFirstSec };
   const stats = await loadStageStats();   // 지각 감지용 '평소 시간표'
+  // v30.1: 지각 판정 여유 배수 (app_settings wm_slow_mult_x10, 10배 저장: 25 → 2.5배). 기본 2.5배 — 오탐 방지.
+  const slowMult = (await getNumSetting("wm_slow_mult_x10", 25, 15, 60)) / 10;
   let plan;
   try {
     // v28: 멈춤·일시 오류는 같은 방식으로 1회 재배정부터 (방식 전환은 그다음)
@@ -1193,8 +1197,8 @@ async function runWmRemoveGpu(job, forceBackend) {
   const works = [];
   let settled = false;
   const N0 = plan.N || 0;
-  // v28 지각 감지: 복원 일꾼의 예상 시간(평소 시간표 × 프레임 수 ÷ 일꾼 수)의 1.5배를 기한으로
-  const wDeadline = stageDeadlineMs(stats, "workpool", N0 ? Math.ceil(N0 / Math.max(1, WK)) : 0);
+  // v30.1 지각 감지: 복원 일꾼의 예상 시간 × 여유 배수(기본 2.5배)를 기한으로
+  const wDeadline = stageDeadlineMs(stats, "workpool", N0 ? Math.ceil(N0 / Math.max(1, WK)) : 0, slowMult);
   const wp = Array.from({ length: WK }, (_, k) =>
     rpCallRetry(base, { project_id: job.project_id, phase: "workpool", wid: k, t0 }, 2, 2400000,
         { ...wOpts, deadlineMs: wDeadline })
@@ -1214,7 +1218,7 @@ async function runWmRemoveGpu(job, forceBackend) {
     for (let i = 0; i < cl.length; i++) { const c = cl[i]; if (c.s <= F1 - 1 && c.e >= F0 && !doneSet.has(i)) return false; }
     return true;
   };
-  const segDeadline = stageDeadlineMs(stats, "mergeseg", N ? Math.ceil(N / PARTS) : 0);
+  const segDeadline = stageDeadlineMs(stats, "mergeseg", N ? Math.ceil(N / PARTS) : 0, slowMult);
   const fireSeg = (k) => {
     if (segPromises[k]) return;
     segPromises[k] = rpCallRetry(base, { project_id: job.project_id, phase: "mergeseg", part: k, parts: PARTS, t0 }, 2, 2400000,
@@ -1250,7 +1254,7 @@ async function runWmRemoveGpu(job, forceBackend) {
   const segs = segResults;
   try { await setJobProgress(job.id, 95); } catch {}
   const tms = { plan: plan.tms || {}, work: works.map(w => (w && w.tms) || {}), seg: segs.map(s => (s && s.tms) || {}) };
-  const finDeadline = stageDeadlineMs(stats, "finish", N || 0);
+  const finDeadline = stageDeadlineMs(stats, "finish", N || 0, slowMult);
   const fin = await rpCallRetry(base, { project_id: job.project_id, phase: "finish", parts: PARTS, t0, tms }, 2, 2400000,
       { ...wOpts, deadlineMs: finDeadline });
   // v28: 성공 작업의 실측으로 '평소 시간표'를 갱신 + 뒷정리 + 총시간이 평소 3배를 넘으면 '원인 미상' 기록
