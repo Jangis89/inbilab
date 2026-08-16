@@ -63,7 +63,7 @@ def _enter(app_dir="/app"):
     os.chdir(app_dir)
 
 
-@app.function(image=cpu_image, cpu=16.0, memory=65536, ephemeral_disk=65536,
+@app.function(image=cpu_image, cpu=16.0, memory=65536,
               timeout=1800, secrets=_secrets)
 def plan_v31_cpu(event: dict) -> dict:
     _enter()
@@ -78,7 +78,7 @@ def plan_v31_cpu(event: dict) -> dict:
     return out
 
 
-@app.function(image=gpu_image, gpu="L40S", cpu=8.0, memory=65536, ephemeral_disk=65536,
+@app.function(image=gpu_image, gpu="L40S", cpu=8.0, memory=65536,
               timeout=1800, max_containers=32, retries=0, secrets=_secrets)
 def segment_v31_gpu(event: dict) -> dict:
     _enter()
@@ -91,7 +91,7 @@ def segment_v31_gpu(event: dict) -> dict:
     return out
 
 
-@app.function(image=cpu_image, cpu=8.0, memory=16384, ephemeral_disk=32768,
+@app.function(image=cpu_image, cpu=8.0, memory=16384,
               timeout=900, secrets=_secrets)
 def finish_v31_cpu(event: dict) -> dict:
     _enter()
