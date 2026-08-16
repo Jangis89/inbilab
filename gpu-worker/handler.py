@@ -44,7 +44,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v23"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v24"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -1321,6 +1321,11 @@ def phase_workpool(proj, tmp, wid):
     total = len(chunks)
     if not total:
         return {"phase": "workpool", "wid": wid, "done": 0, "tms": sw.out()}
+    # v24: 준비(영상 내려받기·모델 적재) 전에 바구니부터 확인.
+    # 늦게 도착한 일꾼은 바구니가 비어 있으면 헛수고 없이 몇 초 만에 빈손 복귀한다.
+    ci = _claim_chunk(pid)
+    if ci is None:
+        return {"phase": "workpool", "wid": wid, "done": 0, "late": True, "tms": sw.out()}
     src, work = fetch_lite(proj, tmp, plan)
     sw.mark("dl")
     get_pipe()
@@ -1329,10 +1334,7 @@ def phase_workpool(proj, tmp, wid):
     masks_by_ri = {}
     done = 0
     t_ai = 0.0; t_encup = 0.0; t_dec = 0.0
-    while True:
-        ci = _claim_chunk(pid)
-        if ci is None:
-            break
+    while ci is not None:
         c = chunks[ci]
         ri = c["r"]
         if ri not in frames_by_ri:
@@ -1367,6 +1369,7 @@ def phase_workpool(proj, tmp, wid):
             set_proj(pid, "wm_running", f"AI가 배경을 복원하는 중… (전체 {nd}/{total} 조각 완료)")
         except Exception:
             pass
+        ci = _claim_chunk(pid)   # 다음 조각 선점 (없으면 종료)
     sw.t["dec"] = round(t_dec, 1); sw.t["ai"] = round(t_ai, 1); sw.t["enc_up"] = round(t_encup, 1)
     return {"phase": "workpool", "wid": wid, "done": done, "tms": sw.out()}
 
