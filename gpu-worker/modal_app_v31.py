@@ -46,9 +46,7 @@ cpu_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
     .pip_install("numpy==1.26.4", "opencv-python-headless==4.10.0.84", "requests")
-    .env({"PYTHONUNBUFFERED": "1", "WM_BACKEND_NAME": "modal-v31",
-          "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
-          "NUMEXPR_NUM_THREADS": "1", "VECLIB_MAXIMUM_THREADS": "1"})
+    .env({"PYTHONUNBUFFERED": "1", "WM_BACKEND_NAME": "modal-v31"})
 )
 for src, dst in _local_files:
     cpu_image = cpu_image.add_local_file(os.path.join(HERE, src), dst)
@@ -67,8 +65,6 @@ def _enter(app_dir="/app"):
               timeout=1800, secrets=_secrets)
 def plan_v31_cpu(event: dict) -> dict:
     _enter()
-    import cv2
-    cv2.setNumThreads(1)
     t0 = time.time()
     from handler_v31 import handler_v31
     out = handler_v31(event)
@@ -79,7 +75,8 @@ def plan_v31_cpu(event: dict) -> dict:
 
 
 @app.function(image=gpu_image, gpu="L40S", cpu=8.0, memory=65536,
-              timeout=1800, max_containers=32, retries=0, secrets=_secrets)
+              timeout=1800, max_containers=32, retries=0, secrets=_secrets,
+              scaledown_window=300)
 def segment_v31_gpu(event: dict) -> dict:
     _enter()
     t0 = time.time()
@@ -95,8 +92,6 @@ def segment_v31_gpu(event: dict) -> dict:
               timeout=900, secrets=_secrets)
 def finish_v31_cpu(event: dict) -> dict:
     _enter()
-    import cv2
-    cv2.setNumThreads(1)
     t0 = time.time()
     from handler_v31 import handler_v31
     out = handler_v31(event)
