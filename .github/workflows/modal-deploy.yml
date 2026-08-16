@@ -1,0 +1,29 @@
+# 인비랩 — Modal 일꾼 자동 배포
+# gpu-worker/ 안의 파일이 main에 커밋되면 Modal에 새 일꾼을 자동 배포한다.
+# 필요 열쇠(GitHub 저장소 Secrets): MODAL_TOKEN_ID, MODAL_TOKEN_SECRET (사장님이 직접 등록)
+name: Deploy Modal worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "gpu-worker/**"
+      - ".github/workflows/modal-deploy.yml"
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Modal
+        run: pip install modal
+      - name: Deploy to Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal deploy gpu-worker/modal_app.py
