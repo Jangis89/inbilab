@@ -71,13 +71,10 @@ def one_run(k, warm_n, run_id):
     plan_fn = modal.Function.from_name(APP, "plan_v31_cpu")
     seg_fn = modal.Function.from_name(APP, "segment_v31_gpu")
     fin_fn = modal.Function.from_name(APP, "finish_v31_cpu")
-    warm_fn = modal.Function.from_name(APP, "warm_v31_gpu")
 
     rec = {"run_id": run_id, "k": k, "warm_req": warm_n, "app": APP, "t_start": time.time()}
     t0 = time.time()
 
-    # plan과 GPU 예열을 동시에 시작 (명세 8장)
-    warm_calls = [warm_fn.spawn() for _ in range(warm_n)]
     plan = plan_fn.remote({"input": {"project_id": BENCH_PID, "phase": "plan_v31", "seg_k": k}})
     rec["plan"] = plan
     if plan.get("error") or plan.get("note"):
@@ -85,13 +82,19 @@ def one_run(k, warm_n, run_id):
         rec["total_s"] = round(time.time() - t0, 1)
         return rec
     rec["t_plan_done"] = round(time.time() - t0, 1)
-    warm_results = []
-    for c in warm_calls:
-        try:
-            warm_results.append(c.get(timeout=300))
-        except Exception as e:
-            warm_results.append({"warm": False, "error": str(e)[:120]})
-    rec["warm_results"] = warm_results
+
+    # 예열은 segment 함수 자체를 데운다 (다른 함수를 데우면 풀이 달라 무의미).
+    # plan이 길어 미리 데우면 scaledown으로 식으므로 plan 완료 직후에 데운다.
+    if warm_n > 0:
+        warm_calls = [seg_fn.spawn({"input": {"phase": "warm_v31"}}) for _ in range(warm_n)]
+        warm_results = []
+        for c in warm_calls:
+            try:
+                warm_results.append(c.get(timeout=600))
+            except Exception as e:
+                warm_results.append({"warm": False, "error": str(e)[:120]})
+        rec["warm_results"] = warm_results
+        rec["t_warm_done"] = round(time.time() - t0, 1)
 
     segs = [seg_fn.spawn({"input": {"project_id": BENCH_PID, "phase": "segment_v31", "part": p}})
             for p in range(k)]
@@ -140,9 +143,7 @@ def main():
         rec = one_run(a.k, a.warm, rid)
         rec["label"] = a.label
         records.append(rec)
-        print(json.dumps({k: v for k, v in rec.items()
-                          if k in ("run_id", "result", "total_s", "t_plan_done", "t_segments_done")},
-                         ensure_ascii=False))
+        print("[REC]", json.dumps(rec, ensure_ascii=False, default=str))
         # 실패해도 표본에 포함 (명세 23.2)
 
     totals = [r["total_s"] for r in records if r.get("result") == "OK"]
