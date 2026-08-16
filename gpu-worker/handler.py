@@ -44,7 +44,7 @@ TIERS = {
     "hq":   {"scale": 1.0,  "steps": 8},
 }
 CHUNK_LEN = 401   # 4k+1
-VERSION = "v24"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
+VERSION = "v25"   # 배포 검증용 버전 도장 — 결과(wm_done)와 계획(plan)에 찍힘
 CHUNK_STEP = 389  # 12프레임 겹침
 
 # ---------------- Supabase REST ----------------
@@ -135,6 +135,68 @@ def frame_count(path):
                "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", path]).stdout
     return int(out.decode().strip() or 0)
 
+# ---------------- v25: GPU 가속(NVENC/NVDEC) — 지원되면 사용, 안 되면 기존 CPU 방식 자동 복귀 ----------------
+_HW = {"enc": None, "dec": None}
+_NVENC_ARGS = ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-b:v", "0", "-pix_fmt", "yuv420p"]
+
+def hw_dec_args():
+    """GPU 해독(NVDEC) 가능하면 ffmpeg 입력 앞에 붙일 인자, 아니면 빈 목록 (1회 실제 시험 후 기억)"""
+    if _HW["dec"] is None:
+        ok = False
+        try:
+            t = os.path.join(tempfile.gettempdir(), "_hwprobe.mp4")
+            r0 = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=black:s=192x192:r=8:d=0.5",
+                                 "-c:v", "libx264", "-pix_fmt", "yuv420p", t, "-y"], capture_output=True, timeout=60)
+            if r0.returncode == 0:
+                r = subprocess.run(["ffmpeg", "-v", "error", "-hwaccel", "cuda", "-i", t,
+                                    "-frames:v", "2", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                                   capture_output=True, timeout=60)
+                ok = (r.returncode == 0 and len(r.stdout) >= 192 * 192 * 3)
+        except Exception:
+            ok = False
+        _HW["dec"] = ok
+        print("[gpu-wm] GPU 해독(NVDEC):", "사용" if ok else "미지원 - CPU로 진행")
+    return ["-hwaccel", "cuda"] if _HW["dec"] else []
+
+def hw_enc_args(crf):
+    """GPU 인코딩(NVENC) 가능하면 그 인자, 아니면 기존 CPU(libx264) 인자 (1회 실제 시험 후 기억)"""
+    if _HW["enc"] is None:
+        ok = False
+        try:
+            r = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=black:s=192x192:r=8:d=0.5"]
+                               + _NVENC_ARGS + ["-cq", "17", "-f", "null", "-"], capture_output=True, timeout=60)
+            ok = (r.returncode == 0)
+        except Exception:
+            ok = False
+        _HW["enc"] = ok
+        print("[gpu-wm] GPU 인코딩(NVENC):", "사용" if ok else "미지원 - CPU로 진행")
+    if _HW["enc"]:
+        return _NVENC_ARGS + ["-cq", str(crf)]
+    return ["-c:v", "libx264", "-crf", str(crf), "-preset", "veryfast", "-pix_fmt", "yuv420p"]
+
+# ---------------- v25: 일꾼 임시 캐시 — 단계 사이 같은 영상 재다운로드 방지 ----------------
+CACHE_DIR = os.path.join(tempfile.gettempdir(), "wmcache")
+
+def cache_get(key):
+    p = os.path.join(CACHE_DIR, key)
+    try:
+        if os.path.exists(p) and os.path.getsize(p) > 0 and time.time() - os.path.getmtime(p) < 7200:
+            os.utime(p, None)   # 최근 사용 표시 (정리 시 보호)
+            return p
+    except Exception:
+        pass
+    return None
+
+def cache_put(key, path):
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        shutil.copy(path, os.path.join(CACHE_DIR, key))
+        files = sorted((os.path.join(CACHE_DIR, f) for f in os.listdir(CACHE_DIR)), key=os.path.getmtime)
+        for f in files[:-6]:
+            os.remove(f)
+    except Exception:
+        pass
+
 def read_region_frames(path, x, y, w, h, sample_every=1, scale_to=None):
     """crop 영역의 프레임을 numpy (N,h,w,3) uint8 로 읽기 (rawvideo 파이프)"""
     vf = f"crop={w}:{h}:{x}:{y}"
@@ -143,7 +205,7 @@ def read_region_frames(path, x, y, w, h, sample_every=1, scale_to=None):
     if scale_to:
         ow, oh = scale_to
         vf += f",scale={ow}:{oh}"
-    p = subprocess.Popen(["ffmpeg", "-v", "error", "-i", path, "-vf", vf,
+    p = subprocess.Popen(["ffmpeg", "-v", "error"] + hw_dec_args() + ["-i", path, "-vf", vf,
                           "-vsync", "0", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                          stdout=subprocess.PIPE)
     frames = []
@@ -163,7 +225,7 @@ def stream_frames(path, W, H, sample_every=1, stop_after=None):
     """전체 프레임을 한 번만 해독해 순서대로 내보내는 발생기(단일 해독 재사용용)"""
     vf = None
     if sample_every > 1: vf = f"select='not(mod(n\\,{sample_every}))'"
-    cmd = ["ffmpeg", "-v", "error", "-i", path]
+    cmd = ["ffmpeg", "-v", "error"] + hw_dec_args() + ["-i", path]
     if vf: cmd += ["-vf", vf]
     cmd += ["-vsync", "0", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
@@ -859,7 +921,7 @@ def encode_chunk_mp4(frames_arr, fps, path):
     if p.returncode != 0: raise RuntimeError("조각 인코딩 실패")
 
 def decode_chunk_mp4(path, w, h):
-    p = subprocess.Popen(["ffmpeg", "-v", "error", "-i", path, "-vsync", "0",
+    p = subprocess.Popen(["ffmpeg", "-v", "error"] + hw_dec_args() + ["-i", path, "-vsync", "0",
                           "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
     frames = []
     fsz = w * h * 3
@@ -972,14 +1034,22 @@ def download_to(url, dest):
     _retry(_do)
 
 def fetch_lite(proj, tmp, plan):
-    """plan 이후 단계용: 원본만 내려받고 계획서의 값(N 등)을 재사용 — 재검사·재인코딩 없음"""
-    src = os.path.join(tmp, "src.mp4")
-    download_to(signed_url(proj["source_path"], 21600), src)
+    """plan 이후 단계용: 원본만 내려받고 계획서의 값(N 등)을 재사용 — 재검사·재인코딩 없음.
+    v25: 일꾼이 살아있는 동안 같은 영상은 임시 캐시에서 재사용 (단계마다 재다운로드하던 낭비 제거)"""
+    pid = proj["id"]
+    src = cache_get(pid + "-src.mp4")
+    if not src:
+        src = os.path.join(tmp, "src.mp4")
+        download_to(signed_url(proj["source_path"], 21600), src)
+        cache_put(pid + "-src.mp4", src)
     work = src
     if plan.get("cfr"):
-        work = os.path.join(tmp, "work.mp4")
-        with open(work, "wb") as f:
-            f.write(tmp_download(f"wmtmp/{proj['id']}/work.mp4"))
+        work = cache_get(pid + "-work.mp4")
+        if not work:
+            work = os.path.join(tmp, "work.mp4")
+            with open(work, "wb") as f:
+                f.write(tmp_download(f"wmtmp/{pid}/work.mp4"))
+            cache_put(pid + "-work.mp4", work)
     return src, work
 
 def assign_chunks(chunks, regions, parts):
@@ -1024,8 +1094,8 @@ def fetch_source(proj, tmp):
     expected = round(info["dur"] * info["fps"])
     if N and abs(N - expected) > max(5, expected * 0.02):
         work = os.path.join(tmp, "work.mp4")
-        run(["ffmpeg", "-v", "error", "-i", src, "-vf", f"fps={info['fps']}", "-an",
-             "-c:v", "libx264", "-crf", "12", "-preset", "ultrafast", "-pix_fmt", "yuv420p", work, "-y"])
+        run(["ffmpeg", "-v", "error"] + hw_dec_args() + ["-i", src, "-vf", f"fps={info['fps']}", "-an"]
+            + hw_enc_args(12) + [work, "-y"])
         N = frame_count(work)
     return src, work, info, N
 
@@ -1445,9 +1515,8 @@ def phase_mergeseg(proj, tmp, part, parts):
     # 담당 구간만 합성해 조각 영상으로 인코딩 (오디오 없음)
     outp = os.path.join(tmp, f"seg_{part}.mp4")
     enc = subprocess.Popen(["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
-                            "-s", f"{W}x{H}", "-r", str(fps), "-i", "-",
-                            "-c:v", "libx264", "-crf", "17", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-                            outp, "-y"], stdin=subprocess.PIPE)
+                            "-s", f"{W}x{H}", "-r", str(fps), "-i", "-"]
+                           + hw_enc_args(17) + [outp, "-y"], stdin=subprocess.PIPE)
     i = 0
     for fr in stream_frames(work, W, H, stop_after=F1):
         if i >= F1: break
@@ -1532,14 +1601,13 @@ def composite_and_finish(proj, src, work, info, N, results, t0, plan=None):
     W, H, fps = info["W"], info["H"], info["fps"]
     tmpdir = os.path.dirname(src)
     outp = os.path.join(tmpdir, "out.mp4")
-    dec = subprocess.Popen(["ffmpeg", "-v", "error", "-i", work, "-vsync", "0",
+    dec = subprocess.Popen(["ffmpeg", "-v", "error"] + hw_dec_args() + ["-i", work, "-vsync", "0",
                             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
     enc_cmd = ["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
                "-s", f"{W}x{H}", "-r", str(fps), "-i", "-"]
     if info["audio"]:
         enc_cmd += ["-i", src, "-map", "0:v", "-map", "1:a:0", "-c:a", "aac", "-b:a", "160k"]
-    enc_cmd += ["-c:v", "libx264", "-crf", "17", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart", outp, "-y"]
+    enc_cmd += hw_enc_args(17) + ["-movflags", "+faststart", outp, "-y"]
     enc = subprocess.Popen(enc_cmd, stdin=subprocess.PIPE)
     fsz = W * H * 3
     i = 0
