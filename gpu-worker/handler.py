@@ -1515,9 +1515,12 @@ def phase_mergeseg(proj, tmp, part, parts):
     sw.mark("chunks")
     # 담당 구간만 합성해 조각 영상으로 인코딩 (오디오 없음)
     outp = os.path.join(tmp, f"seg_{part}.mp4")
+    # 최종 결과물 인코딩은 CPU(libx264) 고정 — GPU 인코딩은 같은 설정에서 파일이 1.6배 커져
+    # 수강생 다운로드 속도·저장 비용에 불리 (해독 가속과 중간 파일 인코딩만 GPU 사용)
     enc = subprocess.Popen(["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
-                            "-s", f"{W}x{H}", "-r", str(fps), "-i", "-"]
-                           + hw_enc_args(17) + [outp, "-y"], stdin=subprocess.PIPE)
+                            "-s", f"{W}x{H}", "-r", str(fps), "-i", "-",
+                            "-c:v", "libx264", "-crf", "17", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                            outp, "-y"], stdin=subprocess.PIPE)
     i = 0
     for fr in stream_frames(work, W, H, stop_after=F1):
         if i >= F1: break
@@ -1608,7 +1611,8 @@ def composite_and_finish(proj, src, work, info, N, results, t0, plan=None):
                "-s", f"{W}x{H}", "-r", str(fps), "-i", "-"]
     if info["audio"]:
         enc_cmd += ["-i", src, "-map", "0:v", "-map", "1:a:0", "-c:a", "aac", "-b:a", "160k"]
-    enc_cmd += hw_enc_args(17) + ["-movflags", "+faststart", outp, "-y"]
+    enc_cmd += ["-c:v", "libx264", "-crf", "17", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart", outp, "-y"]   # 최종 결과물은 CPU 고정 (파일 크기 유지)
     enc = subprocess.Popen(enc_cmd, stdin=subprocess.PIPE)
     fsz = W * H * 3
     i = 0
