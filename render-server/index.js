@@ -954,12 +954,46 @@ async function gpuEndpointBase() {
   } catch {}
   return "https://api.runpod.ai/v2/" + ep;
 }
-async function rpCall(base, input, capMs = 2400000) {
+// ---------- v28: 사건 기록부 + 설정 읽기 ----------
+async function logIncident(kind, stage, projectId, detail, action) {
+  // 사건 기록부: 자동 감지·조치와 원인 미상 이상 징후를 남긴다 (기록 실패해도 서비스에는 영향 없음)
+  try {
+    await sb.from("wm_incidents").insert({
+      kind, stage: stage || null, project_id: projectId || null,
+      detail: detail || {}, action: action || "" });
+    console.log("[사건기록]", kind, stage || "", action || "");
+  } catch (e) { console.error("[사건기록] 저장 실패:", e.message); }
+}
+async function getNumSetting(key, def, min, max) {
+  try {
+    const { data } = await sb.from("app_settings").select("value").eq("key", key).maybeSingle();
+    if (data && data.value != null) { const v = parseInt(data.value, 10); if (v >= min && v <= max) return v; }
+  } catch {}
+  return def;
+}
+
+async function rpCall(base, input, capMs = 2400000, opts = {}) {
   const hdr = { "Authorization": "Bearer " + process.env.RUNPOD_API_KEY, "Content-Type": "application/json" };
   const r = await fetch(base + "/run", { method: "POST", headers: hdr, body: JSON.stringify({ input }) });
   if (!r.ok) throw new Error("RunPod /run HTTP " + r.status + " " + (await r.text()).slice(0, 200));
   const { id } = await r.json();
   const t0 = Date.now();
+  // v28 멈춤 감지: 일꾼 심장박동(wm_heartbeat, 20초 간격)을 지켜본다.
+  //  - 실행은 시작됐는데 첫 박동이 유예(기본 120초·시동 50초 실측 감안) 안에 없으면 → 멈춤
+  //  - 박동이 오다가 기준(기본 60초) 넘게 끊기면 → 멈춤   → 취소하고 다른 일꾼에게 재배정(재시도가 담당)
+  const stallMs = (opts.stallSec || 60) * 1000;
+  const firstMs = (opts.stallFirstSec || 120) * 1000;
+  const hbPart = input.part != null ? input.part : (input.wid != null ? input.wid : -1);
+  let execStart = null;      // 일꾼이 실행을 시작한 시각(IN_PROGRESS 처음 목격)
+  let lastBeat = null;       // 이번 요청 제출 이후의 최신 박동 시각
+  let tick = 0;
+  const stallKill = async (why, waited) => {
+    try { await fetch(base + "/cancel/" + id, { method: "POST", headers: hdr }); } catch {}
+    await logIncident("stall", String(input.phase || ""), input.project_id || null,
+      { why, waited_sec: Math.round(waited / 1000), part: hbPart, request_id: id },
+      "요청 취소 후 다른 일꾼에게 재배정");
+    throw new Error("일꾼 멈춤 감지(" + why + ") — 재배정");
+  };
   for (;;) {
     await new Promise((res) => setTimeout(res, 3000));   // v26(항목7): 단계 완료 감지 간격 단축
     const s = await fetch(base + "/status/" + id, { headers: hdr });
@@ -967,24 +1001,80 @@ async function rpCall(base, input, capMs = 2400000) {
     const j = await s.json();
     if (j.status === "COMPLETED") {
       if (j.output && j.output.error) throw new Error("GPU 처리 오류: " + String(j.output.error).slice(0, 200));
-      return j.output || {};
+      const out = j.output || {};
+      if (j.executionTime) out.__exec_ms = j.executionTime;   // 지각 감지용 실측 실행 시간
+      return out;
     }
     if (j.status === "FAILED" || j.status === "CANCELLED" || j.status === "TIMED_OUT") throw new Error("RunPod 상태: " + j.status);
+    if (j.status === "IN_PROGRESS" && execStart === null) execStart = Date.now();
     if (Date.now() - t0 > capMs) {
       try { await fetch(base + "/cancel/" + id, { method: "POST", headers: hdr }); } catch {}
       throw new Error("GPU 단계 시간 초과(" + Math.round(capMs / 60000) + "분)");
     }
+    // 심장박동 확인은 9초에 한 번 (조회 부하 절약). 대기 줄(IN_QUEUE)에 있을 때는 멈춤 아님.
+    tick++;
+    if (opts.watch !== false && execStart !== null && input.project_id && tick % 3 === 0) {
+      try {
+        const { data: hb } = await sb.from("wm_heartbeat").select("at")
+          .eq("project_id", input.project_id).eq("phase", input.phase).eq("part", hbPart).maybeSingle();
+        const at = hb && hb.at ? new Date(hb.at).getTime() : 0;
+        if (at > t0 - 30000) lastBeat = Math.max(lastBeat || 0, at);   // 이번 제출 이후 박동만 인정
+      } catch {}
+      const now = Date.now();
+      if (lastBeat === null && now - execStart > firstMs) await stallKill("첫 응답 없음", now - execStart);
+      if (lastBeat !== null && now - lastBeat > stallMs) await stallKill("진행 보고 끊김", now - lastBeat);
+    }
+    // v28 지각 감지: 실행 시작 후 예상 시간의 1.5배(deadlineMs)를 넘으면 취소 후 재배정
+    if (opts.deadlineMs && execStart !== null && Date.now() - execStart > opts.deadlineMs) {
+      try { await fetch(base + "/cancel/" + id, { method: "POST", headers: hdr }); } catch {}
+      await logIncident("slow", String(input.phase || ""), input.project_id || null,
+        { expected_x15_sec: Math.round(opts.deadlineMs / 1000), part: hbPart, request_id: id },
+        "평소의 1.5배 초과 — 취소 후 재배정");
+      throw new Error("일꾼 지각 감지 — 재배정");
+    }
   }
 }
-async function rpCallRetry(base, input, tries = 2, capMs = 2400000) {
-  // 조각 단위 재시도: 일시 오류(저장소 삐끗, 일꾼 교체 등) 1번으로 전체 작업이
+async function rpCallRetry(base, input, tries = 2, capMs = 2400000, opts = {}) {
+  // 조각 단위 재시도: 일시 오류(저장소 삐끗, 일꾼 교체 등)·멈춤·지각 1번으로 전체 작업이
   // 값비싼 예비 경로(Replicate)로 넘어가는 것을 방지. 각 단계는 재실행해도 안전(멱등).
   let last;
   for (let i = 0; i < tries; i++) {
-    try { return await rpCall(base, input, capMs); }
+    try { return await rpCall(base, input, capMs, opts); }
     catch (e) { last = e; if (i < tries - 1) await new Promise((res) => setTimeout(res, 8000)); }
   }
   throw last;
+}
+// ---------- v28 지각 감지: 단계별 '평소 시간표' (성공 작업에서 학습, app_settings.wm_stage_stats) ----------
+async function loadStageStats() {
+  try {
+    const { data } = await sb.from("app_settings").select("value").eq("key", "wm_stage_stats").maybeSingle();
+    if (data && data.value) return JSON.parse(data.value);
+  } catch {}
+  return {};
+}
+function statMedian(arr) {
+  if (!arr || !arr.length) return null;
+  const s = [...arr].sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)];
+}
+function stageDeadlineMs(stats, stage, frames) {
+  // 예상 = (평소 프레임당 초의 중앙값) × 프레임 수, 기준은 그 1.5배 (최소 90초 바닥 — 짧은 영상 오탐 방지)
+  const med = statMedian(stats[stage]);
+  if (med == null || !frames) return null;
+  return Math.max(90000, Math.round(med * frames * 1.5 * 1000));
+}
+async function saveStageSample(stats, stage, frames, execMs) {
+  if (!execMs || !frames || frames < 1) return;
+  const perFrame = (execMs / 1000) / frames;
+  if (!(perFrame > 0) || perFrame > 60) return;
+  if (!stats[stage]) stats[stage] = [];
+  stats[stage].push(Math.round(perFrame * 1000) / 1000);
+  if (stats[stage].length > 12) stats[stage] = stats[stage].slice(-12);   // 최근 12건만 유지
+}
+async function flushStageStats(stats) {
+  try {
+    await sb.from("app_settings").upsert({ key: "wm_stage_stats", value: JSON.stringify(stats) }, { onConflict: "key" });
+  } catch (e) { console.error("[시간표] 저장 실패:", e.message); }
 }
 async function planCapMs() {
   // 감지 단계 제한시간(분). app_settings의 wm_plan_cap_min으로 조절 가능(기본 15분).
@@ -1010,16 +1100,22 @@ async function runWmRemoveGpu(job) {
   const t0 = Date.now() / 1000;
   try { await setJobProgress(job.id, 5); } catch {}
   const pCap = await planCapMs();
+  // v28 감시 설정 (재배포 없이 app_settings로 조절 가능)
+  const stallSec = await getNumSetting("wm_stall_sec", 60, 15, 600);          // 박동 끊김 기준
+  const stallFirstSec = await getNumSetting("wm_stall_first_sec", 120, 30, 900); // 첫 박동 유예(시동 50초 실측 감안)
+  const wOpts = { stallSec, stallFirstSec };
+  const stats = await loadStageStats();   // 지각 감지용 '평소 시간표'
   let plan;
   try {
-    plan = await rpCall(base, { project_id: job.project_id, phase: "plan", t0, scan_step: 12 }, pCap);
+    // v28: 멈춤·일시 오류는 같은 방식으로 1회 재배정부터 (방식 전환은 그다음)
+    plan = await rpCallRetry(base, { project_id: job.project_id, phase: "plan", t0, scan_step: 12 }, 2, pCap, wOpts);
   } catch (e1) {
     console.error("[wm-gpu] 감지 1차 실패, 표본 간격 2배로 재시도:", e1.message);
     try {
       await sb.from("sc_projects").update({ status: "wm_running", status_detail: "감지가 오래 걸려 방식을 바꿔 다시 시도하는 중…" }).eq("id", job.project_id);
     } catch {}
     try {
-      plan = await rpCall(base, { project_id: job.project_id, phase: "plan", t0, scan_step: 24 }, pCap);
+      plan = await rpCall(base, { project_id: job.project_id, phase: "plan", t0, scan_step: 24 }, pCap, wOpts);
     } catch (e2) {
       try {
         await sb.from("sc_projects").update({ status: "failed_wm", status_detail: "자동 감지에 실패했습니다. [직접 지정] 모드로 자막 위치를 그려주시면 빠르게 처리됩니다." }).eq("id", job.project_id);
@@ -1032,7 +1128,23 @@ async function runWmRemoveGpu(job) {
   if (plan.note === "no_target") return;
   try { await setJobProgress(job.id, 30); } catch {}
   const total = plan.chunks || 0;
-  const WKMAX = await wmWorkersPerJob();                 // 기본 5 (app_settings.wm_workers_per_job)
+  // v28 혼잡 감지: 동시에 처리 중·대기 중인 자막 제거 작업이 기준(기본 3건, 자기 포함) 이상이면
+  // 영상당 일꾼을 3대로 줄여 더 많은 수강생을 동시에 처리한다. 한가해지면 다음 작업부터 자동 복귀.
+  let WKMAX = await wmWorkersPerJob();                   // 기본 5 (app_settings.wm_workers_per_job)
+  try {
+    const congestAt = await getNumSetting("wm_congest_jobs", 3, 1, 20);
+    const { count: qn } = await sb.from("sc_render_jobs").select("id", { count: "exact", head: true })
+      .eq("job_type", "wmremove").eq("status", "queued");
+    const { count: rn } = await sb.from("sc_render_jobs").select("id", { count: "exact", head: true })
+      .eq("job_type", "wmremove").eq("status", "running");
+    const busy = (qn || 0) + (rn || 0);   // 자기 자신(running) 포함
+    if (busy >= congestAt && WKMAX > 3) {
+      await logIncident("congestion", "queue", job.project_id,
+        { queued: qn || 0, running: rn || 0, threshold: congestAt },
+        "혼잡 — 이 작업은 영상당 일꾼 " + WKMAX + "대 → 3대로 축소");
+      WKMAX = 3;
+    }
+  } catch {}
   const WK = Math.min(WKMAX, Math.max(1, total));        // 복원 일꾼 수 (조각 바구니 방식)
   const PARTS = total >= 6 ? WK : total >= 2 ? 2 : 1;    // v24: 합치기(mergeseg) 분할도 일꾼 수만큼 확대
   try {
@@ -1049,8 +1161,12 @@ async function runWmRemoveGpu(job) {
   // (지각 일꾼은 v24 GPU 프로그램이 준비 전에 바구니를 확인하므로 몇 초 만에 빈손 복귀)
   const works = [];
   let settled = false;
+  const N0 = plan.N || 0;
+  // v28 지각 감지: 복원 일꾼의 예상 시간(평소 시간표 × 프레임 수 ÷ 일꾼 수)의 1.5배를 기한으로
+  const wDeadline = stageDeadlineMs(stats, "workpool", N0 ? Math.ceil(N0 / Math.max(1, WK)) : 0);
   const wp = Array.from({ length: WK }, (_, k) =>
-    rpCallRetry(base, { project_id: job.project_id, phase: "workpool", wid: k, t0 })
+    rpCallRetry(base, { project_id: job.project_id, phase: "workpool", wid: k, t0 }, 2, 2400000,
+        { ...wOpts, deadlineMs: wDeadline })
       .then((v) => { works.push(v); })
       .catch((e) => { console.error("[wm-gpu] 복원 일꾼 오류(조각 검사로 만회):", e.message); }));
   Promise.allSettled(wp).then(() => { settled = true; });
@@ -1067,9 +1183,11 @@ async function runWmRemoveGpu(job) {
     for (let i = 0; i < cl.length; i++) { const c = cl[i]; if (c.s <= F1 - 1 && c.e >= F0 && !doneSet.has(i)) return false; }
     return true;
   };
+  const segDeadline = stageDeadlineMs(stats, "mergeseg", N ? Math.ceil(N / PARTS) : 0);
   const fireSeg = (k) => {
     if (segPromises[k]) return;
-    segPromises[k] = rpCallRetry(base, { project_id: job.project_id, phase: "mergeseg", part: k, parts: PARTS, t0 })
+    segPromises[k] = rpCallRetry(base, { project_id: job.project_id, phase: "mergeseg", part: k, parts: PARTS, t0 }, 2, 2400000,
+        { ...wOpts, deadlineMs: segDeadline })
       .then((v) => { segResults[k] = v; });
   };
   let retried = false;
@@ -1101,7 +1219,27 @@ async function runWmRemoveGpu(job) {
   const segs = segResults;
   try { await setJobProgress(job.id, 95); } catch {}
   const tms = { plan: plan.tms || {}, work: works.map(w => (w && w.tms) || {}), seg: segs.map(s => (s && s.tms) || {}) };
-  await rpCallRetry(base, { project_id: job.project_id, phase: "finish", parts: PARTS, t0, tms });
+  const finDeadline = stageDeadlineMs(stats, "finish", N || 0);
+  const fin = await rpCallRetry(base, { project_id: job.project_id, phase: "finish", parts: PARTS, t0, tms }, 2, 2400000,
+      { ...wOpts, deadlineMs: finDeadline });
+  // v28: 성공 작업의 실측으로 '평소 시간표'를 갱신 + 뒷정리 + 총시간이 평소 3배를 넘으면 '원인 미상' 기록
+  try {
+    if (N0) {
+      for (const w of works) if (w && w.__exec_ms && !w.late) saveStageSample(stats, "workpool", Math.ceil(N0 / Math.max(1, WK)), w.__exec_ms);
+      for (const s of segs) if (s && s.__exec_ms) saveStageSample(stats, "mergeseg", Math.ceil(N0 / PARTS), s.__exec_ms);
+      if (fin && fin.__exec_ms) saveStageSample(stats, "finish", N0, fin.__exec_ms);
+      const totalSec = Date.now() / 1000 - t0;
+      const totMed = statMedian(stats.total || []);
+      if (totMed && (stats.total || []).length >= 4 && (totalSec / N0) > totMed * 3) {
+        await logIncident("unknown", "total", job.project_id,
+          { total_sec: Math.round(totalSec), usual_sec: Math.round(totMed * N0), frames: N0 },
+          "성공했지만 평소의 3배 초과 — 원인 분석 필요");
+      }
+      saveStageSample(stats, "total", N0, totalSec * 1000);
+      await flushStageStats(stats);
+    }
+    await sb.from("wm_heartbeat").delete().eq("project_id", job.project_id);
+  } catch {}
 }
 
 // ---------- 메인 루프 ----------
@@ -1568,6 +1706,10 @@ async function loop() {
             catch (e) {
               if (e && e.noFallback) throw e;
               console.error("[wm-gpu] GPU 서버 실패, 예비(Replicate)로 전환:", e.message);
+              // v28 반복 실패 감지: 예비 경로 전환도 사건 기록부에 남긴다
+              await logIncident("fallback", null, job.project_id,
+                { error: String(e.message || e).slice(0, 300), attempts: (job.attempts || 0) + 1 },
+                process.env.REPLICATE_API_TOKEN ? "예비 경로(Replicate)로 자동 전환" : "예비 경로 없음 — 실패 처리").catch(() => {});
               if (process.env.REPLICATE_API_TOKEN) await runWmRemove(job); else throw e;
             }
           } else await runWmRemove(job);
@@ -1577,6 +1719,12 @@ async function loop() {
         processedCount++;
       } catch (err) {
         console.error(`[작업] 실패 (job=${job.id}):`, err.message);
+        // v28 사건 기록부: 자막 제거 작업의 실패는 전부 기록 (원인 미상 분석용)
+        if (job.job_type === "wmremove") {
+          await logIncident("unknown", null, job.project_id,
+            { error: String(err.message || err).slice(0, 300), attempts: (job.attempts || 0) + 1, final: (job.attempts || 0) >= 1 || !!err.noFallback },
+            (job.attempts || 0) < 1 && !err.noFallback ? "1회 자동 재시도" : "확정 실패 — 분석 필요").catch(() => {});
+        }
         // noFallback = 이미 안내 문구(failed_wm)까지 남긴 확정 실패: 재시도·문구 덮어쓰기 모두 하지 않음
         if ((job.attempts || 0) < 1 && !err.noFallback) {
           // 1회 자동 재시도: 다시 대기열로 (사용량 중복 기록 없음)
