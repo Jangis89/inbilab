@@ -1,6 +1,7 @@
 # 인비랩 — Modal 일꾼 자동 배포
 # gpu-worker/ 안의 파일이 main에 커밋되면 Modal에 새 일꾼을 자동 배포한다.
 # 필요 열쇠(GitHub 저장소 Secrets): MODAL_TOKEN_ID, MODAL_TOKEN_SECRET (사장님이 직접 등록)
+# Supabase 열쇠는 저장소에 이미 있는 SUPABASE_URL / SUPABASE_SERVICE_ROLE을 Modal로 자동 전달한다.
 name: Deploy Modal worker
 
 on:
@@ -22,6 +23,17 @@ jobs:
           python-version: "3.11"
       - name: Install Modal
         run: pip install modal
+      - name: Sync Supabase secret to Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: |
+          modal secret create inbilab-supabase \
+            SUPABASE_URL="$SUPABASE_URL" \
+            SUPABASE_SERVICE_ROLE="$SUPABASE_SERVICE_ROLE" \
+            --force
       - name: Deploy to Modal
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
