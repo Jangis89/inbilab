@@ -15,5 +15,7 @@ COPY gpu-worker/handler.py gpu-worker/transformer_minimax_remover.py gpu-worker/
 
 ENV MODEL_DIR=/models
 ENV PYTHONUNBUFFERED=1
+# v25: GPU 영상 인코딩/해독(NVENC/NVDEC) 사용 권한
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
 CMD ["python", "-u", "handler.py"]
