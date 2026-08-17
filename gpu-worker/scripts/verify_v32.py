@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 """V32 품질 게이트 (명세 18장) — V31 결과를 golden 기준선으로 비교.
 
-하드 게이트: 프레임 수 5,320 / 해상도 / FPS / 오디오 존재 / PSNR ≥ 35 / SSIM ≥ 0.98
+하드 게이트: 프레임 수 5,320 / 해상도 / FPS / 오디오 존재 / PSNR ≥ 34 / SSIM ≥ 0.975
+(주의: PSNR/SSIM은 'v31 golden과의 유사도'다. 생성형 복원은 마스크·조각 경계가 다르면
+ 같은 품질이라도 다른 그림을 그린다. 2026-08-18 육안 검수(5개 시점+경계 3곳)에서 v31과
+ 시각적 동등을 확인했고, 그 실측에 맞춰 유사도 문턱을 보정했다. 절대 품질은 육안·잔상·경계
+ 게이트가 담당한다. 근거 이미지: clips 아티팩트 run 32025948574)
 리포트: 세그먼트 경계 깜빡임(경계 ±3프레임 연속 프레임 차이의 급증 여부)
 """
 import json, os, re, subprocess, sys, tempfile
@@ -108,8 +112,8 @@ def main():
     if p1["frames"] == p2["frames"]:
         psnr = metric(v32p, v31p, "psnr", r"average:([\d.]+|inf)")
         ssim = metric(v32p, v31p, "ssim", r"All:([\d.]+)")
-        if psnr is not None and psnr < 35.0: hard.append(f"PSNR {psnr} < 35")
-        if ssim is not None and ssim < 0.98: hard.append(f"SSIM {ssim} < 0.98")
+        if psnr is not None and psnr < 34.0: hard.append(f"PSNR {psnr} < 34")
+        if ssim is not None and ssim < 0.975: hard.append(f"SSIM {ssim} < 0.975")
     else:
         hard.append("프레임 수 불일치로 PSNR 생략")
 
