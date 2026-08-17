@@ -29,6 +29,10 @@ on:
         description: "bench 라벨 (warm/cold 등)"
         required: false
         default: "warm"
+      plan_on:
+        description: "plan 실행 위치 (cpu | gpu)"
+        required: false
+        default: "cpu"
 
 jobs:
   v31:
@@ -69,7 +73,8 @@ jobs:
             --runs "${{ github.event.inputs.runs }}" \
             --k "${{ github.event.inputs.k }}" \
             --warm "${{ github.event.inputs.warm }}" \
-            --label "${{ github.event.inputs.label }}"
+            --label "${{ github.event.inputs.label }}" \
+            --plan_on "${{ github.event.inputs.plan_on }}"
       - name: Verify output quality
         if: ${{ github.event.inputs.action == 'verify' }}
         env:
