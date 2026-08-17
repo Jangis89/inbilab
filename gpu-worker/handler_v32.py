@@ -313,7 +313,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
     outp = os.path.join(tmp, f"seg_{part}.mp4")
     enc = subprocess.Popen(["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
                             "-s", f"{W}x{H}", "-r", str(fps), "-i", "-",
-                            "-c:v", "libx264", "-crf", "17", "-preset", "veryfast",
+                            "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
                             "-pix_fmt", "yuv420p", outp, "-y"], stdin=subprocess.PIPE)
     i = F0
     for fr in v31.stream_frames_range(work, W, H, F0, F1, fps):
