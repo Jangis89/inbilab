@@ -31,6 +31,7 @@ gpu_image = (
         "PYTHONUNBUFFERED": "1",
         "NVIDIA_DRIVER_CAPABILITIES": "compute,utility,video",
         "WM_BACKEND_NAME": "modal-v31",
+        "WM_NPROC": "14",
     })
     .run_commands(
         "python -c \"from huggingface_hub import snapshot_download; "
@@ -72,6 +73,21 @@ def plan_v31_cpu(event: dict) -> dict:
     if isinstance(out, dict):
         out["__exec_ms"] = int((time.time() - t0) * 1000)
         out["__fn"] = "plan_v31_cpu"
+    return out
+
+
+@app.function(image=gpu_image, gpu="L40S", cpu=16.0, memory=65536,
+              timeout=1800, retries=0, secrets=_secrets, scaledown_window=300)
+def plan_v31_gpu(event: dict) -> dict:
+    """plan을 GPU 상자에서 실행하는 A/B 변형 — CPU 전용 워커의 코어 성능 편차(측정: 같은 코드
+    masks 370~680s)를 피한다. GPU는 놀지만 상자의 빠른 CPU 14프로세스를 쓴다."""
+    _enter()
+    t0 = time.time()
+    from handler_v31 import handler_v31
+    out = handler_v31(event)
+    if isinstance(out, dict):
+        out["__exec_ms"] = int((time.time() - t0) * 1000)
+        out["__fn"] = "plan_v31_gpu"
     return out
 
 
