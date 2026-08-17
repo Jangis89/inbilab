@@ -67,12 +67,12 @@ def clean_tmp():
                          data=json.dumps({"prefixes": names}), timeout=60)
 
 
-def one_run(k, warm_n, run_id):
-    plan_fn = modal.Function.from_name(APP, "plan_v31_cpu")
+def one_run(k, warm_n, run_id, plan_on="cpu"):
+    plan_fn = modal.Function.from_name(APP, "plan_v31_gpu" if plan_on == "gpu" else "plan_v31_cpu")
     seg_fn = modal.Function.from_name(APP, "segment_v31_gpu")
     fin_fn = modal.Function.from_name(APP, "finish_v31_cpu")
 
-    rec = {"run_id": run_id, "k": k, "warm_req": warm_n, "app": APP, "t_start": time.time()}
+    rec = {"run_id": run_id, "k": k, "warm_req": warm_n, "app": APP, "plan_on": plan_on, "t_start": time.time()}
     t0 = time.time()
 
     plan = plan_fn.remote({"input": {"project_id": BENCH_PID, "phase": "plan_v31", "seg_k": k}})
@@ -131,6 +131,7 @@ def main():
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--warm", type=int, default=0, help="사전 예열 GPU 컨테이너 수 (0=예열 없음)")
     ap.add_argument("--label", default="warm")
+    ap.add_argument("--plan_on", default="cpu", choices=["cpu", "gpu"])
     ap.add_argument("--out", default="BENCHMARK_V31.json")
     a = ap.parse_args()
 
@@ -140,7 +141,7 @@ def main():
         clean_tmp()
         rid = f"{a.label}-k{a.k}-{i}-{uuid.uuid4().hex[:6]}"
         print(f"\n===== run {i + 1}/{a.runs} ({rid}) =====")
-        rec = one_run(a.k, a.warm, rid)
+        rec = one_run(a.k, a.warm, rid, plan_on=a.plan_on)
         rec["label"] = a.label
         records.append(rec)
         print("[REC]", json.dumps(rec, ensure_ascii=False, default=str))
