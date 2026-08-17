@@ -20,6 +20,15 @@ BACKEND_NAME = os.environ.get("WM_BACKEND_NAME", "modal-v31")
 cv2 = h29.cv2
 SW = h29.SW
 
+# plan CPU 컨테이너의 코어 수에 맞춰 v29 감지 풀 크기 상향 (결과는 프로세스 수와 무관 — v27 설계).
+# v29 기본 NPROC=min(12, cpus-2)는 8코어 GPU 상자 기준이라 16~32코어 CPU 상자에서 남는 코어를 버린다.
+_np_env = os.environ.get("WM_NPROC")
+if _np_env:
+    try:
+        h29.NPROC = max(2, int(_np_env))
+    except ValueError:
+        pass
+
 
 # ---------------- v31 임시 저장 (prefix만 다름) ----------------
 def tmp_upload(pid, name, data, ctype="application/octet-stream"):
@@ -309,10 +318,11 @@ def finish_v31(proj, tmp, t0, parts, tms_in=None):
     with ThreadPoolExecutor(max_workers=6) as ex:
         seg_paths = list(ex.map(_dl_seg, range(parts)))
     sw.mark("dl")
-    # 세그먼트 프레임 수 검증 (누락·중복 0 보장)
+    # 세그먼트 프레임 수 검증 (누락·중복 0 보장) — ffprobe 병렬 실행 (정확도 동일)
+    with ThreadPoolExecutor(max_workers=min(8, max(1, parts))) as ex:
+        counts = list(ex.map(h29.frame_count, seg_paths))
     total_seg_frames = 0
-    for k, p in enumerate(seg_paths):
-        c = h29.frame_count(p)
+    for k, c in enumerate(counts):
         exp = plan["segments"][k][1] - plan["segments"][k][0]
         if c != exp:
             raise RuntimeError(f"[v31] seg_{k} 프레임 수 {c} != 기대 {exp}")

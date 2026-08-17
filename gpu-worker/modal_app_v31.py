@@ -46,7 +46,8 @@ cpu_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
     .pip_install("numpy==1.26.4", "opencv-python-headless==4.10.0.84", "requests")
-    .env({"PYTHONUNBUFFERED": "1", "WM_BACKEND_NAME": "modal-v31"})
+    .env({"PYTHONUNBUFFERED": "1", "WM_BACKEND_NAME": "modal-v31",
+          "WM_NPROC": "30"})
 )
 for src, dst in _local_files:
     cpu_image = cpu_image.add_local_file(os.path.join(HERE, src), dst)
@@ -61,7 +62,7 @@ def _enter(app_dir="/app"):
     os.chdir(app_dir)
 
 
-@app.function(image=cpu_image, cpu=16.0, memory=65536,
+@app.function(image=cpu_image, cpu=32.0, memory=65536,
               timeout=1800, secrets=_secrets)
 def plan_v31_cpu(event: dict) -> dict:
     _enter()
