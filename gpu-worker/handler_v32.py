@@ -65,6 +65,75 @@ def _unpack_static(reg):
     return (np.unpackbits(bits, count=hh * ww).reshape(hh, ww) * 255).astype(np.uint8)
 
 
+# ---------------- scan 감지 공유메모리화 (pickle 5GB 제거) ----------------
+_V32_POOL = None
+def _v32_scan_pool():
+    global _V32_POOL
+    if _V32_POOL is None:
+        import multiprocessing as _mp
+        _V32_POOL = _mp.get_context("spawn").Pool(h29.NPROC, initializer=v31._shm_pool_init)
+    return _V32_POOL
+
+_SCAN_CHILD = {}
+
+def _scan_block(args):
+    shm_name, shape, idxs = args
+    import numpy as _np
+    from multiprocessing import shared_memory as _sm
+    if _SCAN_CHILD.get("name") != shm_name:
+        old = _SCAN_CHILD.pop("shm", None)
+        if old is not None:
+            try: old.close()
+            except Exception: pass
+        shm = _sm.SharedMemory(name=shm_name)
+        _SCAN_CHILD.update(name=shm_name, shm=shm,
+                           arr=_np.ndarray(shape, dtype=_np.uint8, buffer=shm.buf))
+    arr = _SCAN_CHILD["arr"]
+    import handler as _h
+    n = shape[0]
+    out = []
+    for i in idxs:
+        ref = arr[i - 1] if i > 0 else (arr[1] if n > 1 else None)
+        out.append(_h._scan_boxes2((arr[i], ref)))
+    return out
+
+
+def detect_sub_bands_shm(samples, W, H):
+    """h29.detect_sub_bands_from과 동일 결과 — 샘플 전달만 공유메모리 (그룹핑은 순서 무관)."""
+    global _V32_POOL
+    n = len(samples)
+    if n < 4:
+        return h29.detect_sub_bands_from(samples, W, H)
+    hh, ww = samples[0].shape[:2]
+    from multiprocessing import shared_memory as _sm
+    shm = None
+    try:
+        shm = _sm.SharedMemory(create=True, size=n * hh * ww * 3)
+        arr = np.ndarray((n, hh, ww, 3), dtype=np.uint8, buffer=shm.buf)
+        for i in range(n):
+            arr[i] = samples[i]
+        per_b = max(1, (n + h29.NPROC * 2 - 1) // (h29.NPROC * 2))
+        jobs = [(shm.name, (n, hh, ww, 3), list(range(a, min(n, a + per_b))))
+                for a in range(0, n, per_b)]
+        parts = _v32_scan_pool().map_async(_scan_block, jobs).get(timeout=600)
+        hits = []; labs = []
+        for pt in parts:
+            for boxes, lb in pt:
+                hits.extend(boxes); labs.extend(lb)
+        return h29._bands_from_hits(hits, W, H) + h29._label_regions_from(labs, W, H)
+    except Exception:
+        try:
+            if _V32_POOL is not None: _V32_POOL.terminate()
+        except Exception:
+            pass
+        _V32_POOL = None
+        return h29.detect_sub_bands_from(samples, W, H)
+    finally:
+        if shm is not None:
+            try: shm.close(); shm.unlink()
+            except Exception: pass
+
+
 # ---------------- 단계: scan (가벼운 계획 — 영역·구간만, 마스크 없음) ----------------
 def scan_v32(proj, tmp, scan_step=12, seg_k=10):
     pid = proj["id"]
@@ -86,7 +155,7 @@ def scan_v32(proj, tmp, scan_step=12, seg_k=10):
         h29.set_proj(pid, "wm_running", "[v32] 자막·워터마크 위치를 찾는 중…")
         samples = list(h29.stream_frames(work, W, H, sample_every=scan_step))
         sw.mark("scan_dec")
-        regions.extend(h29.detect_sub_bands_from(samples, W, H))
+        regions.extend(detect_sub_bands_shm(samples, W, H))
         for side in ("tl", "tr"):
             c = h29.detect_corner_from(samples, W, H, side)
             if c: regions.append(c)
