@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "deploy | bench | verify"
+        description: "deploy | bench | verify | clips"
         required: true
         default: "deploy"
       ref:
@@ -76,6 +76,19 @@ jobs:
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
           V32_K: ${{ github.event.inputs.k }}
         run: python gpu-worker/scripts/verify_v32.py
+      - name: Make review clips
+        if: ${{ github.event.inputs.action == 'clips' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          V32_K: ${{ github.event.inputs.k }}
+        run: python gpu-worker/scripts/make_clips_v32.py
+      - name: Upload clips
+        if: ${{ github.event.inputs.action == 'clips' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: clips-v32-${{ github.run_id }}
+          path: clips/
       - name: Upload bench artifacts
         if: ${{ always() && github.event.inputs.action == 'bench' }}
         uses: actions/upload-artifact@v4
