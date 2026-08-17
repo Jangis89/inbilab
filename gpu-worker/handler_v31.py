@@ -30,6 +30,102 @@ if _np_env:
         pass
 
 
+# ---------------- v31 단계4: 공유메모리 감지 스윕 ----------------
+# 측정 근거(2026-08-17, run #9): NPROC 12→30 확대가 masks 시간을 줄이지 못함(463~578s)
+# → 병목은 자식 수가 아니라 부모→자식 프레임 직렬화(pickle) 대역폭.
+# 해결: 밴드 프레임을 SharedMemory에 1회 적재하고 자식은 '번호'만 받아 같은 함수(glyph_*)를
+# 같은 인자로 실행 → 결과는 v29 _par_sweep와 완전 동일(같은 함수·같은 입력), IPC는 인덱스뿐.
+_SHM_CHILD = {}
+
+def _shm_pool_init():
+    try:
+        import cv2 as _c
+        _c.setNumThreads(1)   # v29 _gc_block과 동일: 프로세스가 이미 병렬
+    except Exception:
+        pass
+
+def _shm_block(args):
+    shm_name, shape, idxs, refs, mode, planes = args
+    import numpy as _np
+    from multiprocessing import shared_memory as _sm
+    if _SHM_CHILD.get("name") != shm_name:
+        old = _SHM_CHILD.pop("shm", None)
+        if old is not None:
+            try: old.close()
+            except Exception: pass
+        shm = _sm.SharedMemory(name=shm_name)
+        _SHM_CHILD.update(name=shm_name, shm=shm,
+                          arr=_np.ndarray(shape, dtype=_np.uint8, buffer=shm.buf))
+    arr = _SHM_CHILD["arr"]
+    import handler as _h
+    if mode == "labels":
+        return [_h.glyph_labels(arr[i], arr[j] if j is not None else None)
+                for i, j in zip(idxs, refs)]
+    if mode == "cl":
+        return [_h.glyph_clusters(arr[i]) for i in idxs]
+    if mode == "prune":
+        return [_h.glyph_clusters(arr[i], with_singles=True) for i in idxs]
+    return [_h.glyph_clusters(arr[i], with_singles=True, only_planes=planes) for i in idxs]
+
+_V31_POOL = None
+def _v31_pool():
+    global _V31_POOL
+    if _V31_POOL is None:
+        import multiprocessing as _mp
+        _V31_POOL = _mp.get_context("spawn").Pool(h29.NPROC, initializer=_shm_pool_init)
+    return _V31_POOL
+
+_orig_par_sweep = h29._par_sweep
+
+def _par_sweep_shm(mode, frames, N, step, planes=None):
+    """h29._par_sweep 대체: 동일 함수·동일 인자·동일 반환 구조, 프레임 전달만 공유메모리."""
+    global _V31_POOL
+    shm = None
+    try:
+        idxs = list(range(0, N, step))
+        if len(idxs) < h29.NPROC * 2 or N == 0:
+            return _orig_par_sweep(mode, frames, N, step, planes=planes)
+        h, w = frames[0].shape[:2]
+        from multiprocessing import shared_memory as _sm
+        shm = _sm.SharedMemory(create=True, size=N * h * w * 3)
+        arr = np.ndarray((N, h, w, 3), dtype=np.uint8, buffer=shm.buf)
+        for i in range(N):
+            arr[i] = frames[i]
+        per_b = max(1, (len(idxs) + h29.NPROC * 2 - 1) // (h29.NPROC * 2))
+        jobs = []
+        for a in range(0, len(idxs), per_b):
+            blk = idxs[a:a + per_b]
+            refs = [None] * len(blk)
+            if mode == "labels":
+                refs = []
+                for i in blk:
+                    j = i - 12 if i >= 12 else min(N - 1, i + 12)
+                    refs.append(j if j != i else None)
+            jobs.append((shm.name, (N, h, w, 3), blk, refs, mode, planes))
+        limit = max(120, int(0.4 * len(idxs)) + 60)
+        parts = _v31_pool().map_async(_shm_block, jobs).get(timeout=limit)
+        out = []
+        for pt in parts:
+            out.extend(pt)
+        return out
+    except Exception:
+        try:
+            if _V31_POOL is not None:
+                _V31_POOL.terminate()
+        except Exception:
+            pass
+        _V31_POOL = None
+        return _orig_par_sweep(mode, frames, N, step, planes=planes)
+    finally:
+        if shm is not None:
+            try:
+                shm.close(); shm.unlink()
+            except Exception:
+                pass
+
+h29._par_sweep = _par_sweep_shm
+
+
 # ---------------- v31 임시 저장 (prefix만 다름) ----------------
 def tmp_upload(pid, name, data, ctype="application/octet-stream"):
     h29.tmp_upload(f"{PFX}/{pid}/{name}", data, ctype)
