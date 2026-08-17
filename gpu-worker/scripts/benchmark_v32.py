@@ -80,9 +80,12 @@ def one_run(k, warm_n, key_step, run_id):
     rec["t_scan_done"] = round(time.time() - t0, 1)
 
     # segment 즉시 분산 (전체 plan 대기 없음 — 마스크는 각 worker가 스스로 생성)
-    segs = [seg_fn.spawn({"input": {"project_id": BENCH_PID, "phase": "segment_v32",
-                                    "part": p, "key_step": key_step}})
-            for p in range(k)]
+    segs = []
+    dispatch_at = []
+    for p in range(k):
+        dispatch_at.append(time.time())
+        segs.append(seg_fn.spawn({"input": {"project_id": BENCH_PID, "phase": "segment_v32",
+                                            "part": p, "key_step": key_step}}))
     rec["t_first_dispatch"] = round(time.time() - t0, 1)
     warm_results = []
     for c in warm_calls:
@@ -91,16 +94,36 @@ def one_run(k, warm_n, key_step, run_id):
         except Exception as e:
             warm_results.append({"warm": False, "error": str(e)[:120]})
     rec["warm_results"] = warm_results
-    seg_out = []
+    # 완료 폴링 — 세그별 done 절대시각 기록 (worker 배정·실행 분리 계측)
+    seg_out = [None] * k
+    done_at = [None] * k
+    deadline = time.time() + 1700
+    pending = set(range(k))
+    while pending and time.time() < deadline:
+        for p in list(pending):
+            try:
+                o = segs[p].get(timeout=0)
+            except TimeoutError:
+                continue
+            except Exception as e:
+                o = {"error": f"segment {p}: {e}"}
+            seg_out[p] = o
+            done_at[p] = time.time()
+            pending.discard(p)
+        if pending:
+            time.sleep(2)
     ok = True
-    for p, c in enumerate(segs):
-        try:
-            o = c.get(timeout=1700)
-        except Exception as e:
-            o = {"error": f"segment {p}: {e}"}
-        seg_out.append(o)
+    for p in range(k):
+        if seg_out[p] is None:
+            seg_out[p] = {"error": f"segment {p}: poll timeout"}
+        o = seg_out[p]
         if o.get("error"):
             ok = False
+        elif o.get("t_enter"):
+            o["alloc_wait_s"] = round(o["t_enter"] - dispatch_at[p], 1)
+            o["exec_wall_s"] = round((o.get("t_done") or done_at[p]) - o["t_enter"], 1)
+    rec["seg_dispatch_at"] = [round(d - t0, 1) for d in dispatch_at]
+    rec["seg_done_at"] = [round(d - t0, 1) if d else None for d in done_at]
     rec["segments"] = seg_out
     rec["t_segments_done"] = round(time.time() - t0, 1)
     if not ok:
