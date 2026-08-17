@@ -312,6 +312,7 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
 
 # ---------------- 단계: segment (GPU) — 로컬 마스크 + AI 복원 + 합성 + 인코딩 ----------------
 def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
+    t_enter = time.time()
     pid = proj["id"]
     sw = SW()
     # GPU 상자(cpu=8)에서는 감지 풀을 코어 수에 맞춘다
@@ -412,7 +413,9 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
     except Exception:
         pass
     return {"phase": "segment_v32", "part": part, "frames": F1 - F0,
-            "counters": counters, "tms": sw.out()}
+            "counters": counters, "tms": sw.out(),
+            "container_id": os.environ.get("MODAL_TASK_ID") or os.environ.get("HOSTNAME", "?"),
+            "t_enter": round(t_enter, 3), "t_done": round(time.time(), 3)}
 
 
 # ---------------- 단계: finish (CPU) ----------------
