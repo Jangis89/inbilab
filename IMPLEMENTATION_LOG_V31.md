@@ -45,3 +45,19 @@
 2. cold 벤치 runs=1–2 → 단계3 게이트(P50 ≤ 480s) 판정
 3. 게이트 미달 시 단계 4(plan 병렬화: 다중 프로세스/공유 메모리) 착수 — 현 병목 1순위가 plan이므로
    스레드 해제 후에도 P50 초과 시 곧바로 진행
+
+## 2026-08-17 낮 — 단계 4 반복 (측정→수정→재측정)
+- (사고 복구) 컨테이너 초기화로 로컬 작업본 소실 → GitHub 원본에서 재구성. GitHub·Modal·Supabase
+  재로그인은 사장님이 수행.
+- run #9 (stage4a: NPROC 30, cpu=32, warm=segment 풀·plan 후): 1160/1388/1676 — masks 466~578
+  불변 → 프로세스 수는 병목 아님. finish.verify 54→13s 개선 확인. warm 대기 15~143s 손실.
+- run #10 (K=10, warm=0): 1115/1382. 세그 구간 289s(좋을 때). AI 부하 세그별 36~124s 불균등 관찰.
+- 단계4b: _par_sweep_shm(공유메모리) 구현 — 로컬 합성영상 동일성 테스트 byte 일치 통과 후 배포.
+- run #12 (shm, K=10, warm=5): 987/1297/1243. run0 plan 500s(masks 371, scan 42) vs
+  run1 plan 882s(masks 680, scan 118) — **같은 코드로 1.8배 편차 = CPU 전용 워커 하드웨어 복불복이
+  지배 변수**. shm 자체는 부정적 아님(최고 기록 987s 갱신)이나 결정타 아님.
+- 단계4c: plan_v31_gpu 추가 — v29가 검증한 GPU 상자(빠르고 균일한 CPU)에서 plan 실행하는 A/B.
+  WM_NPROC=14(GPU box), benchmark --plan_on, workflow plan_on 입력. run #14로 측정 중.
+- run #15 (best-k12, plan=cpu, warm=5): 1389/1494/1256 — masks 593~686(나쁜 상자 연속),
+  K=12 이득 소멸. 설정 튜닝 한계 확정 → PERF_V31_STAGE4_REPORT.md 에 게이트 판정·결정 요청 정리.
+- 산출물: BENCHMARK_V31_all.json (14 runs 통합), PERF_V31_STAGE4_REPORT.md.

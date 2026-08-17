@@ -1,0 +1,3833 @@
+[
+ {
+  "run_id": "warm-k5-0-12e0de",
+  "k": 5,
+  "warm_req": 5,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "t_start": 1786910538.91379,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 108,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     1064
+    ],
+    [
+     1064,
+     2128
+    ],
+    [
+     2128,
+     3192
+    ],
+    [
+     3192,
+     4256
+    ],
+    [
+     4256,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 35.1,
+    "scan_dec": 5.9,
+    "scan": 74.8,
+    "mask_dec": 26.5,
+    "masks": 455.4,
+    "plan_up": 0.2
+   },
+   "__exec_ms": 598785,
+   "__fn": "plan_v31_cpu"
+  },
+  "t_plan_done": 602.8,
+  "warm_results": [
+   {
+    "warm": true,
+    "model_load_s": 7.5,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 7852,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 7.4,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 7785,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 8.1,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 8506,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 8.2,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 8583,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 6.5,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 6829,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_warm_done": 619.5,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.5,
+     "model": 0.0,
+     "crop_dec": 48.1,
+     "ai": 124.9,
+     "comp_enc": 36.2,
+     "up": 8.7
+    },
+    "__exec_ms": 312249,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.3,
+     "model": 0.0,
+     "crop_dec": 49.1,
+     "ai": 140.2,
+     "comp_enc": 38.5,
+     "up": 8.4
+    },
+    "__exec_ms": 330385,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.4,
+     "model": 0.0,
+     "crop_dec": 42.0,
+     "ai": 90.8,
+     "comp_enc": 34.2,
+     "up": 8.6
+    },
+    "__exec_ms": 267059,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.0,
+     "model": 0.0,
+     "crop_dec": 50.8,
+     "ai": 96.5,
+     "comp_enc": 32.6,
+     "up": 5.2
+    },
+    "__exec_ms": 240445,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.0,
+     "model": 0.0,
+     "crop_dec": 57.5,
+     "ai": 108.8,
+     "comp_enc": 49.4,
+     "up": 6.1
+    },
+    "__exec_ms": 278288,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 950.3,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 1122,
+   "frames": 5320,
+   "tms": {
+    "dl": 9.1,
+    "verify": 59.6,
+    "concat": 7.8,
+    "up": 90.1
+   },
+   "__exec_ms": 169871,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 1124.0,
+  "result": "OK",
+  "label": "warm",
+  "_gh_run": "run7"
+ },
+ {
+  "run_id": "warm-k5-1-c7511c",
+  "k": 5,
+  "warm_req": 5,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "t_start": 1786911663.2358062,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 108,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     1064
+    ],
+    [
+     1064,
+     2128
+    ],
+    [
+     2128,
+     3192
+    ],
+    [
+     3192,
+     4256
+    ],
+    [
+     4256,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 29.5,
+    "scan_dec": 5.9,
+    "scan": 77.1,
+    "mask_dec": 30.0,
+    "masks": 484.8,
+    "plan_up": 0.2
+   },
+   "__exec_ms": 628479,
+   "__fn": "plan_v31_cpu"
+  },
+  "t_plan_done": 632.8,
+  "warm_results": [
+   {
+    "warm": true,
+    "model_load_s": 5.3,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 5532,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 5.2,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 5453,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 24,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 22,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 5.5,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 5741,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_warm_done": 650.2,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.3,
+     "model": 0.0,
+     "crop_dec": 46.0,
+     "ai": 122.6,
+     "comp_enc": 37.5,
+     "up": 7.8
+    },
+    "__exec_ms": 301148,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.3,
+     "model": 0.0,
+     "crop_dec": 47.9,
+     "ai": 144.5,
+     "comp_enc": 40.8,
+     "up": 8.3
+    },
+    "__exec_ms": 328658,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.0,
+     "model": 5.7,
+     "crop_dec": 45.9,
+     "ai": 90.6,
+     "comp_enc": 33.7,
+     "up": 7.4
+    },
+    "__exec_ms": 274985,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.4,
+     "model": 5.9,
+     "crop_dec": 44.1,
+     "ai": 92.6,
+     "comp_enc": 30.5,
+     "up": 5.6
+    },
+    "__exec_ms": 270623,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.2,
+     "model": 5.8,
+     "crop_dec": 43.6,
+     "ai": 97.0,
+     "comp_enc": 37.5,
+     "up": 5.9
+    },
+    "__exec_ms": 279789,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 979.3,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 1116,
+   "frames": 5320,
+   "tms": {
+    "dl": 5.1,
+    "verify": 53.3,
+    "concat": 5.9,
+    "up": 67.6
+   },
+   "__exec_ms": 133823,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 1116.8,
+  "result": "OK",
+  "label": "warm",
+  "_gh_run": "run7"
+ },
+ {
+  "run_id": "warm-k5-2-38deb6",
+  "k": 5,
+  "warm_req": 5,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "t_start": 1786912780.7811375,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 108,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     1064
+    ],
+    [
+     1064,
+     2128
+    ],
+    [
+     2128,
+     3192
+    ],
+    [
+     3192,
+     4256
+    ],
+    [
+     4256,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 36.0,
+    "scan_dec": 6.0,
+    "scan": 80.5,
+    "mask_dec": 26.9,
+    "masks": 442.5,
+    "plan_up": 0.3
+   },
+   "__exec_ms": 593071,
+   "__fn": "plan_v31_cpu"
+  },
+  "t_plan_done": 596.8,
+  "warm_results": [
+   {
+    "warm": true,
+    "model_load_s": 6.1,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 6375,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 12.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 13150,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 12.2,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 13905,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 4.9,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 5163,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 24,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_warm_done": 619.2,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 3.6,
+     "model": 5.7,
+     "crop_dec": 45.4,
+     "ai": 120.5,
+     "comp_enc": 40.8,
+     "up": 3.6
+    },
+    "__exec_ms": 299020,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 3.5,
+     "model": 0.0,
+     "crop_dec": 58.6,
+     "ai": 139.6,
+     "comp_enc": 45.1,
+     "up": 3.3
+    },
+    "__exec_ms": 304549,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.5,
+     "model": 0.0,
+     "crop_dec": 45.7,
+     "ai": 92.2,
+     "comp_enc": 35.3,
+     "up": 7.0
+    },
+    "__exec_ms": 273207,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 3.6,
+     "model": 0.0,
+     "crop_dec": 53.7,
+     "ai": 95.1,
+     "comp_enc": 32.8,
+     "up": 2.6
+    },
+    "__exec_ms": 236480,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.0,
+     "model": 5.8,
+     "crop_dec": 44.2,
+     "ai": 97.5,
+     "comp_enc": 33.0,
+     "up": 5.9
+    },
+    "__exec_ms": 275670,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 924.4,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 1077,
+   "frames": 5320,
+   "tms": {
+    "dl": 5.4,
+    "verify": 54.1,
+    "concat": 23.0,
+    "up": 66.7
+   },
+   "__exec_ms": 150655,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 1078.2,
+  "result": "OK",
+  "label": "warm",
+  "_gh_run": "run7"
+ },
+ {
+  "run_id": "warm-s4a-k5-0-ea49ae",
+  "k": 5,
+  "warm_req": 5,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "t_start": 1786931028.5305598,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 108,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     1064
+    ],
+    [
+     1064,
+     2128
+    ],
+    [
+     2128,
+     3192
+    ],
+    [
+     3192,
+     4256
+    ],
+    [
+     4256,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 34.9,
+    "scan_dec": 6.7,
+    "scan": 101.5,
+    "mask_dec": 33.4,
+    "masks": 515.9,
+    "plan_up": 0.4
+   },
+   "__exec_ms": 694131,
+   "__fn": "plan_v31_cpu"
+  },
+  "t_plan_done": 698.2,
+  "warm_results": [
+   {
+    "warm": true,
+    "model_load_s": 7.6,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 7943,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 7.1,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 7479,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 7.1,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 7411,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 7.4,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 7768,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 7.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 7327,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_warm_done": 713.7,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.8,
+     "model": 0.0,
+     "crop_dec": 49.2,
+     "ai": 126.2,
+     "comp_enc": 38.5,
+     "up": 8.5
+    },
+    "__exec_ms": 313852,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.2,
+     "model": 0.0,
+     "crop_dec": 49.5,
+     "ai": 150.0,
+     "comp_enc": 37.2,
+     "up": 8.2
+    },
+    "__exec_ms": 335838,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.0,
+     "model": 0.0,
+     "crop_dec": 44.2,
+     "ai": 90.3,
+     "comp_enc": 32.5,
+     "up": 7.3
+    },
+    "__exec_ms": 265236,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.9,
+     "model": 0.0,
+     "crop_dec": 44.3,
+     "ai": 97.5,
+     "comp_enc": 29.8,
+     "up": 5.9
+    },
+    "__exec_ms": 267662,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.3,
+     "model": 0.0,
+     "crop_dec": 42.1,
+     "ai": 102.3,
+     "comp_enc": 34.7,
+     "up": 7.3
+    },
+    "__exec_ms": 274010,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 1050.1,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 1159,
+   "frames": 5320,
+   "tms": {
+    "dl": 7.0,
+    "verify": 13.0,
+    "concat": 7.5,
+    "up": 76.7
+   },
+   "__exec_ms": 106705,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 1160.3,
+  "result": "OK",
+  "label": "warm-s4a",
+  "_gh_run": "run9"
+ },
+ {
+  "run_id": "warm-s4a-k5-1-1c9414",
+  "k": 5,
+  "warm_req": 5,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "t_start": 1786932189.730635,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 108,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     1064
+    ],
+    [
+     1064,
+     2128
+    ],
+    [
+     2128,
+     3192
+    ],
+    [
+     3192,
+     4256
+    ],
+    [
+     4256,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 33.6,
+    "scan_dec": 7.0,
+    "scan": 85.7,
+    "mask_dec": 29.9,
+    "masks": 463.3,
+    "plan_up": 0.5
+   },
+   "__exec_ms": 620731,
+   "__fn": "plan_v31_cpu"
+  },
+  "t_plan_done": 625.4,
+  "warm_results": [
+   {
+    "warm": true,
+    "model_load_s": 6.5,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 6775,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 26,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 28,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 25,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 24,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_warm_done": 755.3,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.8,
+     "model": 0.0,
+     "crop_dec": 61.2,
+     "ai": 120.5,
+     "comp_enc": 43.8,
+     "up": 6.9
+    },
+    "__exec_ms": 290240,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 3.0,
+     "model": 5.0,
+     "crop_dec": 42.9,
+     "ai": 144.3,
+     "comp_enc": 39.4,
+     "up": 4.6
+    },
+    "__exec_ms": 317272,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.6,
+     "model": 6.7,
+     "crop_dec": 53.2,
+     "ai": 88.9,
+     "comp_enc": 33.4,
+     "up": 7.1
+    },
+    "__exec_ms": 247999,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.6,
+     "model": 5.4,
+     "crop_dec": 43.0,
+     "ai": 99.4,
+     "comp_enc": 31.0,
+     "up": 6.2
+    },
+    "__exec_ms": 273014,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 8.1,
+     "model": 5.6,
+     "crop_dec": 44.6,
+     "ai": 100.4,
+     "comp_enc": 36.3,
+     "up": 7.0
+    },
+    "__exec_ms": 284568,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 1282.6,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 1387,
+   "frames": 5320,
+   "tms": {
+    "dl": 8.0,
+    "verify": 12.8,
+    "concat": 6.5,
+    "up": 72.9
+   },
+   "__exec_ms": 102313,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 1388.3,
+  "result": "OK",
+  "label": "warm-s4a",
+  "_gh_run": "run9"
+ },
+ {
+  "run_id": "warm-s4a-k5-2-005700",
+  "k": 5,
+  "warm_req": 5,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "t_start": 1786933578.874811,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 108,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     1064
+    ],
+    [
+     1064,
+     2128
+    ],
+    [
+     2128,
+     3192
+    ],
+    [
+     3192,
+     4256
+    ],
+    [
+     4256,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 34.6,
+    "scan_dec": 6.7,
+    "scan": 95.0,
+    "mask_dec": 34.3,
+    "masks": 578.0,
+    "plan_up": 0.4
+   },
+   "__exec_ms": 749644,
+   "__fn": "plan_v31_cpu"
+  },
+  "t_plan_done": 752.9,
+  "warm_results": [
+   {
+    "warm": true,
+    "model_load_s": 5.4,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 5650,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 24,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 23,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 24,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 23,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_warm_done": 896.3,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.6,
+     "model": 0.0,
+     "crop_dec": 49.2,
+     "ai": 124.3,
+     "comp_enc": 37.7,
+     "up": 8.9
+    },
+    "__exec_ms": 311176,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.9,
+     "model": 7.1,
+     "crop_dec": 58.7,
+     "ai": 141.9,
+     "comp_enc": 44.6,
+     "up": 7.3
+    },
+    "__exec_ms": 317603,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.8,
+     "model": 5.1,
+     "crop_dec": 41.4,
+     "ai": 89.1,
+     "comp_enc": 37.0,
+     "up": 3.5
+    },
+    "__exec_ms": 265468,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.1,
+     "model": 0.0,
+     "crop_dec": 43.4,
+     "ai": 96.8,
+     "comp_enc": 31.0,
+     "up": 5.8
+    },
+    "__exec_ms": 262869,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 1064,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.7,
+     "model": 6.1,
+     "crop_dec": 44.2,
+     "ai": 103.7,
+     "comp_enc": 33.5,
+     "up": 7.1
+    },
+    "__exec_ms": 285560,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 1547.0,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 1674,
+   "frames": 5320,
+   "tms": {
+    "dl": 8.2,
+    "verify": 15.3,
+    "concat": 9.6,
+    "up": 89.3
+   },
+   "__exec_ms": 125898,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 1676.0,
+  "result": "OK",
+  "label": "warm-s4a",
+  "_gh_run": "run9"
+ },
+ {
+  "run_id": "k10-nowarm-k10-0-1f2354",
+  "k": 10,
+  "warm_req": 0,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "t_start": 1786935832.40228,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 108,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     532
+    ],
+    [
+     532,
+     1064
+    ],
+    [
+     1064,
+     1596
+    ],
+    [
+     1596,
+     2128
+    ],
+    [
+     2128,
+     2660
+    ],
+    [
+     2660,
+     3192
+    ],
+    [
+     3192,
+     3724
+    ],
+    [
+     3724,
+     4256
+    ],
+    [
+     4256,
+     4788
+    ],
+    [
+     4788,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 33.7,
+    "scan_dec": 7.2,
+    "scan": 93.6,
+    "mask_dec": 33.5,
+    "masks": 518.0,
+    "plan_up": 2.0
+   },
+   "__exec_ms": 689186,
+   "__fn": "plan_v31_cpu"
+  },
+  "t_plan_done": 692.7,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 8.2,
+     "model": 5.2,
+     "crop_dec": 24.8,
+     "ai": 59.3,
+     "comp_enc": 19.2,
+     "up": 5.8
+    },
+    "__exec_ms": 207872,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 8.1,
+     "model": 5.7,
+     "crop_dec": 32.0,
+     "ai": 84.1,
+     "comp_enc": 19.5,
+     "up": 5.4
+    },
+    "__exec_ms": 235740,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 8.1,
+     "model": 5.7,
+     "crop_dec": 38.2,
+     "ai": 123.8,
+     "comp_enc": 21.7,
+     "up": 5.9
+    },
+    "__exec_ms": 285026,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.8,
+     "model": 5.7,
+     "crop_dec": 29.8,
+     "ai": 76.1,
+     "comp_enc": 20.2,
+     "up": 4.8
+    },
+    "__exec_ms": 227074,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.6,
+     "model": 6.6,
+     "crop_dec": 36.2,
+     "ai": 55.5,
+     "comp_enc": 18.8,
+     "up": 5.3
+    },
+    "__exec_ms": 178918,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 5,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.8,
+     "model": 5.6,
+     "crop_dec": 25.8,
+     "ai": 51.5,
+     "comp_enc": 17.2,
+     "up": 5.5
+    },
+    "__exec_ms": 195373,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 6,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.2,
+     "model": 6.9,
+     "crop_dec": 21.0,
+     "ai": 35.7,
+     "comp_enc": 12.8,
+     "up": 4.0
+    },
+    "__exec_ms": 136083,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 7,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.6,
+     "model": 6.7,
+     "crop_dec": 41.1,
+     "ai": 80.3,
+     "comp_enc": 18.5,
+     "up": 4.6
+    },
+    "__exec_ms": 207037,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 8,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.3,
+     "model": 5.7,
+     "crop_dec": 28.5,
+     "ai": 72.2,
+     "comp_enc": 18.5,
+     "up": 5.3
+    },
+    "__exec_ms": 223802,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 9,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.7,
+     "model": 5.8,
+     "crop_dec": 26.1,
+     "ai": 56.9,
+     "comp_enc": 19.7,
+     "up": 4.2
+    },
+    "__exec_ms": 201313,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 981.7,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 1114,
+   "frames": 5320,
+   "tms": {
+    "dl": 13.3,
+    "verify": 11.3,
+    "concat": 9.0,
+    "up": 94.4
+   },
+   "__exec_ms": 130930,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 1115.4,
+  "result": "OK",
+  "label": "k10-nowarm",
+  "_gh_run": "run10"
+ },
+ {
+  "run_id": "k10-nowarm-k10-1-b70a67",
+  "k": 10,
+  "warm_req": 0,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "t_start": 1786936948.1928353,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 108,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     532
+    ],
+    [
+     532,
+     1064
+    ],
+    [
+     1064,
+     1596
+    ],
+    [
+     1596,
+     2128
+    ],
+    [
+     2128,
+     2660
+    ],
+    [
+     2660,
+     3192
+    ],
+    [
+     3192,
+     3724
+    ],
+    [
+     3724,
+     4256
+    ],
+    [
+     4256,
+     4788
+    ],
+    [
+     4788,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 37.1,
+    "scan_dec": 7.4,
+    "scan": 111.8,
+    "mask_dec": 35.5,
+    "masks": 592.1,
+    "plan_up": 0.7
+   },
+   "__exec_ms": 785501,
+   "__fn": "plan_v31_cpu"
+  },
+  "t_plan_done": 789.2,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 8.4,
+     "model": 6.5,
+     "crop_dec": 30.0,
+     "ai": 60.5,
+     "comp_enc": 18.1,
+     "up": 3.7
+    },
+    "__exec_ms": 179873,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 3.9,
+     "model": 5.2,
+     "crop_dec": 28.8,
+     "ai": 85.2,
+     "comp_enc": 21.7,
+     "up": 2.2
+    },
+    "__exec_ms": 226258,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.6,
+     "model": 6.4,
+     "crop_dec": 38.4,
+     "ai": 121.8,
+     "comp_enc": 22.5,
+     "up": 4.2
+    },
+    "__exec_ms": 287344,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.7,
+     "model": 14.9,
+     "crop_dec": 35.0,
+     "ai": 78.1,
+     "comp_enc": 19.5,
+     "up": 4.5
+    },
+    "__exec_ms": 208294,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.9,
+     "model": 14.4,
+     "crop_dec": 35.7,
+     "ai": 58.3,
+     "comp_enc": 18.3,
+     "up": 4.4
+    },
+    "__exec_ms": 188590,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 5,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.1,
+     "model": 0.0,
+     "crop_dec": 29.4,
+     "ai": 50.4,
+     "comp_enc": 15.3,
+     "up": 4.1
+    },
+    "__exec_ms": 155457,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 6,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.7,
+     "model": 6.5,
+     "crop_dec": 20.9,
+     "ai": 37.4,
+     "comp_enc": 14.0,
+     "up": 3.9
+    },
+    "__exec_ms": 140483,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 7,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.0,
+     "model": 5.7,
+     "crop_dec": 34.3,
+     "ai": 81.8,
+     "comp_enc": 18.5,
+     "up": 2.8
+    },
+    "__exec_ms": 235180,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 8,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.7,
+     "model": 6.5,
+     "crop_dec": 33.0,
+     "ai": 68.9,
+     "comp_enc": 16.3,
+     "up": 4.6
+    },
+    "__exec_ms": 185496,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 9,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.3,
+     "model": 0.0,
+     "crop_dec": 26.8,
+     "ai": 55.4,
+     "comp_enc": 21.0,
+     "up": 1.7
+    },
+    "__exec_ms": 182261,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 1255.1,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 1381,
+   "frames": 5320,
+   "tms": {
+    "dl": 10.6,
+    "verify": 11.8,
+    "concat": 9.6,
+    "up": 90.6
+   },
+   "__exec_ms": 124411,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 1382.1,
+  "result": "OK",
+  "label": "k10-nowarm",
+  "_gh_run": "run10"
+ },
+ {
+  "run_id": "shm-k10-k10-0-987d4e",
+  "k": 10,
+  "warm_req": 5,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "t_start": 1786938734.5072186,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 108,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     532
+    ],
+    [
+     532,
+     1064
+    ],
+    [
+     1064,
+     1596
+    ],
+    [
+     1596,
+     2128
+    ],
+    [
+     2128,
+     2660
+    ],
+    [
+     2660,
+     3192
+    ],
+    [
+     3192,
+     3724
+    ],
+    [
+     3724,
+     4256
+    ],
+    [
+     4256,
+     4788
+    ],
+    [
+     4788,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 44.4,
+    "scan_dec": 6.5,
+    "scan": 41.5,
+    "mask_dec": 32.1,
+    "masks": 370.7,
+    "plan_up": 0.4
+   },
+   "__exec_ms": 496491,
+   "__fn": "plan_v31_cpu"
+  },
+  "t_plan_done": 499.8,
+  "warm_results": [
+   {
+    "warm": true,
+    "model_load_s": 8.4,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 8858,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 27,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 25,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 25,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 23,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_warm_done": 533.4,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 8.3,
+     "model": 0.0,
+     "crop_dec": 30.0,
+     "ai": 58.2,
+     "comp_enc": 16.5,
+     "up": 4.5
+    },
+    "__exec_ms": 166398,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 3.9,
+     "model": 5.1,
+     "crop_dec": 28.6,
+     "ai": 87.3,
+     "comp_enc": 20.2,
+     "up": 2.7
+    },
+    "__exec_ms": 228455,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.2,
+     "model": 5.8,
+     "crop_dec": 38.2,
+     "ai": 120.0,
+     "comp_enc": 21.2,
+     "up": 5.9
+    },
+    "__exec_ms": 283695,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.2,
+     "model": 6.7,
+     "crop_dec": 35.1,
+     "ai": 77.5,
+     "comp_enc": 21.1,
+     "up": 5.3
+    },
+    "__exec_ms": 203566,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.5,
+     "model": 6.1,
+     "crop_dec": 31.4,
+     "ai": 58.3,
+     "comp_enc": 16.7,
+     "up": 4.2
+    },
+    "__exec_ms": 208716,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 5,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.3,
+     "model": 6.6,
+     "crop_dec": 30.7,
+     "ai": 49.8,
+     "comp_enc": 15.3,
+     "up": 4.6
+    },
+    "__exec_ms": 163281,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 6,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.5,
+     "model": 6.7,
+     "crop_dec": 21.1,
+     "ai": 38.2,
+     "comp_enc": 14.3,
+     "up": 2.5
+    },
+    "__exec_ms": 138721,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 7,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.1,
+     "model": 5.0,
+     "crop_dec": 31.0,
+     "ai": 81.7,
+     "comp_enc": 18.7,
+     "up": 5.5
+    },
+    "__exec_ms": 229039,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 8,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.8,
+     "model": 7.1,
+     "crop_dec": 34.0,
+     "ai": 73.4,
+     "comp_enc": 17.0,
+     "up": 3.9
+    },
+    "__exec_ms": 191647,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 9,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.3,
+     "model": 7.0,
+     "crop_dec": 31.9,
+     "ai": 55.9,
+     "comp_enc": 17.8,
+     "up": 3.8
+    },
+    "__exec_ms": 172368,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 859.1,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 985,
+   "frames": 5320,
+   "tms": {
+    "dl": 8.3,
+    "verify": 13.2,
+    "concat": 12.0,
+    "up": 88.5
+   },
+   "__exec_ms": 124900,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 987.0,
+  "result": "OK",
+  "label": "shm-k10",
+  "_gh_run": "run12"
+ },
+ {
+  "run_id": "shm-k10-k10-1-e460fc",
+  "k": 10,
+  "warm_req": 5,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "t_start": 1786939722.2245111,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 108,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     532
+    ],
+    [
+     532,
+     1064
+    ],
+    [
+     1064,
+     1596
+    ],
+    [
+     1596,
+     2128
+    ],
+    [
+     2128,
+     2660
+    ],
+    [
+     2660,
+     3192
+    ],
+    [
+     3192,
+     3724
+    ],
+    [
+     3724,
+     4256
+    ],
+    [
+     4256,
+     4788
+    ],
+    [
+     4788,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 37.6,
+    "scan_dec": 7.3,
+    "scan": 117.8,
+    "mask_dec": 35.2,
+    "masks": 679.8,
+    "plan_up": 0.3
+   },
+   "__exec_ms": 879057,
+   "__fn": "plan_v31_cpu"
+  },
+  "t_plan_done": 882.1,
+  "warm_results": [
+   {
+    "warm": true,
+    "model_load_s": 6.5,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 7194,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 5.1,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 5347,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 5.9,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 6139,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 4.9,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 5125,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 24,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_warm_done": 895.5,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.8,
+     "model": 0.0,
+     "crop_dec": 29.9,
+     "ai": 59.3,
+     "comp_enc": 17.0,
+     "up": 4.6
+    },
+    "__exec_ms": 166935,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 3.6,
+     "model": 0.0,
+     "crop_dec": 30.5,
+     "ai": 85.5,
+     "comp_enc": 19.9,
+     "up": 3.5
+    },
+    "__exec_ms": 221444,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.8,
+     "model": 5.9,
+     "crop_dec": 37.3,
+     "ai": 114.5,
+     "comp_enc": 21.7,
+     "up": 4.5
+    },
+    "__exec_ms": 272977,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.0,
+     "model": 0.0,
+     "crop_dec": 30.1,
+     "ai": 80.3,
+     "comp_enc": 18.7,
+     "up": 3.8
+    },
+    "__exec_ms": 223771,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.9,
+     "model": 0.0,
+     "crop_dec": 28.2,
+     "ai": 52.8,
+     "comp_enc": 17.7,
+     "up": 4.3
+    },
+    "__exec_ms": 191515,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 5,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.9,
+     "model": 5.5,
+     "crop_dec": 25.1,
+     "ai": 51.1,
+     "comp_enc": 16.0,
+     "up": 5.1
+    },
+    "__exec_ms": 189801,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 6,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.8,
+     "model": 7.4,
+     "crop_dec": 20.9,
+     "ai": 35.7,
+     "comp_enc": 13.6,
+     "up": 3.6
+    },
+    "__exec_ms": 138885,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 7,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.4,
+     "model": 5.5,
+     "crop_dec": 34.0,
+     "ai": 83.6,
+     "comp_enc": 16.7,
+     "up": 3.3
+    },
+    "__exec_ms": 233114,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 8,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.1,
+     "model": 7.0,
+     "crop_dec": 35.6,
+     "ai": 73.4,
+     "comp_enc": 16.3,
+     "up": 4.0
+    },
+    "__exec_ms": 193656,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 9,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.0,
+     "model": 6.9,
+     "crop_dec": 31.9,
+     "ai": 55.0,
+     "comp_enc": 14.8,
+     "up": 3.3
+    },
+    "__exec_ms": 170292,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 1169.4,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 1295,
+   "frames": 5320,
+   "tms": {
+    "dl": 6.7,
+    "verify": 13.0,
+    "concat": 7.9,
+    "up": 95.1
+   },
+   "__exec_ms": 124703,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 1296.8,
+  "result": "OK",
+  "label": "shm-k10",
+  "_gh_run": "run12"
+ },
+ {
+  "run_id": "shm-k10-k10-2-f2928c",
+  "k": 10,
+  "warm_req": 5,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "t_start": 1786941019.847908,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 108,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     532
+    ],
+    [
+     532,
+     1064
+    ],
+    [
+     1064,
+     1596
+    ],
+    [
+     1596,
+     2128
+    ],
+    [
+     2128,
+     2660
+    ],
+    [
+     2660,
+     3192
+    ],
+    [
+     3192,
+     3724
+    ],
+    [
+     3724,
+     4256
+    ],
+    [
+     4256,
+     4788
+    ],
+    [
+     4788,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 34.0,
+    "scan_dec": 7.0,
+    "scan": 95.3,
+    "mask_dec": 32.6,
+    "masks": 559.1,
+    "plan_up": 0.6
+   },
+   "__exec_ms": 729476,
+   "__fn": "plan_v31_cpu"
+  },
+  "t_plan_done": 856.5,
+  "warm_results": [
+   {
+    "warm": true,
+    "model_load_s": 5.5,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 5753,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 5.5,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 5714,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 5.4,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 5642,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 6.5,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 6974,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 5.6,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 5826,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_warm_done": 871.1,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.4,
+     "model": 0.0,
+     "crop_dec": 25.0,
+     "ai": 60.1,
+     "comp_enc": 19.3,
+     "up": 5.7
+    },
+    "__exec_ms": 201522,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.2,
+     "model": 0.0,
+     "crop_dec": 33.2,
+     "ai": 83.3,
+     "comp_enc": 19.5,
+     "up": 4.9
+    },
+    "__exec_ms": 229345,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.2,
+     "model": 0.0,
+     "crop_dec": 37.9,
+     "ai": 119.0,
+     "comp_enc": 21.5,
+     "up": 5.5
+    },
+    "__exec_ms": 274025,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.0,
+     "model": 0.0,
+     "crop_dec": 29.7,
+     "ai": 78.1,
+     "comp_enc": 18.1,
+     "up": 4.6
+    },
+    "__exec_ms": 219678,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.9,
+     "model": 0.0,
+     "crop_dec": 36.8,
+     "ai": 58.3,
+     "comp_enc": 17.6,
+     "up": 4.2
+    },
+    "__exec_ms": 172089,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 5,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.6,
+     "model": 5.8,
+     "crop_dec": 25.8,
+     "ai": 50.9,
+     "comp_enc": 15.5,
+     "up": 4.4
+    },
+    "__exec_ms": 193619,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 6,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.4,
+     "model": 6.7,
+     "crop_dec": 20.7,
+     "ai": 35.7,
+     "comp_enc": 13.8,
+     "up": 3.8
+    },
+    "__exec_ms": 136655,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 7,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.4,
+     "model": 6.6,
+     "crop_dec": 41.0,
+     "ai": 77.7,
+     "comp_enc": 19.0,
+     "up": 3.3
+    },
+    "__exec_ms": 204659,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 8,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 5.9,
+     "model": 6.9,
+     "crop_dec": 32.4,
+     "ai": 69.3,
+     "comp_enc": 16.8,
+     "up": 5.6
+    },
+    "__exec_ms": 187380,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 9,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.3,
+     "model": 5.5,
+     "crop_dec": 26.2,
+     "ai": 58.4,
+     "comp_enc": 18.8,
+     "up": 3.9
+    },
+    "__exec_ms": 202641,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 1146.0,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 1242,
+   "frames": 5320,
+   "tms": {
+    "dl": 6.8,
+    "verify": 9.9,
+    "concat": 6.3,
+    "up": 67.2
+   },
+   "__exec_ms": 92142,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 1242.7,
+  "result": "OK",
+  "label": "shm-k10",
+  "_gh_run": "run12"
+ },
+ {
+  "run_id": "gpuplan-k10-k10-0-7b3508",
+  "k": 10,
+  "warm_req": 5,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "plan_on": "gpu",
+  "t_start": 1786943103.3984485,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 106,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     532
+    ],
+    [
+     532,
+     1064
+    ],
+    [
+     1064,
+     1596
+    ],
+    [
+     1596,
+     2128
+    ],
+    [
+     2128,
+     2660
+    ],
+    [
+     2660,
+     3192
+    ],
+    [
+     3192,
+     3724
+    ],
+    [
+     3724,
+     4256
+    ],
+    [
+     4256,
+     4788
+    ],
+    [
+     4788,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 30.3,
+    "scan_dec": 12.1,
+    "scan": 51.0,
+    "mask_dec": 78.5,
+    "masks": 301.2,
+    "plan_up": 0.4
+   },
+   "__exec_ms": 474474,
+   "__fn": "plan_v31_gpu"
+  },
+  "t_plan_done": 825.4,
+  "warm_results": [
+   {
+    "warm": true,
+    "model_load_s": 9.3,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 9859,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 25,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 24,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 23,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 23,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_warm_done": 974.0,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 9.5,
+     "model": 0.0,
+     "crop_dec": 29.7,
+     "ai": 63.0,
+     "comp_enc": 21.0,
+     "up": 4.3
+    },
+    "__exec_ms": 197964,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.2,
+     "model": 0.0,
+     "crop_dec": 38.4,
+     "ai": 87.8,
+     "comp_enc": 23.5,
+     "up": 5.6
+    },
+    "__exec_ms": 212729,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.1,
+     "model": 0.0,
+     "crop_dec": 44.0,
+     "ai": 118.8,
+     "comp_enc": 26.8,
+     "up": 5.3
+    },
+    "__exec_ms": 252917,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.1,
+     "model": 0.0,
+     "crop_dec": 33.9,
+     "ai": 76.6,
+     "comp_enc": 21.6,
+     "up": 4.5
+    },
+    "__exec_ms": 196004,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.5,
+     "model": 6.7,
+     "crop_dec": 36.5,
+     "ai": 62.0,
+     "comp_enc": 17.6,
+     "up": 4.5
+    },
+    "__exec_ms": 193041,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 5,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.1,
+     "model": 0.0,
+     "crop_dec": 34.3,
+     "ai": 52.7,
+     "comp_enc": 17.7,
+     "up": 3.5
+    },
+    "__exec_ms": 166191,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 6,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.0,
+     "model": 0.0,
+     "crop_dec": 23.7,
+     "ai": 37.2,
+     "comp_enc": 13.6,
+     "up": 4.0
+    },
+    "__exec_ms": 135536,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 7,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.1,
+     "model": 0.0,
+     "crop_dec": 42.2,
+     "ai": 85.9,
+     "comp_enc": 20.6,
+     "up": 3.2
+    },
+    "__exec_ms": 209565,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 8,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.0,
+     "model": 0.0,
+     "crop_dec": 37.1,
+     "ai": 80.0,
+     "comp_enc": 18.4,
+     "up": 3.4
+    },
+    "__exec_ms": 195095,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 9,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.1,
+     "model": 0.0,
+     "crop_dec": 30.9,
+     "ai": 58.8,
+     "comp_enc": 20.5,
+     "up": 2.5
+    },
+    "__exec_ms": 170617,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 2364.2,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 2477,
+   "frames": 5320,
+   "tms": {
+    "dl": 12.2,
+    "verify": 9.3,
+    "concat": 7.9,
+    "up": 79.3
+   },
+   "__exec_ms": 111747,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 2478.7,
+  "result": "OK",
+  "label": "gpuplan-k10",
+  "_gh_run": "run14"
+ },
+ {
+  "run_id": "gpuplan-k10-k10-1-da362b",
+  "k": 10,
+  "warm_req": 5,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "plan_on": "gpu",
+  "t_start": 1786945582.4609,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 106,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     532
+    ],
+    [
+     532,
+     1064
+    ],
+    [
+     1064,
+     1596
+    ],
+    [
+     1596,
+     2128
+    ],
+    [
+     2128,
+     2660
+    ],
+    [
+     2660,
+     3192
+    ],
+    [
+     3192,
+     3724
+    ],
+    [
+     3724,
+     4256
+    ],
+    [
+     4256,
+     4788
+    ],
+    [
+     4788,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 43.5,
+    "scan_dec": 20.7,
+    "scan": 63.3,
+    "mask_dec": 90.4,
+    "masks": 514.3,
+    "plan_up": 0.3
+   },
+   "__exec_ms": 733955,
+   "__fn": "plan_v31_gpu"
+  },
+  "t_plan_done": 821.5,
+  "warm_results": [
+   {
+    "warm": true,
+    "model_load_s": 6.8,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 7494,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 25,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 24,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 24,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 22,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_warm_done": 1038.9,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.1,
+     "model": 0.0,
+     "crop_dec": 30.9,
+     "ai": 61.8,
+     "comp_enc": 21.5,
+     "up": 4.3
+    },
+    "__exec_ms": 183037,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.8,
+     "model": 5.9,
+     "crop_dec": 34.0,
+     "ai": 90.3,
+     "comp_enc": 21.2,
+     "up": 5.9
+    },
+    "__exec_ms": 255653,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.1,
+     "model": 0.0,
+     "crop_dec": 43.9,
+     "ai": 117.6,
+     "comp_enc": 25.1,
+     "up": 4.5
+    },
+    "__exec_ms": 249422,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 4.2,
+     "model": 5.0,
+     "crop_dec": 25.2,
+     "ai": 77.7,
+     "comp_enc": 21.0,
+     "up": 2.2
+    },
+    "__exec_ms": 224786,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.1,
+     "model": 0.0,
+     "crop_dec": 30.5,
+     "ai": 59.7,
+     "comp_enc": 17.5,
+     "up": 4.8
+    },
+    "__exec_ms": 201293,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 5,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.1,
+     "model": 0.0,
+     "crop_dec": 34.4,
+     "ai": 52.2,
+     "comp_enc": 17.0,
+     "up": 4.8
+    },
+    "__exec_ms": 167231,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 6,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.3,
+     "model": 7.7,
+     "crop_dec": 25.0,
+     "ai": 39.5,
+     "comp_enc": 13.1,
+     "up": 3.6
+    },
+    "__exec_ms": 154809,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 7,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 0.3,
+     "model": 0.0,
+     "crop_dec": 37.8,
+     "ai": 84.9,
+     "comp_enc": 19.5,
+     "up": 2.4
+    },
+    "__exec_ms": 227797,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 8,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.9,
+     "model": 5.6,
+     "crop_dec": 32.7,
+     "ai": 84.7,
+     "comp_enc": 18.7,
+     "up": 3.1
+    },
+    "__exec_ms": 243654,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 9,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 5.4,
+     "model": 5.0,
+     "crop_dec": 23.3,
+     "ai": 59.0,
+     "comp_enc": 20.5,
+     "up": 3.1
+    },
+    "__exec_ms": 207193,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 1831.2,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 1947,
+   "frames": 5320,
+   "tms": {
+    "dl": 9.5,
+    "verify": 11.2,
+    "concat": 7.8,
+    "up": 82.6
+   },
+   "__exec_ms": 113339,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 1948.1,
+  "result": "OK",
+  "label": "gpuplan-k10",
+  "_gh_run": "run14"
+ },
+ {
+  "run_id": "gpuplan-k10-k10-2-61b1c2",
+  "k": 10,
+  "warm_req": 5,
+  "app": "inbilab-wm-gpu-v31-staging",
+  "plan_on": "gpu",
+  "t_start": 1786947530.955916,
+  "plan": {
+   "phase": "plan_v31",
+   "chunks": 106,
+   "regions": 4,
+   "N": 5320,
+   "segments": [
+    [
+     0,
+     532
+    ],
+    [
+     532,
+     1064
+    ],
+    [
+     1064,
+     1596
+    ],
+    [
+     1596,
+     2128
+    ],
+    [
+     2128,
+     2660
+    ],
+    [
+     2660,
+     3192
+    ],
+    [
+     3192,
+     3724
+    ],
+    [
+     3724,
+     4256
+    ],
+    [
+     4256,
+     4788
+    ],
+    [
+     4788,
+     5320
+    ]
+   ],
+   "ver": "v31",
+   "tms": {
+    "dl_cnt": 39.1,
+    "scan_dec": 13.4,
+    "scan": 51.3,
+    "mask_dec": 79.5,
+    "masks": 348.7,
+    "plan_up": 0.4
+   },
+   "__exec_ms": 533026,
+   "__fn": "plan_v31_gpu"
+  },
+  "t_plan_done": 651.1,
+  "warm_results": [
+   {
+    "warm": true,
+    "model_load_s": 5.5,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 5771,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 25,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 30,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 22,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "warm": true,
+    "model_load_s": 0.0,
+    "gpu": "NVIDIA L40S",
+    "container": "?",
+    "__exec_ms": 21,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_warm_done": 715.0,
+  "segments": [
+   {
+    "phase": "segment_v31",
+    "part": 0,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.7,
+     "model": 0.0,
+     "crop_dec": 26.0,
+     "ai": 62.1,
+     "comp_enc": 20.7,
+     "up": 4.4
+    },
+    "__exec_ms": 210610,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 1,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 5.6,
+     "model": 6.7,
+     "crop_dec": 39.4,
+     "ai": 88.6,
+     "comp_enc": 23.0,
+     "up": 4.9
+    },
+    "__exec_ms": 226707,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 2,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.9,
+     "model": 7.7,
+     "crop_dec": 44.4,
+     "ai": 122.1,
+     "comp_enc": 22.0,
+     "up": 4.9
+    },
+    "__exec_ms": 265019,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 3,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 3.5,
+     "model": 5.2,
+     "crop_dec": 27.0,
+     "ai": 77.6,
+     "comp_enc": 20.0,
+     "up": 2.4
+    },
+    "__exec_ms": 221381,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 4,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.6,
+     "model": 7.4,
+     "crop_dec": 37.2,
+     "ai": 59.4,
+     "comp_enc": 16.5,
+     "up": 3.4
+    },
+    "__exec_ms": 189123,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 5,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 5.8,
+     "model": 6.0,
+     "crop_dec": 29.7,
+     "ai": 55.0,
+     "comp_enc": 17.5,
+     "up": 3.9
+    },
+    "__exec_ms": 206081,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 6,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.8,
+     "model": 6.7,
+     "crop_dec": 24.2,
+     "ai": 37.3,
+     "comp_enc": 13.3,
+     "up": 3.1
+    },
+    "__exec_ms": 150561,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 7,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 6.5,
+     "model": 6.5,
+     "crop_dec": 42.0,
+     "ai": 86.7,
+     "comp_enc": 20.8,
+     "up": 4.0
+    },
+    "__exec_ms": 223460,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 8,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.6,
+     "model": 7.0,
+     "crop_dec": 37.9,
+     "ai": 80.2,
+     "comp_enc": 18.3,
+     "up": 3.7
+    },
+    "__exec_ms": 214305,
+    "__fn": "segment_v31_gpu"
+   },
+   {
+    "phase": "segment_v31",
+    "part": 9,
+    "frames": 532,
+    "counters": {
+     "intermediate_ai_mp4_count": 0,
+     "range_full_decode_count_per_segment": 1,
+     "range_union_crop_decode_count_per_segment": 4
+    },
+    "tms": {
+     "dl": 7.9,
+     "model": 7.4,
+     "crop_dec": 32.0,
+     "ai": 58.9,
+     "comp_enc": 17.0,
+     "up": 3.5
+    },
+    "__exec_ms": 185577,
+    "__fn": "segment_v31_gpu"
+   }
+  ],
+  "t_segments_done": 1089.1,
+  "finish": {
+   "phase": "finish_v31",
+   "ok": true,
+   "sec": 1207,
+   "frames": 5320,
+   "tms": {
+    "dl": 7.6,
+    "verify": 11.2,
+    "concat": 7.8,
+    "up": 87.3
+   },
+   "__exec_ms": 116727,
+   "__fn": "finish_v31_cpu"
+  },
+  "total_s": 1209.1,
+  "result": "OK",
+  "label": "gpuplan-k10",
+  "_gh_run": "run14"
+ }
+]
