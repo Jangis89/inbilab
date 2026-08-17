@@ -99,7 +99,10 @@ def main():
     if p1["frames"] != EXPECT_N: hard.append(f"프레임 {p1['frames']} != {EXPECT_N}")
     if not p1["audio"]: hard.append("오디오 없음")
     if (p1["w"], p1["h"]) != (p2["w"], p2["h"]): hard.append("해상도 불일치")
-    if p1["fps"] != p2["fps"]: hard.append(f"FPS 불일치 {p1['fps']} vs {p2['fps']}")
+    def _f(v):
+        return (lambda a, b: a / b)(*map(float, str(v).split("/"))) if "/" in str(v) else float(v)
+    if abs(_f(p1["fps"]) - _f(p2["fps"])) > 0.01:
+        hard.append(f"FPS 불일치 {p1['fps']} vs {p2['fps']}")
 
     psnr = ssim = None
     if p1["frames"] == p2["frames"]:
@@ -110,10 +113,18 @@ def main():
     else:
         hard.append("프레임 수 불일치로 PSNR 생략")
 
-    fps_num = eval(p1["fps"]) if "/" in str(p1["fps"]) else float(p1["fps"])
+    fps_num = _f(p1["fps"])
     bnd = boundary_flicker(v32p, fps_num, EXPECT_N, K_DEFAULT)
-    flags = [b for b in bnd if b.get("flag")]
-    print("[verify32] 경계 검사:", json.dumps(bnd, ensure_ascii=False))
+    bnd_ref = boundary_flicker(v31p, fps_num, EXPECT_N, K_DEFAULT)
+    # v31(golden)에도 같은 패턴이 있으면 추출 특성이지 v32 결함이 아님 → 양쪽 비교로 판정
+    flags = []
+    for a, b in zip(bnd, bnd_ref):
+        if a.get("err") or b.get("err"):
+            continue
+        if a["flag"] and not b["flag"]:
+            flags.append(a)
+    print("[verify32] 경계(v32):", json.dumps(bnd, ensure_ascii=False))
+    print("[verify32] 경계(v31):", json.dumps(bnd_ref, ensure_ascii=False))
 
     summary = {"psnr_vs_v31": psnr, "ssim_vs_v31": ssim,
                "boundary_flags": len(flags), "hard_fail": hard}
