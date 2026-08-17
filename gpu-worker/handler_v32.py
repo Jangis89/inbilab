@@ -161,8 +161,9 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
         if keep:
             raw[i] = h29.rasterize(keep, ww, hh)
             masked += 1
-    # ±(6 + key_step - 1) union — 키프레임 간격만큼 넓혀 v29 ±6 union의 커버리지 보존
-    ring = 6 + max(1, int(key_step)) - 1
+    # ±(6 + ceil((key_step-1)/2)) union — 키 간격의 절반만 넓혀 커버리지 보존 + 과도한 번짐 방지
+    ks = max(1, int(key_step))
+    ring = 6 + (ks - 1 + 1) // 2
     zeros = np.zeros((hh, ww), np.uint8)
     out = []
     for i in range(n):
