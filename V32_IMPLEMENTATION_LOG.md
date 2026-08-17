@@ -58,3 +58,14 @@
 4. 최종 검증: warm 10회 + cold 5회, 실패율, 골든 영상 10개
 5. 경쟁사 동일 영상 실측 3회씩 (RecCloud/UnWatermark/SubEasy/Vmake/HitPaw)
 6. wm_segments retry/failover, RunPod V32 포팅, canary 준비
+
+## 2026-08-18 오후 — 공식 warm 10회 (run #17, 13:30~15:00 KST = 미국 일요일 저녁 피크)
+- 10/10 성공, 실패 0. total: 375.5/399.5/441.6/444.5/447.2/452.2/510.1/785.1/859.7/1267.1
+- **P50 449.7 / P95 1267.1** — 순수 실행은 안정(scan 80~94, seg exec 정상)이나
+  3개 런에서 L40S 배정 대기 435~880s 발생 (segs wall 670~1120 vs exec ~140).
+- 시간대별 실측 종합: 한산(KST 새벽) P50 355.5 / 혼잡(미국 저녁) P50 449.7, P95 1267.
+- **판정: 명세 Rule 2 발동** — queue_wait P95 ≫ 15s. 서버리스 튜닝 중단,
+  전용·예약형 GPU pool 비교가 다음 필수 단계 (Modal min_containers 상시 warm,
+  RunPod 전용 GPU, 2차 공급자 speculative dispatch).
+- 참고: 상시 warm 12×L40S ≈ $1.95×12×24h ≈ $560/일 — 규모 대비 조정 필요(운영은
+  동시 작업 수에 맞춘 min pool + 초과분 burst가 현실적).
