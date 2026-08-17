@@ -1,0 +1,85 @@
+# 인비랩 V32 경쟁속도 스테이징 — 배포·벤치마크·품질검증 (workflow_dispatch 전용)
+# 운영 배포·V31 workflow와 완전 분리. 운영 앱은 건드리지 않는다.
+name: V32 staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "deploy | bench | verify"
+        required: true
+        default: "deploy"
+      ref:
+        description: "체크아웃할 브랜치/커밋"
+        required: true
+        default: "perf/wm-v32-competitive-speed"
+      runs:
+        description: "bench 반복 횟수"
+        required: false
+        default: "3"
+      k:
+        description: "세그먼트 수 K"
+        required: false
+        default: "10"
+      warm:
+        description: "사전 예열 GPU 수"
+        required: false
+        default: "5"
+      key_step:
+        description: "정밀 감지 키프레임 간격 (1=완전정밀)"
+        required: false
+        default: "5"
+      label:
+        description: "bench 라벨"
+        required: false
+        default: "v32"
+
+jobs:
+  v32:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install -q modal numpy==1.26.4 opencv-python-headless==4.10.0.84 requests
+      - name: Deploy V32 staging app
+        if: ${{ github.event.inputs.action == 'deploy' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal deploy gpu-worker/modal_app_v32.py
+      - name: Benchmark
+        if: ${{ github.event.inputs.action == 'bench' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: |
+          python gpu-worker/scripts/benchmark_v32.py \
+            --runs "${{ github.event.inputs.runs }}" \
+            --k "${{ github.event.inputs.k }}" \
+            --warm "${{ github.event.inputs.warm }}" \
+            --key_step "${{ github.event.inputs.key_step }}" \
+            --label "${{ github.event.inputs.label }}"
+      - name: Verify output quality
+        if: ${{ github.event.inputs.action == 'verify' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          V32_K: ${{ github.event.inputs.k }}
+        run: python gpu-worker/scripts/verify_v32.py
+      - name: Upload bench artifacts
+        if: ${{ always() && github.event.inputs.action == 'bench' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-v32-${{ github.run_id }}
+          path: BENCHMARK_V32.json
+          if-no-files-found: ignore
