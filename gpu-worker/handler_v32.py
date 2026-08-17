@@ -136,13 +136,79 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
         m = _unpack_static(reg)
         return [m] * n, n
     # 자막/라벨 밴드: 키프레임 정밀 감지 (공유메모리 풀 — v31이 h29._par_sweep에 이식)
-    keys = list(range(0, n, max(1, int(key_step))))
+    ks_i = max(1, int(key_step))
+    keys = list(range(0, n, ks_i))
     per = [None] * n
-    res = h29._par_sweep("cl", frames_local, n, max(1, int(key_step)))
-    if res is None:
-        res = [h29.glyph_clusters(frames_local[i]) for i in keys]
-    for k, i in enumerate(keys):
-        per[i] = res[k]
+    with_labels = not kind.startswith("subtitle")
+    if with_labels:
+        res = h29._par_sweep("cl", frames_local, n, ks_i)
+        if res is None:
+            res = [h29.glyph_clusters(frames_local[i]) for i in keys]
+        for k, i in enumerate(keys):
+            per[i] = res[k]
+    else:
+        # v29 subtitle 경로 이식: 색상판 프루닝 → cl_ss(싱글 포함) → 줄 기반 단글자 승인
+        active = set()
+        r2 = h29._par_sweep("prune", frames_local, n, 15)
+        if r2 is None:
+            r2 = [h29.glyph_clusters(frames_local[i], with_singles=True)
+                  for i in range(0, n, 15)]
+        for cl0, ss0 in r2:
+            for c in cl0:
+                for i2 in c.get("items") or []:
+                    if "plane" in i2: active.add(i2["plane"])
+            for s2 in ss0:
+                for i2 in s2["items"]:
+                    if "plane" in i2: active.add(i2["plane"])
+        sing = [None] * n
+        if active:
+            res = h29._par_sweep("cl_ss", frames_local, n, ks_i, planes=active)
+            if res is None:
+                res = [h29.glyph_clusters(frames_local[i], with_singles=True, only_planes=active)
+                       for i in keys]
+            for k, i in enumerate(keys):
+                per[i], sing[i] = res[k]
+        else:
+            for i in keys:
+                per[i] = []; sing[i] = []
+        # 줄(line) 통계 — 키프레임에서 관측된 여러 글자 자막 줄 (v29와 동일 규칙, 관측 수 기준은
+        # 키프레임 수에 비례해 축소: 전 프레임 8회 ≈ 키프레임 max(2, 8//ks) 회)
+        lines = []
+        for fi in keys:
+            for c in per[fi] or []:
+                its = c.get("items") or []
+                if len(its) < 2 or "h" not in its[0]: continue
+                yc = (c["y0"] + c["y1"]) / 2
+                hmed = sorted(i2["h"] for i2 in its)[len(its) // 2]
+                put = None
+                for L in lines:
+                    if abs(L["yc"] - yc) < 25: put = L; break
+                if put:
+                    put["n"] += 1; put["ys"].append(yc); put["hs"].append(hmed)
+                    put["x0"] = min(put["x0"], c["x0"]); put["x1"] = max(put["x1"], c["x1"])
+                    put["yc"] = sum(put["ys"]) / len(put["ys"])
+                    put["fr"].append(fi)
+                else:
+                    lines.append({"yc": yc, "n": 1, "ys": [yc], "hs": [hmed],
+                                  "x0": c["x0"], "x1": c["x1"], "fr": [fi]})
+        need_n = max(2, 8 // ks_i)
+        lines = [L for L in lines if L["n"] >= need_n]
+        for L in lines:
+            L["hmed"] = sorted(L["hs"])[len(L["hs"]) // 2]
+            act = np.zeros(n + 1, np.int32)
+            for fi in L["fr"]: act[fi] = 1
+            L["cum"] = np.cumsum(act)
+        def _near(L, i, win=90):
+            a = max(0, i - win); b = min(n - 1, i + win)
+            return (L["cum"][b + 1] - L["cum"][a]) > 0
+        if lines:
+            for i in keys:
+                for s2 in sing[i] or []:
+                    syc = (s2["y0"] + s2["y1"]) / 2
+                    sh = max(i2["h"] for i2 in s2["items"])
+                    for L in lines:
+                        if abs(L["yc"] - syc) < 30 and L["x0"] - 30 <= s2["x0"]                            and s2["x1"] <= L["x1"] + 30                            and 0.6 * L["hmed"] <= sh <= 1.45 * L["hmed"] and _near(L, i):
+                            per[i].append(s2); break
     # 안정성: ±6 창 안에서 '계산된 이웃' 중 v29와 같은 비율(≈42%)이 일치해야 채택
     def stable(i, box):
         avail = 0; cnt = 0
