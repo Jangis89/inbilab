@@ -124,25 +124,34 @@ def _s3_client():
     except Exception as e:
         _S3_CACHED["diag"]["why"] = f"boto3 import 실패: {type(e).__name__}"
         return None
-    region = os.environ.get("SUPABASE_S3_REGION", "ap-northeast-2")
+    # region은 비밀값이 아님 — 프로젝트 실측값(ap-southeast-1)을 1순위로 두고
+    # 잘못 저장된 secret 값에 견디도록 후보를 순차 시도한다
+    regs = []
+    for rg in (os.environ.get("SUPABASE_S3_REGION"), "ap-southeast-1",
+               "ap-northeast-2", "us-east-1"):
+        if rg and rg not in regs:
+            regs.append(rg)
     eps = [e for e in [os.environ.get("SUPABASE_S3_ENDPOINT"),
                        h29.SB_URL.replace(".supabase.co", ".storage.supabase.co") + "/storage/v1/s3",
                        h29.SB_URL + "/storage/v1/s3"] if e]
-    for ep in eps:
-        try:
-            c = boto3.client("s3", endpoint_url=ep, aws_access_key_id=kid,
-                             aws_secret_access_key=sec, region_name=region,
-                             config=Config(s3={"addressing_style": "path"},
-                                           max_pool_connections=16,
-                                           retries={"max_attempts": 2},
-                                           connect_timeout=10, read_timeout=180))
-            c.head_bucket(Bucket="videos-clips")
-            _S3_CACHED.update(c=c, ep=ep)
-            return c
-        except Exception as e:
-            _S3_CACHED["diag"]["errors"].append(f"{ep.split('/')[2]}: {type(e).__name__}: {str(e)[:160]}")
-            continue
-    _S3_CACHED["diag"]["why"] = "모든 endpoint 연결 실패"
+    for region in regs:
+        for ep in eps:
+            try:
+                c = boto3.client("s3", endpoint_url=ep, aws_access_key_id=kid,
+                                 aws_secret_access_key=sec, region_name=region,
+                                 config=Config(s3={"addressing_style": "path"},
+                                               max_pool_connections=16,
+                                               retries={"max_attempts": 2},
+                                               connect_timeout=10, read_timeout=180))
+                c.head_bucket(Bucket="videos-clips")
+                _S3_CACHED.update(c=c, ep=ep)
+                _S3_CACHED["diag"]["region_used"] = region
+                return c
+            except Exception as e:
+                _S3_CACHED["diag"]["errors"].append(
+                    f"{region}@{ep.split('/')[2]}: {type(e).__name__}: {str(e)[:120]}")
+                continue
+    _S3_CACHED["diag"]["why"] = "모든 region/endpoint 조합 실패"
     return None
 
 
@@ -657,6 +666,7 @@ def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500):
     if fin_n != N:
         raise RuntimeError(f"[v32] 최종 프레임 수 {fin_n} != N {N}")
     dest = f"{proj['user_id']}/wm_v32_{pid}.mp4"
+    out_mb = round(os.path.getsize(outp) / 1e6, 1)
     url_out, up_mode = upload_clip_fast(dest, outp, sw)
     sec = round(time.time() - t0)
     tms = dict(tms_in or {})
@@ -671,7 +681,7 @@ def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500):
     tmp_delete(pid, names)
     print("[v32] 완료", pid, json.dumps({**detail, "url": "(생략)"}, ensure_ascii=False))
     return {"phase": "finish_v32", "ok": True, "sec": sec, "frames": fin_n,
-            "up_mode": up_mode, "tms": sw.out()}
+            "up_mode": up_mode, "out_mb": out_mb, "tms": sw.out()}
 
 
 # ---------------- 업로드·다운로드 A/B 마이크로벤치 (Phase 1 항목 3·4·5·10) ----------------
