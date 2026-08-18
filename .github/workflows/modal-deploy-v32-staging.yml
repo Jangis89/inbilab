@@ -124,6 +124,7 @@ jobs:
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
         run: |
           pip install -q lpips torch --index-url https://download.pytorch.org/whl/cpu || echo "lpips 설치 실패 — 지표 생략"
+          if [[ "${{ github.event.inputs.label }}" == *analyze* ]]; then export GOLDEN_SKIP_RUN=1; fi
           python gpu-worker/scripts/golden_run_v32.py
       - name: Upload golden artifacts
         if: ${{ always() && (github.event.inputs.action == 'golden' || github.event.inputs.action == 'goldenrun') }}
@@ -134,6 +135,7 @@ jobs:
             GOLDEN_MANIFEST.json
             GOLDEN_QUALITY_REPORT.json
             GOLDEN_QUALITY_REPORT.md
+            golden_review/
           if-no-files-found: ignore
       - name: Verify output quality
         if: ${{ github.event.inputs.action == 'verify' }}
