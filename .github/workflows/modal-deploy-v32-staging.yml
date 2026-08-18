@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "deploy | bench | verify | clips | golden | goldenrun | queue"
+        description: "deploy | bench | verify | clips | golden | goldenrun | queue | export"
         required: true
         default: "deploy"
       ref:
@@ -106,6 +106,23 @@ jobs:
           path: |
             QUEUE_LOAD_REPORT.json
             QUEUE_LOAD_REPORT.md
+          if-no-files-found: ignore
+      - name: Export comparison clip
+        if: ${{ github.event.inputs.action == 'export' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: |
+          curl -s -H "apikey: $SUPABASE_SERVICE_ROLE" -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE" \
+            "$SUPABASE_URL/storage/v1/object/videos-clips/bench-assets/golden/g06_input.mp4" -o g06.mp4
+          ffmpeg -v error -i g06.mp4 -c:v libx264 -crf 26 -preset medium comp_clip.mp4 -y
+          ls -la g06.mp4 comp_clip.mp4
+      - name: Upload comparison clip
+        if: ${{ always() && github.event.inputs.action == 'export' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: comp-clip-${{ github.run_id }}
+          path: comp_clip.mp4
           if-no-files-found: ignore
       - name: Make golden videos
         if: ${{ github.event.inputs.action == 'golden' }}
