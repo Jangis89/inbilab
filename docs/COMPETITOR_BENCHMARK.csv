@@ -1,0 +1,7 @@
+service,date,clip,process_result,login_required,paywall_point,auto_detect,free_tier,file_limits,quality_note,note
+RecCloud,2026-08-18,comp_small(20s/9.7MB),"처리 불가(크레딧 0)","Y(처리 시점)","Remove Now 클릭 즉시 'Not enough credits. Upgrade' — 신규 무료계정 크레딧 0","N(박스 직접 지정, 최대 5개)","없음(미리보기 2회도 무반응)","mp4/mov/webm/mkv ≤4GB ≤1h",측정불가,"Best 품질 = 10크레딧/30초, 크레딧은 연간/주간 멤버십 구매로만 획득"
+UnWatermark,2026-08-18,comp_small,"업로드 불가","미확인","미도달","미확인","'Free' 표기","≤100MB mp4/mov/avi/mkv/webm",측정불가,"자동화 업로드 차단(신뢰 이벤트 검사) — 사람 수동 업로드만 가능"
+SubEasy,2026-08-18,comp_small,"미시도","Y(서비스 진입 시)","Erase Text 클릭 → Sign In","미확인","미확인","미확인",측정불가,"랜딩에 업로드 UI 없음, 로그인 대시보드형"
+Vmake,2026-08-18,comp_small,"5초 미리보기만 성공","N(미리보기까지)","'Download full video' = 유료 플랜","Y(Auto: Smart/Subtitle 모드)","5초 미리보기 무료","미리보기 재생 정상","미리보기 프레임 육안: 잔상 없음 (5초 구간)","Subtitle 자동모드 5초분 처리 19초 (20초 환산 ~76초, 선형 가정 = 추측)"
+HitPaw,2026-08-18,comp_small,"편집 준비까지","N(편집 UI까지)","Preview/Export 무반응(로그인 게이트 추정)","N(박스 직접 지정)","미확인","20초 클립 업로드 정상",측정불가,"AI Model 선택 + 수동 박스, 구간(Duration) 지정 가능"
+inbilab-V32,2026-08-18,"동일 원본(177s 전체)","전체 처리 성공","N","자체 서비스","Y(전자동 감지 4영역)","해당없음","≤15분","PSNR 36.9/SSIM 0.981/경계 0 (원본 대비 게이트 통과)","한산 P50 162.6s — 경쟁사 중 전자동+전체영상 처리를 무장벽으로 제공하는 곳 없음"
