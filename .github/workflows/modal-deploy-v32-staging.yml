@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "deploy | bench | verify | clips | golden | goldenrun | queue | export"
+        description: "deploy | bench | verify | clips | golden | goldenrun | queue | queuee2e | export"
         required: true
         default: "deploy"
       ref:
@@ -123,6 +123,21 @@ jobs:
         with:
           name: comp-clip-${{ github.run_id }}
           path: comp_clip.mp4
+          if-no-files-found: ignore
+      - name: Queue staging E2E
+        if: ${{ github.event.inputs.action == 'queuee2e' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: python gpu-worker/scripts/queue_staging_test_v32.py
+      - name: Upload queue E2E artifacts
+        if: ${{ always() && github.event.inputs.action == 'queuee2e' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: queue-e2e-${{ github.run_id }}
+          path: QUEUE_INTEGRATION_V32.json
           if-no-files-found: ignore
       - name: Make golden videos
         if: ${{ github.event.inputs.action == 'golden' }}
