@@ -23,6 +23,71 @@ def sbh(extra=None):
     return h
 
 
+SRC_PATH = "4117e902-3396-4b14-aea0-957b326ab563/1786760197372_s94d16lfj6.mp4"
+MASTER_PATH = "bench-assets/benchmark_master.mp4"          # videos-clips (장기 보관용)
+AUDIT_ZIP = "4117e902-3396-4b14-aea0-957b326ab563/audit/SUBTITLE_REMOVER_MEDIA_AUDIT_PART1.zip"
+
+
+def _obj_exists(bucket, path):
+    r = requests.get(f"{SB_URL}/storage/v1/object/{bucket}/{path}",
+                     headers=sbh({"Range": "bytes=0-0"}), timeout=30)
+    return r.status_code in (200, 206)
+
+
+def _upload_obj(bucket, path, fp, ctype="video/mp4"):
+    with open(fp, "rb") as f:
+        r = requests.post(f"{SB_URL}/storage/v1/object/{bucket}/{path}",
+                          headers=sbh({"Content-Type": ctype, "x-upsert": "true"}),
+                          data=f, timeout=1800)
+    r.raise_for_status()
+
+
+def ensure_source():
+    """운영의 원본 자동삭제 정책으로 벤치 원본이 사라질 수 있음 → 벤치 스스로 복원.
+    우선순위: 이미 있음 → videos-clips 마스터에서 복원 → 감사 PART1.zip에서 추출·복원."""
+    if _obj_exists("videos-source", SRC_PATH):
+        return
+    print("[bench] 기준 원본 없음 — 자가복구 시작")
+    import tempfile, zipfile, shutil as _sh
+    tmp = tempfile.mkdtemp()
+    fp = os.path.join(tmp, "master.mp4")
+    if _obj_exists("videos-clips", MASTER_PATH):
+        r = requests.get(f"{SB_URL}/storage/v1/object/videos-clips/{MASTER_PATH}",
+                         headers=sbh(), stream=True, timeout=900)
+        r.raise_for_status()
+        with open(fp, "wb") as f:
+            for ch in r.iter_content(1 << 20):
+                f.write(ch)
+        print(f"[bench] 마스터 사본에서 복원 ({os.path.getsize(fp)/1e6:.1f}MB)")
+    else:
+        zp = os.path.join(tmp, "audit.zip")
+        r = requests.get(f"{SB_URL}/storage/v1/object/videos-source/{AUDIT_ZIP}",
+                         headers=sbh(), stream=True, timeout=1800)
+        r.raise_for_status()
+        with open(zp, "wb") as f:
+            for ch in r.iter_content(1 << 20):
+                f.write(ch)
+        with zipfile.ZipFile(zp) as z:
+            names = z.namelist()
+            cand = [n for n in names if "1786760197372" in n] or \
+                   [n for n in names if n.lower().endswith(".mp4") and
+                    ("input" in n.lower() or "original" in n.lower() or "원본" in n)] or \
+                   sorted((n for n in names if n.lower().endswith(".mp4")),
+                          key=lambda n: abs(z.getinfo(n).file_size - 102_600_000))
+            if not cand:
+                raise RuntimeError("감사 zip에서 원본 mp4를 찾지 못함: " + ",".join(names[:20]))
+            m = cand[0]
+            print(f"[bench] 감사 zip에서 추출: {m} ({z.getinfo(m).file_size/1e6:.1f}MB)")
+            with z.open(m) as srcf, open(fp, "wb") as dst:
+                _sh.copyfileobj(srcf, dst, 1 << 20)
+        _upload_obj("videos-clips", MASTER_PATH, fp)
+        print("[bench] 마스터 사본 저장(videos-clips/bench-assets)")
+    _upload_obj("videos-source", SRC_PATH, fp)
+    if not _obj_exists("videos-source", SRC_PATH):
+        raise RuntimeError("원본 복원 실패")
+    print("[bench] 기준 원본 복원 완료 ✅")
+
+
 def ensure_bench_project():
     r = requests.get(f"{SB_URL}/rest/v1/sc_projects",
                      params={"id": f"eq.{BENCH_PID}", "select": "id"}, headers=sbh(), timeout=30)
@@ -151,6 +216,7 @@ def main():
     ap.add_argument("--out", default="BENCHMARK_V32.json")
     a = ap.parse_args()
 
+    ensure_source()
     ensure_bench_project()
     records = []
     for i in range(a.runs):
