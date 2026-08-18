@@ -120,16 +120,16 @@ def make_goldens(tmp):
              "-c:v", "libx264", "-crf", "16", "-preset", "medium", burned, "-y"])
         out.append((g, clean, burned, "gt-real"))
 
-    # g04: 합성 패턴 1개 (스트레스 트랙 유지), g05: 실사 crop (시간축 연속 — 노이즈 골든 교체)
+    # g04: 합성 노이즈/패턴 골든 폐기 → 실사 crop (다른 화면부, 시간축 연속)
     g = "g04"
     clean = os.path.join(tmp, "g04_clean.mp4")
-    run(["ffmpeg", "-v", "error", "-f", "lavfi",
-         "-i", f"testsrc2=size=1080x1920:rate={FPS},hue=H=t*20", "-t", str(DUR),
+    run(["ffmpeg", "-v", "error", "-ss", "150", "-t", str(DUR), "-i", master,
+         "-vf", f"crop=1080:1080:0:600,fps={FPS}", "-an",
          "-c:v", "libx264", "-crf", "16", "-preset", "medium", clean, "-y"])
     burned = os.path.join(tmp, "g04_input.mp4")
     run(["ffmpeg", "-v", "error", "-i", clean, "-vf", drawtext(3, *TEXTS[3]),
          "-c:v", "libx264", "-crf", "16", "-preset", "medium", burned, "-y"])
-    out.append(("g04", clean, burned, "gt-synth-stress"))
+    out.append(("g04", clean, burned, "gt-real"))
     g = "g05"
     clean = os.path.join(tmp, "g05_clean.mp4")
     run(["ffmpeg", "-v", "error", "-ss", "90", "-t", str(DUR), "-i", master,
@@ -161,8 +161,9 @@ def make_goldens(tmp):
     ]
     for bi, (g, flt) in enumerate(box_styles):
         clean = os.path.join(tmp, f"{g}_clean.mp4")
+        # 배경은 원본 자막이 없는 중앙부 crop — clean이 진짜 clean이도록
         run(["ffmpeg", "-v", "error", "-ss", str(10 + bi * 30), "-t", str(DUR),
-             "-i", master, "-vf", f"fps={FPS}", "-an",
+             "-i", master, "-vf", f"crop=1080:1080:0:300,fps={FPS}", "-an",
              "-c:v", "libx264", "-crf", "16", "-preset", "medium", clean, "-y"])
         burned = os.path.join(tmp, f"{g}_input.mp4")
         run(["ffmpeg", "-v", "error", "-i", clean, "-vf", flt,
