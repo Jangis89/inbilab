@@ -36,12 +36,168 @@ def tmp_delete(pid, names):
     h29.tmp_delete(f"{PFX}/{pid}", names)
 
 
+# ---------------- Phase 1: 병렬 다운로드 + S3 멀티파트 업로드 ----------------
+def _content_length(url):
+    import requests as rq
+    r = rq.get(url, headers={"Range": "bytes=0-0"}, timeout=30)
+    r.raise_for_status()
+    cr = r.headers.get("Content-Range", "")
+    if "/" in cr:
+        return int(cr.split("/")[-1])
+    return int(r.headers.get("Content-Length") or 0)
+
+
+def download_to_par(url, dest, conc=8, chunk_mb=16):
+    """HTTP Range 병렬 다운로드 — 서명 URL 그대로 사용(키 불필요). 실패 조각은 3회 재시도."""
+    import requests as rq
+    from concurrent.futures import ThreadPoolExecutor
+    size = _content_length(url)
+    if size <= chunk_mb * 1024 * 1024:
+        h29.download_to(url, dest)
+        return os.path.getsize(dest)
+    with open(dest, "wb") as f:
+        f.truncate(size)
+    cs = chunk_mb * 1024 * 1024
+    ranges = [(a, min(a + cs, size) - 1) for a in range(0, size, cs)]
+    def _one(rg):
+        a, b = rg
+        for att in range(3):
+            try:
+                r = rq.get(url, headers={"Range": f"bytes={a}-{b}"}, timeout=300)
+                r.raise_for_status()
+                with open(dest, "r+b") as f:
+                    f.seek(a); f.write(r.content)
+                return
+            except Exception:
+                if att == 2:
+                    raise
+                time.sleep(1 + att)
+    with ThreadPoolExecutor(max_workers=conc) as ex:
+        list(ex.map(_one, ranges))
+    if os.path.getsize(dest) != size:
+        raise RuntimeError("[v32] 병렬 다운로드 크기 불일치")
+    return size
+
+
+def fetch_source_fast(proj, tmp, sw=None):
+    """h29.fetch_source와 동일 결과 — 원본 다운로드만 Range 병렬 + 단계 분해 계측."""
+    src = os.path.join(tmp, "src.mp4")
+    url = h29.signed_url(proj["source_path"], 21600)
+    download_to_par(url, src)
+    if sw: sw.mark("dl")
+    info = h29.probe_info(src)
+    if info["dur"] > 900:
+        raise RuntimeError("지금은 15분 이하 영상만 지원해요. 나눠서 올려주세요.")
+    work = src
+    N = h29.frame_count(work)
+    if sw: sw.mark("cnt")
+    expected = round(info["dur"] * info["fps"])
+    if N and abs(N - expected) > max(5, expected * 0.02):
+        work = os.path.join(tmp, "work.mp4")
+        h29.run(["ffmpeg", "-v", "error"] + h29.hw_dec_args()
+                + ["-i", src, "-vf", f"fps={info['fps']}", "-an"]
+                + h29.hw_enc_args(12) + [work, "-y"])
+        N = h29.frame_count(work)
+        if sw: sw.mark("cfr_enc")
+    return src, work, info, N
+
+
+_S3_CACHED = {"c": None, "tried": False, "ep": None}
+
+def _s3_client():
+    """Supabase S3 클라이언트. 키는 Modal Secret(v32-staging-s3)로만 주입 —
+    코드·로그에 값 노출 금지. PLACEHOLDER면 비활성(기존 단일 PUT 폴백)."""
+    if _S3_CACHED["tried"]:
+        return _S3_CACHED["c"]
+    _S3_CACHED["tried"] = True
+    kid = os.environ.get("SUPABASE_S3_ACCESS_KEY_ID", "")
+    sec = os.environ.get("SUPABASE_S3_SECRET_ACCESS_KEY", "")
+    if not kid or not sec or "PLACEHOLDER" in (kid, sec):
+        return None
+    try:
+        import boto3
+        from botocore.config import Config
+    except Exception:
+        return None
+    region = os.environ.get("SUPABASE_S3_REGION", "ap-northeast-2")
+    eps = [e for e in [os.environ.get("SUPABASE_S3_ENDPOINT"),
+                       h29.SB_URL.replace(".supabase.co", ".storage.supabase.co") + "/storage/v1/s3",
+                       h29.SB_URL + "/storage/v1/s3"] if e]
+    for ep in eps:
+        try:
+            c = boto3.client("s3", endpoint_url=ep, aws_access_key_id=kid,
+                             aws_secret_access_key=sec, region_name=region,
+                             config=Config(s3={"addressing_style": "path"},
+                                           max_pool_connections=16,
+                                           retries={"max_attempts": 2},
+                                           connect_timeout=10, read_timeout=180))
+            c.head_bucket(Bucket="videos-clips")
+            _S3_CACHED.update(c=c, ep=ep)
+            return c
+        except Exception:
+            continue
+    return None
+
+
+def s3_upload(bucket, key, filepath, part_mb=16, conc=8, client=None):
+    """멀티파트 병렬 업로드 + 크기 검증. 시작 전 같은 key의 미완료 part 정리(abort)."""
+    from boto3.s3.transfer import TransferConfig
+    c = client or _s3_client()
+    if c is None:
+        raise RuntimeError("[v32] S3 키 없음")
+    try:
+        mp = c.list_multipart_uploads(Bucket=bucket, Prefix=key)
+        for u in mp.get("Uploads") or []:
+            c.abort_multipart_upload(Bucket=bucket, Key=u["Key"], UploadId=u["UploadId"])
+    except Exception:
+        pass
+    cfg = TransferConfig(multipart_threshold=8 * 1024 * 1024,
+                         multipart_chunksize=part_mb * 1024 * 1024,
+                         max_concurrency=conc, use_threads=True)
+    c.upload_file(filepath, bucket, key, Config=cfg,
+                  ExtraArgs={"ContentType": "video/mp4"})
+    head = c.head_object(Bucket=bucket, Key=key)
+    if head["ContentLength"] != os.path.getsize(filepath):
+        raise RuntimeError(f"[v32] 업로드 크기 불일치 {head['ContentLength']}")
+    return head
+
+
+def _sign_clip(path_in_bucket):
+    import requests as rq
+    def _do():
+        r = rq.post(f"{h29.SB_URL}/storage/v1/object/sign/videos-clips/{path_in_bucket}",
+                    headers=h29.sb_headers({"Content-Type": "application/json"}),
+                    data=json.dumps({"expiresIn": 86400}), timeout=30)
+        r.raise_for_status()
+        return h29.SB_URL + "/storage/v1" + r.json()["signedURL"]
+    return h29._retry(_do)
+
+
+def upload_clip_fast(path_in_bucket, filepath, sw=None):
+    """S3 멀티파트(키 있으면) → 2회 실패 시 기존 단일 PUT 폴백. (서명URL, 방식) 반환."""
+    part_mb = int(os.environ.get("WM_S3_PART_MB", "16"))
+    conc = int(os.environ.get("WM_S3_CONC", "8"))
+    if _s3_client() is not None:
+        for att in range(2):
+            try:
+                s3_upload("videos-clips", path_in_bucket, filepath, part_mb, conc)
+                if sw: sw.mark("up_s3")
+                url = _sign_clip(path_in_bucket)
+                if sw: sw.mark("sign")
+                return url, f"s3-{part_mb}x{conc}"
+            except Exception:
+                time.sleep(1)
+    url = h29.upload_clip(path_in_bucket, filepath)
+    if sw: sw.mark("up_put")
+    return url, "put"
+
+
 def fetch_lite_v32(proj, tmp, plan):
     pid = proj["id"]
     src = h29.cache_get(pid + "-src.mp4")
     if not src:
         src = os.path.join(tmp, "src.mp4")
-        h29.download_to(h29.signed_url(proj["source_path"], 21600), src)
+        download_to_par(h29.signed_url(proj["source_path"], 21600), src)
         h29.cache_put(pid + "-src.mp4", src)
     work = src
     if plan.get("cfr"):
@@ -139,8 +295,7 @@ def scan_v32(proj, tmp, scan_step=12, seg_k=10):
     pid = proj["id"]
     sw = SW()
     h29.set_proj(pid, "wm_running", "[v32] 영상을 받아 오는 중…")
-    src, work, info, N = h29.fetch_source(proj, tmp)
-    sw.mark("dl_cnt")
+    src, work, info, N = fetch_source_fast(proj, tmp, sw)
     cfr = (work != src)
     if cfr:
         with open(work, "rb") as f:
@@ -442,9 +597,9 @@ def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500):
             f.write(tmp_download(pid, f"seg_{k}.mp4"))
         counts[k] = h29.frame_count(seg_paths[k])
     if stream:
-        t_wait = 0.0
         pending = set(range(parts))
         deadline = time.time() + wait_s
+        t_all_seen = None
         with ThreadPoolExecutor(max_workers=4) as ex:
             futs = {}
             while (pending or futs) and time.time() < deadline:
@@ -452,6 +607,8 @@ def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500):
                     if _seg_exists(pid, f"seg_{k}.mp4"):
                         futs[k] = ex.submit(_dl_one, k)
                         pending.discard(k)
+                if not pending and t_all_seen is None:
+                    t_all_seen = time.time()
                 for k, fu in list(futs.items()):
                     if fu.done():
                         fu.result()
@@ -460,6 +617,8 @@ def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500):
                     time.sleep(2)
         if pending:
             raise RuntimeError(f"[v32] 세그 대기 시간 초과: 미도착 {sorted(pending)}")
+        if t_all_seen is not None:
+            sw.t["dl_tail"] = round(time.time() - t_all_seen, 1)
         sw.mark("dl_stream")
     else:
         with ThreadPoolExecutor(max_workers=6) as ex:
@@ -491,20 +650,95 @@ def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500):
     if fin_n != N:
         raise RuntimeError(f"[v32] 최종 프레임 수 {fin_n} != N {N}")
     dest = f"{proj['user_id']}/wm_v32_{pid}.mp4"
-    url_out = h29.upload_clip(dest, outp)
-    sw.mark("up")
+    url_out, up_mode = upload_clip_fast(dest, outp, sw)
     sec = round(time.time() - t0)
     tms = dict(tms_in or {})
     tms["finish"] = sw.out()
     detail = {"url": url_out, "mode": plan.get("mode"), "tier": plan.get("tier"),
               "regions": [r["kind"] for r in plan["regions"]], "sec": sec,
-              "gpu": BACKEND_NAME, "ver": V32_VER, "segK": plan.get("segK"), "tms": tms}
+              "gpu": BACKEND_NAME, "ver": V32_VER, "segK": plan.get("segK"),
+              "up_mode": up_mode, "tms": tms}
     h29.set_proj(pid, "wm_done", detail)
     names = ["plan.json"] + [f"seg_{k}.mp4" for k in range(parts)] \
         + (["work.mp4"] if plan.get("cfr") else [])
     tmp_delete(pid, names)
     print("[v32] 완료", pid, json.dumps({**detail, "url": "(생략)"}, ensure_ascii=False))
-    return {"phase": "finish_v32", "ok": True, "sec": sec, "frames": fin_n, "tms": sw.out()}
+    return {"phase": "finish_v32", "ok": True, "sec": sec, "frames": fin_n,
+            "up_mode": up_mode, "tms": sw.out()}
+
+
+# ---------------- 업로드·다운로드 A/B 마이크로벤치 (Phase 1 항목 3·4·5·10) ----------------
+def upbench_v32(proj, tmp, inp):
+    """같은 파일(기준 원본, 약 102MB)로 기존 단일 PUT과 S3 멀티파트 조합을 직접 비교.
+    다운로드도 직렬 vs Range 병렬을 함께 계측. 테스트 객체는 끝나면 삭제."""
+    t_begin = time.time()
+    res = {"phase": "upbench_v32", "s3_enabled": _s3_client() is not None,
+           "s3_endpoint": _S3_CACHED.get("ep"), "dl": [], "up": []}
+    url = h29.signed_url(proj["source_path"], 7200)
+    f = os.path.join(tmp, "payload.mp4")
+    t = time.time(); h29.download_to(url, f)
+    res["dl"].append({"cfg": "serial", "s": round(time.time() - t, 1)})
+    res["size_mb"] = round(os.path.getsize(f) / 1e6, 1)
+    for conc in (4, 8, 16):
+        t = time.time(); download_to_par(url, f, conc=conc)
+        res["dl"].append({"cfg": f"par{conc}", "s": round(time.time() - t, 1)})
+    key = f"{proj['user_id']}/upbench_{int(t_begin)}.mp4"
+    matrix = inp.get("matrix") or [
+        ["put", 0, 0],
+        ["s3", 8, 2], ["s3", 8, 4], ["s3", 8, 8],
+        ["s3", 16, 2], ["s3", 16, 4], ["s3", 16, 8],
+        ["s3", 32, 4], ["s3", 32, 8],
+        ["s3", 64, 4], ["s3", 64, 8],
+        ["put", 0, 0],
+    ]
+    c = _s3_client()
+    for tag, pmb, conc in matrix:
+        if tag == "s3" and c is None:
+            continue
+        if time.time() - t_begin > 680:
+            res["truncated"] = True
+            break
+        t = time.time(); ok = True; err = ""
+        try:
+            if tag == "put":
+                h29.upload_clip(key, f)
+            else:
+                s3_upload("videos-clips", key, f, pmb, conc, client=c)
+        except Exception as e:
+            ok = False; err = f"{type(e).__name__}: {e}"[:200]
+        res["up"].append({"cfg": tag, "part_mb": pmb, "conc": conc,
+                          "s": round(time.time() - t, 1), "ok": ok, "err": err})
+    # 무결성 검증 1회: s3 업로드본 재다운로드 md5 == 로컬 md5
+    if c is not None and time.time() - t_begin < 640:
+        import hashlib, requests as rq
+        try:
+            s3_upload("videos-clips", key, f, 16, 8, client=c)
+            g = os.path.join(tmp, "verify.mp4")
+            r = rq.get(f"{h29.SB_URL}/storage/v1/object/videos-clips/{key}",
+                       headers=h29.sb_headers(), stream=True, timeout=600)
+            r.raise_for_status()
+            with open(g, "wb") as fo:
+                for ch in r.iter_content(1 << 20):
+                    fo.write(ch)
+            def _md5(fp):
+                m = hashlib.md5()
+                with open(fp, "rb") as fi:
+                    for ch in iter(lambda: fi.read(1 << 20), b""):
+                        m.update(ch)
+                return m.hexdigest()
+            res["checksum_ok"] = (_md5(f) == _md5(g))
+        except Exception as e:
+            res["checksum_ok"] = False
+            res["checksum_err"] = f"{type(e).__name__}: {e}"[:200]
+    try:
+        import requests as rq
+        rq.request("DELETE", f"{h29.SB_URL}/storage/v1/object/videos-clips",
+                   headers=h29.sb_headers({"Content-Type": "application/json"}),
+                   data=json.dumps({"prefixes": [key]}), timeout=60)
+    except Exception:
+        pass
+    res["elapsed_s"] = round(time.time() - t_begin, 1)
+    return res
 
 
 # ---------------- warm ----------------
@@ -537,6 +771,8 @@ def handler_v32(event):
         if phase == "finish_v32":
             return finish_v32(proj, tmp, t0, int(inp.get("parts") or 0), inp.get("tms"),
                               stream=bool(inp.get("stream")), wait_s=int(inp.get("wait_s") or 1500))
+        if phase == "upbench_v32":
+            return upbench_v32(proj, tmp, inp)
         return {"error": f"알 수 없는 phase: {phase}"}
     except Exception as e:
         traceback.print_exc()

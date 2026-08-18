@@ -45,7 +45,8 @@ for src, dst in _local_files:
 cpu_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
-    .pip_install("numpy==1.26.4", "opencv-python-headless==4.10.0.84", "requests")
+    .pip_install("numpy==1.26.4", "opencv-python-headless==4.10.0.84", "requests",
+                 "boto3==1.34.162")
     .env({"PYTHONUNBUFFERED": "1", "WM_BACKEND_NAME": "modal-v32",
           "WM_NPROC": "14"})
 )
@@ -53,6 +54,8 @@ for src, dst in _local_files:
     cpu_image = cpu_image.add_local_file(os.path.join(HERE, src), dst)
 
 _secrets = [modal.Secret.from_name("inbilab-supabase")]
+# S3 업로드 키는 finish 전용 시크릿으로만 주입 (범위 최소화 — 사장님 보안 원칙)
+_secrets_fin = _secrets + [modal.Secret.from_name("v32-staging-s3")]
 
 
 def _enter(app_dir="/app"):
@@ -90,7 +93,7 @@ def segment_v32_gpu(event: dict) -> dict:
 
 
 @app.function(image=cpu_image, cpu=8.0, memory=16384,
-              timeout=900, secrets=_secrets)
+              timeout=900, secrets=_secrets_fin)
 def finish_v32_cpu(event: dict) -> dict:
     _enter()
     t0 = time.time()
