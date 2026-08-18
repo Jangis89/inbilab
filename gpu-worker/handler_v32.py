@@ -500,6 +500,48 @@ def detect_box(frame_rgb, glyph_mask, conf_accept=0.6):
     return rect, conf, diag
 
 
+def _estimate_blend(frame_rgb, rect, gmd, hh, ww):
+    """박스 경계의 인접 얇은 띠(안 5px/밖 5px)로 (slope=1-α, intercept(3,)=α·C) 추정.
+    관측 = slope·bg + intercept 에서 경계 부근 bg 통계의 공간 정상성 가정:
+      slope = std(안쪽 띠)/std(바깥 띠), intercept = mean(안) - slope·mean(밖).
+    (픽셀쌍 회귀는 attenuation 편향으로 부적합 — 로컬 검증으로 확인)
+    open 경계(crop 가장자리)는 제외. 유효 경계 없으면 None."""
+    x0, y0, x1, y1 = rect
+    f = frame_rgb.astype(np.float32)
+    Ss, pairs = [], []
+
+    def _add(outer, inner, mask_in=None):
+        so = outer.reshape(-1, 3)
+        si = inner.reshape(-1, 3)
+        if mask_in is not None:
+            si = si[~mask_in.reshape(-1)]
+        if so.shape[0] < 300 or si.shape[0] < 300:
+            return
+        s = [float(si[:, c].std() / max(so[:, c].std(), 1.0)) for c in range(3)]
+        Ss.append(float(np.median(s)))
+        pairs.append((so, si))
+
+    if y0 >= 8:
+        m = gmd[y0 + 2:y0 + 7, x0 + 4:x1 - 4] if gmd is not None else None
+        _add(f[y0 - 6:y0 - 1, x0 + 4:x1 - 4], f[y0 + 2:y0 + 7, x0 + 4:x1 - 4], m)
+    if y1 <= hh - 8:
+        m = gmd[y1 - 7:y1 - 2, x0 + 4:x1 - 4] if gmd is not None else None
+        _add(f[y1 + 1:y1 + 6, x0 + 4:x1 - 4], f[y1 - 7:y1 - 2, x0 + 4:x1 - 4], m)
+    if x0 >= 8:
+        m = gmd[y0 + 4:y1 - 4, x0 + 2:x0 + 7] if gmd is not None else None
+        _add(f[y0 + 4:y1 - 4, x0 - 6:x0 - 1], f[y0 + 4:y1 - 4, x0 + 2:x0 + 7], m)
+    if x1 <= ww - 8:
+        m = gmd[y0 + 4:y1 - 4, x1 - 7:x1 - 2] if gmd is not None else None
+        _add(f[y0 + 4:y1 - 4, x1 + 1:x1 + 6], f[y0 + 4:y1 - 4, x1 - 7:x1 - 2], m)
+    if not Ss:
+        return None
+    s = float(np.clip(np.median(Ss), 0.05, 1.2))
+    tos = [[float(si[:, c].mean() - s * so[:, c].mean()) for c in range(3)]
+           for so, si in pairs]
+    t_vec = np.median(np.array(tos, np.float32), axis=0).astype(np.float32)
+    return s, t_vec
+
+
 def stable_boxes(rects_by_key, min_support=2):
     """키프레임별 박스 rect의 시간축 안정성: IoU>0.5 그룹(합집합 rect), 지지 키 반환."""
     def iou(a, b):
@@ -638,13 +680,14 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
         if keep:
             raw[i] = h29.rasterize(keep, ww, hh)
             masked += 1
-    # 박스형 자막 (Phase B v7): 확정 박스는 전부 AI 복원 마스크에 포함.
-    #  - un-blend(통계 보정)는 실전에서 보정력 부족으로 폐기 (run4 증거)
-    #  - 오탐 차단: 시간축 지지도 필터 — 이 세그의 글자 키 대비 지지 키가
-    #    max(3, 40%) 미만인 그룹은 기각 (비박스 영상 오탐은 지지 1~4로 낮음)
-    #  - rect는 +12px 팽창해 박스 테두리(borderw)까지 커버
+    # 박스형 자막 (Phase B v8):
+    #  - 반투명 박스(α≤0.75): 경계쌍 회귀로 (α, 박스색)을 정밀 추정해 역블렌딩(un-blend v2)
+    #    → 배경이 그대로 복원됨. AI는 글자만. (전체폭 밴드 AI 복원은 뭉개짐 — run5 증거)
+    #  - 불투명 박스(α>0.75): 배경 정보가 없어 역블렌딩 불가 → AI 복원 (+12px 테두리)
+    #  - 오탐 차단: 시간축 지지도 필터 — 지지 키 < max(3, 40%·masked) 그룹 기각
     box_stats = {"box_keys": 0, "box_conf_max": 0.0, "box_low_conf": 0,
                  "box_unblend": 0, "box_ai": 0, "box_rej": 0}
+    box_fixes = {}   # local frame idx -> [(rect, gain(3,), bias(3,))]
     if not kind.startswith("manual") and masked:
         rects_by_key = {}
         for i in keys:
@@ -657,18 +700,53 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
             elif 0.4 <= conf < 0.6:
                 box_stats["box_low_conf"] += 1     # review-required 신호
         need = max(3, int(round(0.4 * masked)))
+        ring2 = 6 + (max(1, int(key_step)) - 1 + 1) // 2
         for grect, gkeys in stable_boxes(rects_by_key):
             if len(gkeys) < need:
                 box_stats["box_rej"] += 1
                 continue
             box_stats["box_keys"] += len(gkeys)
-            box_stats["box_ai"] += 1
-            x0, y0, x1, y1 = grect
-            x0 = max(0, x0 - 12); y0 = max(0, y0 - 12)
-            x1 = min(ww, x1 + 12); y1 = min(hh, y1 + 12)
+            # 그룹의 각 키에서 (slope=1-α, intercept=α·C) 추정 → 중앙값으로 합의
+            ests = []
             for i in gkeys:
-                raw[i][y0:y1, x0:x1] = 255
+                gmd_i = cv2.dilate((raw[i] > 0).astype(np.uint8),
+                                   np.ones((9, 9), np.uint8)) > 0
+                e = _estimate_blend(frames_local[i], rects_by_key[i], gmd_i, hh, ww)
+                if e is not None:
+                    ests.append(e)
+            s_med = float(np.median([e[0] for e in ests])) if ests else 0.0
+            if not ests or s_med < 0.25:
+                # 불투명(또는 추정 실패): AI 복원 경로
+                box_stats["box_ai"] += 1
+                x0, y0, x1, y1 = grect
+                x0 = max(0, x0 - 12); y0 = max(0, y0 - 12)
+                x1 = min(ww, x1 + 12); y1 = min(hh, y1 + 12)
+                for i in gkeys:
+                    raw[i][y0:y1, x0:x1] = 255
+                continue
+            # 반투명: bg = (obs - t)/s → gain=1/s, bias=-t/s
+            box_stats["box_unblend"] += 1
+            t_med = np.median(np.stack([e[1] for e in ests]), axis=0)
+            gain = np.full(3, 1.0 / s_med, np.float32)
+            bias = (-t_med / s_med).astype(np.float32)
+            gk = sorted(gkeys)
+            for i in range(n):
+                near = min(gk, key=lambda k: abs(k - i))
+                if abs(near - i) > ring2:
+                    continue
+                box_fixes.setdefault(i, []).append(
+                    (tuple(int(v) for v in rects_by_key[near]), gain, bias))
+        # un-blend를 AI 입력에 선적용 (AI는 복원된 배경 위 글자만 지움)
+        for i, fixes in box_fixes.items():
+            fr = frames_local[i]
+            if not fr.flags.writeable:
+                fr = fr.copy()
+                frames_local[i] = fr
+            for (x0, y0, x1, y1), gain, bias in fixes:
+                sub = fr[y0:y1, x0:x1].astype(np.float32) * gain + bias
+                fr[y0:y1, x0:x1] = np.clip(sub, 0, 255).astype(np.uint8)
     _seg_masks_for_region._last_box_stats = box_stats
+    _seg_masks_for_region._last_box_fixes = box_fixes
     # ±(6 + ceil((key_step-1)/2)) union — 키 간격의 절반만 넓혀 커버리지 보존 + 과도한 번짐 방지
     ks = max(1, int(key_step))
     ring = 6 + (ks - 1 + 1) // 2
@@ -709,6 +787,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                 "precise_keyframes": 0, "regions_active": 0}
     seg_rest = {}     # ri -> {global_i: 복원 crop}
     local_masks = {}  # ri -> 로컬 마스크 목록 (index = global_i - E0)
+    box_fix_by_region = {}  # ri -> {local_i: [(rect, gain, bias)]} (반투명 un-blend v2)
     t_dec = t_mask = t_ai = 0.0
     nl = E1 - E0
     for ri, reg in enumerate(plan["regions"]):
@@ -726,8 +805,12 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
             counters["box_low_conf"] = counters.get("box_low_conf", 0) + bs["box_low_conf"]
             counters["box_conf_max"] = max(counters.get("box_conf_max", 0.0),
                                            bs["box_conf_max"])
+            counters["box_unblend"] = counters.get("box_unblend", 0) + bs.get("box_unblend", 0)
             counters["box_ai"] = counters.get("box_ai", 0) + bs.get("box_ai", 0)
             counters["box_rej"] = counters.get("box_rej", 0) + bs.get("box_rej", 0)
+        bf = getattr(_seg_masks_for_region, "_last_box_fixes", None) or {}
+        if bf:
+            box_fix_by_region[ri] = bf
         if masked == 0 or not any(m.any() for m in masks):
             del frames_local
             continue
@@ -740,6 +823,8 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
         t2 = dict(tier)
         if reg["kind"].startswith("manual") and plan.get("tier") != "fast":
             t2["scale"] = 1.0
+        if bs and bs.get("box_ai"):
+            t2["scale"] = 1.0     # 불투명 박스 AI 복원은 원해상도로 (뭉개짐 방지)
         rest = {}
         for c in chunks:
             # 이 세그먼트 소유 프레임과 무관한 조각은 건너뜀
@@ -769,6 +854,30 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
     i = F0
     for fr in v31.stream_frames_range(work, W, H, F0, F1, fps):
         frame = fr.copy()
+        # 반투명 박스 un-blend v2 (AI 결과 덮기 전에 배경 역블렌딩)
+        for ri, fixes in box_fix_by_region.items():
+            fl = fixes.get(i - E0)
+            if not fl:
+                continue
+            reg = plan["regions"][ri]
+            for (x0, y0, x1, y1), gain, bias in fl:
+                gy0, gy1 = reg["y"] + y0, reg["y"] + y1
+                gx0, gx1 = reg["x"] + x0, reg["x"] + x1
+                sub = frame[gy0:gy1, gx0:gx1].astype(np.float32) * gain + bias
+                fixed = np.clip(sub, 0, 255).astype(np.uint8)
+                fh, fw = fixed.shape[:2]
+                if fh > 20 and fw > 20:
+                    a = np.ones((fh, fw), np.float32)
+                    e = 8
+                    ramp = np.linspace(0, 1, e, dtype=np.float32)
+                    a[:e] *= ramp[:, None]; a[-e:] *= ramp[::-1][:, None]
+                    a[:, :e] *= ramp[None, :]; a[:, -e:] *= ramp[::-1][None, :]
+                    orig = frame[gy0:gy1, gx0:gx1].astype(np.float32)
+                    frame[gy0:gy1, gx0:gx1] = np.clip(
+                        orig * (1 - a[..., None]) + fixed * a[..., None], 0, 255
+                    ).astype(np.uint8)
+                else:
+                    frame[gy0:gy1, gx0:gx1] = fixed
         for ri, rest in seg_rest.items():
             if i not in rest: continue
             reg = plan["regions"][ri]
