@@ -54,12 +54,19 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install deps
-        timeout-minutes: 10
+        timeout-minutes: 12
         run: |
           if ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo timeout 240 apt-get update -qq -o Acquire::Retries=3 || true
-            sudo timeout 240 apt-get install -y -qq ffmpeg
+            (sudo timeout 200 apt-get update -qq -o Acquire::Retries=2 \
+             && sudo timeout 200 apt-get install -y -qq ffmpeg) || {
+              echo "apt 실패 — ffmpeg 정적 빌드(BtbN 공식) 폴백"
+              curl -sL --retry 3 -o /tmp/ff.tar.xz \
+                https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+              tar -xf /tmp/ff.tar.xz -C /tmp
+              sudo cp /tmp/ffmpeg-*/bin/ffmpeg /tmp/ffmpeg-*/bin/ffprobe /usr/local/bin/
+            }
           fi
+          ffmpeg -version | head -1
           pip install -q modal numpy==1.26.4 opencv-python-headless==4.10.0.84 requests
       - name: Deploy V32 staging app
         if: ${{ github.event.inputs.action == 'deploy' }}
