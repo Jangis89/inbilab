@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "deploy | bench | verify | clips"
+        description: "deploy | bench | verify | clips | golden | goldenrun | queue"
         required: true
         default: "deploy"
       ref:
@@ -33,6 +33,14 @@ on:
         description: "bench 라벨"
         required: false
         default: "v32"
+      hedge:
+        description: "지연 hedge 초 (0=끔)"
+        required: false
+        default: "0"
+      jobs:
+        description: "queue 부하검사 동시 작업 수"
+        required: false
+        default: "3"
 
 jobs:
   v32:
@@ -58,7 +66,9 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: modal deploy gpu-worker/modal_app_v32.py
+        run: |
+          modal secret create v32-staging-s3 SUPABASE_S3_ACCESS_KEY_ID=PLACEHOLDER SUPABASE_S3_SECRET_ACCESS_KEY=PLACEHOLDER SUPABASE_S3_REGION=ap-northeast-2 2>/dev/null || true
+          modal deploy gpu-worker/modal_app_v32.py
       - name: Benchmark
         if: ${{ github.event.inputs.action == 'bench' }}
         env:
@@ -72,7 +82,59 @@ jobs:
             --k "${{ github.event.inputs.k }}" \
             --warm "${{ github.event.inputs.warm }}" \
             --key_step "${{ github.event.inputs.key_step }}" \
+            --hedge "${{ github.event.inputs.hedge }}" \
             --label "${{ github.event.inputs.label }}"
+      - name: Queue load test
+        if: ${{ github.event.inputs.action == 'queue' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: |
+          python gpu-worker/scripts/queue_load_v32.py \
+            --jobs "${{ github.event.inputs.jobs }}" \
+            --k "${{ github.event.inputs.k }}" \
+            --warm "${{ github.event.inputs.warm }}" \
+            --key_step "${{ github.event.inputs.key_step }}" \
+            --label "${{ github.event.inputs.label }}"
+      - name: Upload queue artifacts
+        if: ${{ always() && github.event.inputs.action == 'queue' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: queue-v32-${{ github.run_id }}
+          path: |
+            QUEUE_LOAD_REPORT.json
+            QUEUE_LOAD_REPORT.md
+          if-no-files-found: ignore
+      - name: Make golden videos
+        if: ${{ github.event.inputs.action == 'golden' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: |
+          sudo timeout 240 apt-get install -y -qq fonts-nanum fonts-dejavu-core || true
+          python gpu-worker/scripts/make_golden_v32.py
+      - name: Run golden quality
+        if: ${{ github.event.inputs.action == 'goldenrun' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: |
+          pip install -q lpips torch --index-url https://download.pytorch.org/whl/cpu || echo "lpips 설치 실패 — 지표 생략"
+          python gpu-worker/scripts/golden_run_v32.py
+      - name: Upload golden artifacts
+        if: ${{ always() && (github.event.inputs.action == 'golden' || github.event.inputs.action == 'goldenrun') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-v32-${{ github.run_id }}
+          path: |
+            GOLDEN_MANIFEST.json
+            GOLDEN_QUALITY_REPORT.json
+            GOLDEN_QUALITY_REPORT.md
+          if-no-files-found: ignore
       - name: Verify output quality
         if: ${{ github.event.inputs.action == 'verify' }}
         env:
