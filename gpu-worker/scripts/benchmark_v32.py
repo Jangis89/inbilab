@@ -125,7 +125,7 @@ def clean_tmp():
                          data=json.dumps({"prefixes": names}), timeout=60)
 
 
-def one_run(k, warm_n, key_step, run_id):
+def one_run(k, warm_n, key_step, run_id, hedge_s=0):
     scan_fn = modal.Function.from_name(APP, "scan_v32_cpu")
     seg_fn = modal.Function.from_name(APP, "segment_v32_gpu")
     fin_fn = modal.Function.from_name(APP, "finish_v32_cpu")
@@ -163,23 +163,43 @@ def one_run(k, warm_n, key_step, run_id):
             warm_results.append({"warm": False, "error": str(e)[:120]})
     rec["warm_results"] = warm_results
     # 완료 폴링 — 세그별 done 절대시각 기록 (worker 배정·실행 분리 계측)
+    # hedge_s>0: 발사 후 hedge_s 지나도 미완료인 세그는 복제 발사, 먼저 온 유효 결과 채택
     seg_out = [None] * k
     done_at = [None] * k
+    hedge_calls = {}
+    hedge_used = []
     deadline = time.time() + 1700
     pending = set(range(k))
     while pending and time.time() < deadline:
         for p in list(pending):
-            try:
-                o = segs[p].get(timeout=0)
-            except TimeoutError:
+            src_calls = [segs[p]] + ([hedge_calls[p]] if p in hedge_calls else [])
+            got = None
+            for ci, call in enumerate(src_calls):
+                try:
+                    o = call.get(timeout=0)
+                except TimeoutError:
+                    continue
+                except Exception as e:
+                    o = {"error": f"segment {p}: {e}"}
+                if o.get("error") and ci == 0 and p in hedge_calls:
+                    continue  # 원본 실패 — hedge 결과를 기다림
+                got = o
+                if ci == 1:
+                    o["hedge_winner"] = True
+                break
+            if got is None:
+                if hedge_s and p not in hedge_calls                         and time.time() - dispatch_at[p] > hedge_s:
+                    hedge_calls[p] = seg_fn.spawn(
+                        {"input": {"project_id": BENCH_PID, "phase": "segment_v32",
+                                   "part": p, "key_step": key_step}})
+                    hedge_used.append(p)
                 continue
-            except Exception as e:
-                o = {"error": f"segment {p}: {e}"}
-            seg_out[p] = o
+            seg_out[p] = got
             done_at[p] = time.time()
             pending.discard(p)
         if pending:
             time.sleep(2)
+    rec["hedged_parts"] = hedge_used
     ok = True
     for p in range(k):
         if seg_out[p] is None:
@@ -209,6 +229,16 @@ def one_run(k, warm_n, key_step, run_id):
     return rec
 
 
+def upbench_run(label, out_path):
+    fin_fn = modal.Function.from_name(APP, "finish_v32_cpu")
+    out = fin_fn.remote({"input": {"project_id": BENCH_PID, "phase": "upbench_v32"}})
+    out["label"] = label
+    print("[UPBENCH]", json.dumps(out, ensure_ascii=False))
+    json.dump([out], open(out_path, "w"), ensure_ascii=False, indent=1)
+    if out.get("error"):
+        sys.exit(1)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=1)
@@ -216,17 +246,21 @@ def main():
     ap.add_argument("--warm", type=int, default=5)
     ap.add_argument("--key_step", type=int, default=5)
     ap.add_argument("--label", default="v32")
+    ap.add_argument("--hedge", type=int, default=0)
     ap.add_argument("--out", default="BENCHMARK_V32.json")
     a = ap.parse_args()
 
     ensure_source()
     ensure_bench_project()
+    if a.label.startswith("upbench"):
+        upbench_run(a.label, a.out)
+        return
     records = []
     for i in range(a.runs):
         clean_tmp()
         rid = f"{a.label}-k{a.k}-ks{a.key_step}-{i}-{uuid.uuid4().hex[:6]}"
         print(f"\n===== run {i + 1}/{a.runs} ({rid}) =====")
-        rec = one_run(a.k, a.warm, a.key_step, rid)
+        rec = one_run(a.k, a.warm, a.key_step, rid, hedge_s=a.hedge)
         rec["label"] = a.label
         records.append(rec)
         print("[REC]", json.dumps(rec, ensure_ascii=False, default=str))
