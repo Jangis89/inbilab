@@ -607,10 +607,15 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
 
 # ---------------- 단계: finish (CPU) ----------------
 def _seg_exists(pid, name):
+    """세그 도착 확인 — 일시적 네트워크 오류는 '아직 없음'으로 간주 (다음 폴링에 재시도).
+    (A3 실험에서 ReadTimeout 1회가 finish 전체를 죽이는 문제 발견 → 방어)"""
     import requests as _rq
-    r = _rq.get(f"{h29.SB_URL}/storage/v1/object/videos-clips/{PFX}/{pid}/{name}",
-                headers=h29.sb_headers({"Range": "bytes=0-0"}), timeout=20)
-    return r.status_code in (200, 206)
+    try:
+        r = _rq.get(f"{h29.SB_URL}/storage/v1/object/videos-clips/{PFX}/{pid}/{name}",
+                    headers=h29.sb_headers({"Range": "bytes=0-0"}), timeout=20)
+        return r.status_code in (200, 206)
+    except Exception:
+        return False
 
 
 def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500):
