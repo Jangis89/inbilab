@@ -371,10 +371,15 @@ def scan_v32(proj, tmp, scan_step=12, seg_k=10):
                     by0 = min(v[1] for v in votes) + reg["y"]
                     bx1 = max(v[2] for v in votes) + reg["x"]
                     by1 = max(v[3] for v in votes) + reg["y"]
-                    nx = max(0, min(reg["x"], bx0 - 8))
-                    ny = max(0, min(reg["y"], by0 - 8))
-                    nx1 = min(W, max(reg["x"] + reg["w"], bx1 + 8))
-                    ny1 = min(H, max(reg["y"] + reg["h"], by1 + 8))
+                    # rect가 crop 경계에 닿아 있으면 실제 경계는 밖 → 여유를 크게
+                    mt = 140 if any(v[1] <= 2 for v in votes) else 8
+                    mb = 140 if any(v[3] >= reg["h"] - 2 for v in votes) else 8
+                    ml = 140 if any(v[0] <= 2 for v in votes) else 8
+                    mr = 140 if any(v[2] >= reg["w"] - 2 for v in votes) else 8
+                    nx = max(0, min(reg["x"], bx0 - ml))
+                    ny = max(0, min(reg["y"], by0 - mt))
+                    nx1 = min(W, max(reg["x"] + reg["w"], bx1 + mr))
+                    ny1 = min(H, max(reg["y"] + reg["h"], by1 + mb))
                     nw = h29.floor16(nx1 - nx) if hasattr(h29, "floor16") else (nx1 - nx) // 16 * 16
                     nh = h29.floor16(ny1 - ny) if hasattr(h29, "floor16") else (ny1 - ny) // 16 * 16
                     if nw >= reg["w"] and nh >= reg["h"] and nw > 0 and nh > 0:
@@ -431,8 +436,21 @@ def detect_box(frame_rgb, glyph_mask, conf_accept=0.6):
     thr = max(8.0, float(np.percentile(prof, 90)) * 0.8)
     up = [y for y in range(max(0, gy0 - 220), gy0) if prof[y] > thr]
     dn = [y for y in range(gy1, min(h, gy1 + 220)) if prof[y] > thr]
-    if not up or not dn:
+    # 경계 개방: 탐색 범위가 crop 가장자리에 닿았는데 edge가 없으면
+    # 박스가 crop 밖으로 이어진 것 → crop 가장자리를 경계로 간주 (한쪽은 실제 edge 필수)
+    top_open = (gy0 - 220) <= 0
+    bot_open = (gy1 + 220) >= h
+    open_edge = False
+    if not up and not dn:
         return None, 0.0, {"why": "no_h_edges"}
+    if not up:
+        if not top_open:
+            return None, 0.0, {"why": "no_h_edges"}
+        up = [0]; open_edge = True
+    if not dn:
+        if not bot_open:
+            return None, 0.0, {"why": "no_h_edges"}
+        dn = [h - 1]; open_edge = True
     by0, by1 = max(up), min(dn) + 1
     band = gray[by0:by1]
     k = 5
@@ -441,10 +459,11 @@ def detect_box(frame_rgb, glyph_mask, conf_accept=0.6):
     for x in range(k, w - k):
         colp[x] = abs(cb[x:x + k].mean() - cb[x - k:x].mean())
     cthr = max(8.0, float(np.percentile(colp, 90)) * 0.8)
-    lf = [x for x in range(max(0, gx0 - 260), gx0) if colp[x] > cthr]
-    rt = [x for x in range(gx1, min(w, gx1 + 260)) if colp[x] > cthr]
-    bx0 = max(lf) if lf else (0 if gx0 < 260 else max(0, gx0 - 24))
-    bx1 = (min(rt) + 1) if rt else (w if w - gx1 < 260 else min(w, gx1 + 24))
+    # 좌우는 전 구간 탐색 — edge가 전혀 없으면 박스가 전체폭(crop 밖까지)인 것
+    lf = [x for x in range(0, gx0) if colp[x] > cthr]
+    rt = [x for x in range(gx1, w) if colp[x] > cthr]
+    bx0 = max(lf) if lf else 0
+    bx1 = (min(rt) + 1) if rt else w
     bx0 = min(bx0, max(0, gx0 - 4)); bx1 = max(bx1, min(w, gx1 + 4))
     by0 = min(by0, max(0, gy0 - 4)); by1 = max(by1, min(h, gy1 + 4))
     rect = (int(bx0), int(by0), int(bx1), int(by1))
@@ -471,8 +490,10 @@ def detect_box(frame_rgb, glyph_mask, conf_accept=0.6):
     if rect_area <= 25 * max(1, glyph_area): conf += 0.10
     if shift >= 8 or damp: conf += 0.25
     else: conf = min(conf, 0.40)
+    if open_edge: conf -= 0.05
     diag = {"rect": rect, "conf": round(conf, 2), "shift": round(shift, 1),
-            "inbox": round(inbox, 3), "area_ratio": round(area_ratio, 3)}
+            "inbox": round(inbox, 3), "area_ratio": round(area_ratio, 3),
+            "open_edge": open_edge}
     if conf < conf_accept or inbox < 0.90 or area_ratio > 0.85:
         return None, conf, dict(diag, why="low_conf")
     diag["std_in"] = round(float(inner_vals.std()), 1)
@@ -617,14 +638,15 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
         if keep:
             raw[i] = h29.rasterize(keep, ww, hh)
             masked += 1
-    # 박스형 자막 (Phase B v5): 반투명 박스는 un-blend(통계 보정, AI는 글자만),
-    # 불투명 박스만 AI 복원 마스크에 포함 — 복원 면적 폭증·타임아웃 방지
+    # 박스형 자막 (Phase B v7): 확정 박스는 전부 AI 복원 마스크에 포함.
+    #  - un-blend(통계 보정)는 실전에서 보정력 부족으로 폐기 (run4 증거)
+    #  - 오탐 차단: 시간축 지지도 필터 — 이 세그의 글자 키 대비 지지 키가
+    #    max(3, 40%) 미만인 그룹은 기각 (비박스 영상 오탐은 지지 1~4로 낮음)
+    #  - rect는 +12px 팽창해 박스 테두리(borderw)까지 커버
     box_stats = {"box_keys": 0, "box_conf_max": 0.0, "box_low_conf": 0,
-                 "box_unblend": 0, "box_ai": 0}
-    box_fixes = {}   # frame index -> [(rect, gain(3,), bias(3,)), ...]
+                 "box_unblend": 0, "box_ai": 0, "box_rej": 0}
     if not kind.startswith("manual") and masked:
         rects_by_key = {}
-        diag_by_key = {}
         for i in keys:
             if raw[i] is None:
                 continue
@@ -632,67 +654,21 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
             box_stats["box_conf_max"] = max(box_stats["box_conf_max"], round(conf, 2))
             if rect is not None:
                 rects_by_key[i] = rect
-                diag_by_key[i] = _bd
             elif 0.4 <= conf < 0.6:
                 box_stats["box_low_conf"] += 1     # review-required 신호
-        ring2 = 6 + (max(1, int(key_step)) - 1 + 1) // 2
+        need = max(3, int(round(0.4 * masked)))
         for grect, gkeys in stable_boxes(rects_by_key):
-            std_ins = [diag_by_key[i].get("std_in", 0.0) for i in gkeys if i in diag_by_key]
-            semi = (sorted(std_ins)[len(std_ins) // 2] if std_ins else 0.0) >= 6.0
-            box_stats["box_keys"] += len(gkeys)
-            if not semi:
-                # 불투명 박스: 배경 정보 없음 → AI 복원 (글자와 함께)
-                box_stats["box_ai"] += 1
-                x0, y0, x1, y1 = grect
-                for i in gkeys:
-                    raw[i][y0:y1, x0:x1] = 255
+            if len(gkeys) < need:
+                box_stats["box_rej"] += 1
                 continue
-            # 반투명 박스: 활성 프레임마다 가장 가까운 키의 rect로 un-blend 보정
-            box_stats["box_unblend"] += 1
-            gk = sorted(gkeys)
-            for i in range(n):
-                near = min(gk, key=lambda k: abs(k - i))
-                if abs(near - i) > ring2:
-                    continue
-                x0, y0, x1, y1 = rects_by_key[near]
-                fr = frames_local[i]
-                gmd_i = None
-                if raw[i] is not None:
-                    gmd_i = cv2.dilate((raw[i] > 0).astype(np.uint8),
-                                       np.ones((7, 7), np.uint8)) > 0
-                inner = fr[y0:y1, x0:x1].astype(np.float32)
-                if gmd_i is not None:
-                    im = ~gmd_i[y0:y1, x0:x1]
-                else:
-                    im = np.ones(inner.shape[:2], bool)
-                pad = 14
-                ry0, ry1 = max(0, y0 - pad), min(hh, y1 + pad)
-                rx0, rx1 = max(0, x0 - pad), min(ww, x1 + pad)
-                ringm = np.zeros((hh, ww), bool)
-                ringm[ry0:ry1, rx0:rx1] = True
-                ringm[y0:y1, x0:x1] = False
-                if not ringm.any() or im.sum() < 50:
-                    continue
-                outv = fr[ringm].astype(np.float32)
-                inv = inner[im]
-                gain = np.clip(outv.std(axis=0) / np.maximum(inv.std(axis=0), 1.0),
-                               0.5, 4.0)
-                bias = outv.mean(axis=0) - inv.mean(axis=0) * gain
-                box_fixes.setdefault(i, []).append(
-                    ((int(x0), int(y0), int(x1), int(y1)),
-                     gain.astype(np.float32), bias.astype(np.float32)))
-        # un-blend를 AI 입력에도 선적용 (AI가 보정된 배경 기준으로 글자 복원)
-        # read_crop_range 결과는 읽기전용일 수 있음 → 쓰기 가능 복사본으로 교체
-        for i, fixes in box_fixes.items():
-            fr = frames_local[i]
-            if not fr.flags.writeable:
-                fr = fr.copy()
-                frames_local[i] = fr
-            for (x0, y0, x1, y1), gain, bias in fixes:
-                sub = fr[y0:y1, x0:x1].astype(np.float32) * gain + bias
-                fr[y0:y1, x0:x1] = np.clip(sub, 0, 255).astype(np.uint8)
+            box_stats["box_keys"] += len(gkeys)
+            box_stats["box_ai"] += 1
+            x0, y0, x1, y1 = grect
+            x0 = max(0, x0 - 12); y0 = max(0, y0 - 12)
+            x1 = min(ww, x1 + 12); y1 = min(hh, y1 + 12)
+            for i in gkeys:
+                raw[i][y0:y1, x0:x1] = 255
     _seg_masks_for_region._last_box_stats = box_stats
-    _seg_masks_for_region._last_box_fixes = box_fixes
     # ±(6 + ceil((key_step-1)/2)) union — 키 간격의 절반만 넓혀 커버리지 보존 + 과도한 번짐 방지
     ks = max(1, int(key_step))
     ring = 6 + (ks - 1 + 1) // 2
@@ -733,7 +709,6 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                 "precise_keyframes": 0, "regions_active": 0}
     seg_rest = {}     # ri -> {global_i: 복원 crop}
     local_masks = {}  # ri -> 로컬 마스크 목록 (index = global_i - E0)
-    box_fix_by_region = {}  # ri -> {local_i: [(rect, gain, bias)]} (반투명 박스 un-blend)
     t_dec = t_mask = t_ai = 0.0
     nl = E1 - E0
     for ri, reg in enumerate(plan["regions"]):
@@ -751,11 +726,8 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
             counters["box_low_conf"] = counters.get("box_low_conf", 0) + bs["box_low_conf"]
             counters["box_conf_max"] = max(counters.get("box_conf_max", 0.0),
                                            bs["box_conf_max"])
-            counters["box_unblend"] = counters.get("box_unblend", 0) + bs.get("box_unblend", 0)
             counters["box_ai"] = counters.get("box_ai", 0) + bs.get("box_ai", 0)
-        bf = getattr(_seg_masks_for_region, "_last_box_fixes", None) or {}
-        if bf:
-            box_fix_by_region[ri] = bf
+            counters["box_rej"] = counters.get("box_rej", 0) + bs.get("box_rej", 0)
         if masked == 0 or not any(m.any() for m in masks):
             del frames_local
             continue
@@ -797,31 +769,6 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
     i = F0
     for fr in v31.stream_frames_range(work, W, H, F0, F1, fps):
         frame = fr.copy()
-        # 반투명 박스 un-blend (AI 결과 덮기 전에 배경 밝기·대비 복원)
-        for ri, fixes in box_fix_by_region.items():
-            fl = fixes.get(i - E0)
-            if not fl:
-                continue
-            reg = plan["regions"][ri]
-            for (x0, y0, x1, y1), gain, bias in fl:
-                gy0, gy1 = reg["y"] + y0, reg["y"] + y1
-                gx0, gx1 = reg["x"] + x0, reg["x"] + x1
-                sub = frame[gy0:gy1, gx0:gx1].astype(np.float32) * gain + bias
-                fixed = np.clip(sub, 0, 255).astype(np.uint8)
-                # 경계 feather 8px — 이음새 방지
-                fh, fw = fixed.shape[:2]
-                if fh > 20 and fw > 20:
-                    a = np.ones((fh, fw), np.float32)
-                    e = 8
-                    ramp = np.linspace(0, 1, e, dtype=np.float32)
-                    a[:e] *= ramp[:, None]; a[-e:] *= ramp[::-1][:, None]
-                    a[:, :e] *= ramp[None, :]; a[:, -e:] *= ramp[::-1][None, :]
-                    orig = frame[gy0:gy1, gx0:gx1].astype(np.float32)
-                    frame[gy0:gy1, gx0:gx1] = np.clip(
-                        orig * (1 - a[..., None]) + fixed * a[..., None], 0, 255
-                    ).astype(np.uint8)
-                else:
-                    frame[gy0:gy1, gx0:gx1] = fixed
         for ri, rest in seg_rest.items():
             if i not in rest: continue
             reg = plan["regions"][ri]
