@@ -84,7 +84,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
         run: |
-          python gpu-worker/scripts/benchmark_v32.py \
+          python -u gpu-worker/scripts/benchmark_v32.py \
             --runs "${{ github.event.inputs.runs }}" \
             --k "${{ github.event.inputs.k }}" \
             --warm "${{ github.event.inputs.warm }}" \
@@ -99,7 +99,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
         run: |
-          python gpu-worker/scripts/queue_load_v32.py \
+          python -u gpu-worker/scripts/queue_load_v32.py \
             --jobs "${{ github.event.inputs.jobs }}" \
             --k "${{ github.event.inputs.k }}" \
             --warm "${{ github.event.inputs.warm }}" \
@@ -138,7 +138,7 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
-        run: python gpu-worker/scripts/queue_staging_test_v32.py
+        run: python -u gpu-worker/scripts/queue_staging_test_v32.py
       - name: Upload queue E2E artifacts
         if: ${{ always() && github.event.inputs.action == 'queuee2e' }}
         uses: actions/upload-artifact@v4
@@ -153,7 +153,7 @@ jobs:
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
         run: |
           sudo timeout 240 apt-get install -y -qq fonts-nanum fonts-dejavu-core || true
-          python gpu-worker/scripts/make_golden_v32.py
+          python -u gpu-worker/scripts/make_golden_v32.py
       - name: Run golden quality
         if: ${{ github.event.inputs.action == 'goldenrun' }}
         env:
@@ -164,7 +164,7 @@ jobs:
         run: |
           pip install -q lpips torch --index-url https://download.pytorch.org/whl/cpu || echo "lpips 설치 실패 — 지표 생략"
           if [[ "${{ github.event.inputs.label }}" == *analyze* ]]; then export GOLDEN_SKIP_RUN=1; fi
-          python gpu-worker/scripts/golden_run_v32.py
+          python -u gpu-worker/scripts/golden_run_v32.py
       - name: Upload golden artifacts
         if: ${{ always() && (github.event.inputs.action == 'golden' || github.event.inputs.action == 'goldenrun') }}
         uses: actions/upload-artifact@v4
@@ -182,14 +182,14 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
           V32_K: ${{ github.event.inputs.k }}
-        run: python gpu-worker/scripts/verify_v32.py
+        run: python -u gpu-worker/scripts/verify_v32.py
       - name: Make review clips
         if: ${{ github.event.inputs.action == 'clips' }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
           V32_K: ${{ github.event.inputs.k }}
-        run: python gpu-worker/scripts/make_clips_v32.py
+        run: python -u gpu-worker/scripts/make_clips_v32.py
       - name: Upload clips
         if: ${{ github.event.inputs.action == 'clips' }}
         uses: actions/upload-artifact@v4
