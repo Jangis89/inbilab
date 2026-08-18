@@ -419,22 +419,52 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
 
 
 # ---------------- 단계: finish (CPU) ----------------
-def finish_v32(proj, tmp, t0, parts, tms_in=None):
+def _seg_exists(pid, name):
+    import requests as _rq
+    r = _rq.get(f"{h29.SB_URL}/storage/v1/object/videos-clips/{PFX}/{pid}/{name}",
+                headers=h29.sb_headers({"Range": "bytes=0-0"}), timeout=20)
+    return r.status_code in (200, 206)
+
+
+def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500):
+    """stream=True: 세그먼트가 저장소에 '도착하는 대로' 내려받고 검증까지 겹쳐 수행
+    (마지막 세그 완료 시점에는 concat+mux+업로드만 남음 — Phase 1 스트리밍 마무리)."""
     pid = proj["id"]
     sw = SW()
     plan = json.loads(tmp_download(pid, "plan.json").decode())
     N, fps = plan["N"], plan["fps"]
     h29.set_proj(pid, "wm_running", "[v32] 마무리 중…")
     from concurrent.futures import ThreadPoolExecutor
-    def _dl_seg(k):
-        p = os.path.join(tmp, f"seg_{k}.mp4")
-        with open(p, "wb") as f: f.write(tmp_download(pid, f"seg_{k}.mp4"))
-        return p
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        seg_paths = list(ex.map(_dl_seg, range(parts)))
-    sw.mark("dl")
-    with ThreadPoolExecutor(max_workers=min(8, max(1, parts))) as ex:
-        counts = list(ex.map(h29.frame_count, seg_paths))
+    seg_paths = [os.path.join(tmp, f"seg_{k}.mp4") for k in range(parts)]
+    counts = [None] * parts
+    def _dl_one(k):
+        with open(seg_paths[k], "wb") as f:
+            f.write(tmp_download(pid, f"seg_{k}.mp4"))
+        counts[k] = h29.frame_count(seg_paths[k])
+    if stream:
+        t_wait = 0.0
+        pending = set(range(parts))
+        deadline = time.time() + wait_s
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futs = {}
+            while (pending or futs) and time.time() < deadline:
+                for k in list(pending):
+                    if _seg_exists(pid, f"seg_{k}.mp4"):
+                        futs[k] = ex.submit(_dl_one, k)
+                        pending.discard(k)
+                for k, fu in list(futs.items()):
+                    if fu.done():
+                        fu.result()
+                        del futs[k]
+                if pending or futs:
+                    time.sleep(2)
+        if pending:
+            raise RuntimeError(f"[v32] 세그 대기 시간 초과: 미도착 {sorted(pending)}")
+        sw.mark("dl_stream")
+    else:
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            list(ex.map(_dl_one, range(parts)))
+        sw.mark("dl")
     total_seg_frames = 0
     for k, c in enumerate(counts):
         exp = plan["segments"][k][1] - plan["segments"][k][0]
@@ -505,7 +535,8 @@ def handler_v32(event):
             return segment_v32(proj, tmp, part,
                                key_step=int(inp.get("key_step") or KEY_STEP_DEF))
         if phase == "finish_v32":
-            return finish_v32(proj, tmp, t0, int(inp.get("parts") or 0), inp.get("tms"))
+            return finish_v32(proj, tmp, t0, int(inp.get("parts") or 0), inp.get("tms"),
+                              stream=bool(inp.get("stream")), wait_s=int(inp.get("wait_s") or 1500))
         return {"error": f"알 수 없는 phase: {phase}"}
     except Exception as e:
         traceback.print_exc()
