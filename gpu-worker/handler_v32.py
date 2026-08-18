@@ -466,6 +466,20 @@ def detect_box(frame_rgb, glyph_mask, conf_accept=0.6):
     bx1 = (min(rt) + 1) if rt else w
     bx0 = min(bx0, max(0, gx0 - 4)); bx1 = max(bx1, min(w, gx1 + 4))
     by0 = min(by0, max(0, gy0 - 4)); by1 = max(by1, min(h, gy1 + 4))
+    # 경계 스냅: threshold 교차점이 아니라 step 피크 행/열로 정밀 정렬 (±6)
+    # (un-blend 띠 표본이 2~3px 오차로도 오염되므로 필수 — 로컬 검증)
+    if up and by0 > 0:
+        lo, hi = max(1, by0 - 6), min(h - 1, by0 + 7)
+        if hi > lo: by0 = lo + int(np.argmax(prof[lo:hi]))
+    if dn and by1 < h:
+        lo, hi = max(1, by1 - 7), min(h - 1, by1 + 6)
+        if hi > lo: by1 = lo + int(np.argmax(prof[lo:hi])) + 1
+    if lf and bx0 > 0:
+        lo, hi = max(1, bx0 - 6), min(w - 1, bx0 + 7)
+        if hi > lo: bx0 = lo + int(np.argmax(colp[lo:hi]))
+    if rt and bx1 < w:
+        lo, hi = max(1, bx1 - 7), min(w - 1, bx1 + 6)
+        if hi > lo: bx1 = lo + int(np.argmax(colp[lo:hi])) + 1
     rect = (int(bx0), int(by0), int(bx1), int(by1))
     rect_area = (bx1 - bx0) * (by1 - by0)
     area_ratio = rect_area / float(w * h)
@@ -500,45 +514,85 @@ def detect_box(frame_rgb, glyph_mask, conf_accept=0.6):
     return rect, conf, diag
 
 
-def _estimate_blend(frame_rgb, rect, gmd, hh, ww):
-    """박스 경계의 인접 얇은 띠(안 5px/밖 5px)로 (slope=1-α, intercept(3,)=α·C) 추정.
-    관측 = slope·bg + intercept 에서 경계 부근 bg 통계의 공간 정상성 가정:
-      slope = std(안쪽 띠)/std(바깥 띠), intercept = mean(안) - slope·mean(밖).
-    (픽셀쌍 회귀는 attenuation 편향으로 부적합 — 로컬 검증으로 확인)
-    open 경계(crop 가장자리)는 제외. 유효 경계 없으면 None."""
-    x0, y0, x1, y1 = rect
-    f = frame_rgb.astype(np.float32)
-    Ss, pairs = [], []
-
-    def _add(outer, inner, mask_in=None):
-        so = outer.reshape(-1, 3)
-        si = inner.reshape(-1, 3)
-        if mask_in is not None:
-            si = si[~mask_in.reshape(-1)]
-        if so.shape[0] < 300 or si.shape[0] < 300:
-            return
-        s = [float(si[:, c].std() / max(so[:, c].std(), 1.0)) for c in range(3)]
-        Ss.append(float(np.median(s)))
-        pairs.append((so, si))
-
-    if y0 >= 8:
-        m = gmd[y0 + 2:y0 + 7, x0 + 4:x1 - 4] if gmd is not None else None
-        _add(f[y0 - 6:y0 - 1, x0 + 4:x1 - 4], f[y0 + 2:y0 + 7, x0 + 4:x1 - 4], m)
-    if y1 <= hh - 8:
-        m = gmd[y1 - 7:y1 - 2, x0 + 4:x1 - 4] if gmd is not None else None
-        _add(f[y1 + 1:y1 + 6, x0 + 4:x1 - 4], f[y1 - 7:y1 - 2, x0 + 4:x1 - 4], m)
-    if x0 >= 8:
-        m = gmd[y0 + 4:y1 - 4, x0 + 2:x0 + 7] if gmd is not None else None
-        _add(f[y0 + 4:y1 - 4, x0 - 6:x0 - 1], f[y0 + 4:y1 - 4, x0 + 2:x0 + 7], m)
-    if x1 <= ww - 8:
-        m = gmd[y0 + 4:y1 - 4, x1 - 7:x1 - 2] if gmd is not None else None
-        _add(f[y0 + 4:y1 - 4, x1 + 1:x1 + 6], f[y0 + 4:y1 - 4, x1 - 7:x1 - 2], m)
-    if not Ss:
+def _estimate_blend_group(frames, rects, gkeys, raw, hh, ww):
+    """그룹(시간축) 집계로 (slope=1-α, intercept(3,)=α·C) 추정 — 로컬 검증 최종안.
+    slope: 박스 내부 deep 영역 vs 외부 ring의 IQR(P90-P10) 비율 (시간 집계로
+           콘텐츠 편향 평균화). intercept: slope 고정 후 경계 인접 띠(글자 제외
+           masked-blur, gap6) 잔차의 중앙값. 표본 부족 시 None(→ AI 폴백)."""
+    INs = [[] for _ in range(3)]
+    OUTs = [[] for _ in range(3)]
+    PAIRS = []
+    GAP, SW = 6, 4
+    for i in gkeys:
+        x0, y0, x1, y1 = rects[i]
+        if y1 - y0 < 24 or x1 - x0 < 24:
+            continue
+        gmd = cv2.dilate((raw[i] > 0).astype(np.uint8), np.ones((9, 9), np.uint8)) > 0
+        f = frames[i].astype(np.float32)
+        inner = f[y0 + 8:y1 - 8, x0 + 6:x1 - 6]
+        im = ~gmd[y0 + 8:y1 - 8, x0 + 6:x1 - 6]
+        ring = []
+        if y0 >= 14: ring.append(f[max(0, y0 - 40):y0 - 8].reshape(-1, 3))
+        if y1 <= hh - 14: ring.append(f[y1 + 8:min(hh, y1 + 40)].reshape(-1, 3))
+        if x0 >= 14: ring.append(f[y0:y1, max(0, x0 - 40):x0 - 8].reshape(-1, 3))
+        if x1 <= ww - 14: ring.append(f[y0:y1, x1 + 8:min(ww, x1 + 40)].reshape(-1, 3))
+        if ring and im.sum() > 400:
+            rg = np.concatenate(ring, axis=0)
+            for ch in range(3):
+                INs[ch].append(inner[..., ch][im])
+                OUTs[ch].append(rg[:, ch])
+        mk = (~gmd).astype(np.float32)
+        fxm = cv2.blur(f * mk[..., None], (41, 1)) / np.maximum(
+            cv2.blur(mk, (41, 1)), 1e-3)[..., None]
+        dnx = cv2.blur(mk, (41, 1))
+        fym = cv2.blur(f * mk[..., None], (1, 41)) / np.maximum(
+            cv2.blur(mk, (1, 41)), 1e-3)[..., None]
+        dny = cv2.blur(mk, (1, 41))
+        def _h_edge(e, sgn):
+            if sgn > 0:
+                Bs, Cs = fxm[e - GAP - SW:e - GAP], fxm[e + GAP:e + GAP + SW]
+                dB, dC = dnx[e - GAP - SW:e - GAP], dnx[e + GAP:e + GAP + SW]
+            else:
+                Bs, Cs = fxm[e + GAP:e + GAP + SW], fxm[e - GAP - SW:e - GAP]
+                dB, dC = dnx[e + GAP:e + GAP + SW], dnx[e - GAP - SW:e - GAP]
+            if Bs.shape[0] < SW or Cs.shape[0] < SW:
+                return
+            for xx in range(x0 + 8, x1 - 8, 2):
+                if dB[:, xx].min() < 0.7 or dC[:, xx].min() < 0.7:
+                    continue
+                PAIRS.append((Cs[:, xx].mean(axis=0), Bs[:, xx].mean(axis=0)))
+        def _v_edge(e, sgn):
+            if sgn > 0:
+                Bs, Cs = fym[:, e - GAP - SW:e - GAP], fym[:, e + GAP:e + GAP + SW]
+                dB, dC = dny[:, e - GAP - SW:e - GAP], dny[:, e + GAP:e + GAP + SW]
+            else:
+                Bs, Cs = fym[:, e + GAP:e + GAP + SW], fym[:, e - GAP - SW:e - GAP]
+                dB, dC = dny[:, e + GAP:e + GAP + SW], dny[:, e - GAP - SW:e - GAP]
+            if Bs.shape[1] < SW or Cs.shape[1] < SW:
+                return
+            for yy in range(y0 + 8, y1 - 8, 2):
+                if dB[yy].min() < 0.7 or dC[yy].min() < 0.7:
+                    continue
+                PAIRS.append((Cs[yy].mean(axis=0), Bs[yy].mean(axis=0)))
+        if y0 >= GAP + SW: _h_edge(y0, +1)
+        if y1 <= hh - GAP - SW: _h_edge(y1 - 1, -1)
+        if x0 >= GAP + SW: _v_edge(x0, +1)
+        if x1 <= ww - GAP - SW: _v_edge(x1 - 1, -1)
+    if not INs[0] or len(PAIRS) < 60:
         return None
-    s = float(np.clip(np.median(Ss), 0.05, 1.2))
-    tos = [[float(si[:, c].mean() - s * so[:, c].mean()) for c in range(3)]
-           for so, si in pairs]
-    t_vec = np.median(np.array(tos, np.float32), axis=0).astype(np.float32)
+    ss = []
+    for ch in range(3):
+        i_all = np.concatenate(INs[ch]); o_all = np.concatenate(OUTs[ch])
+        if i_all.size < 2000 or o_all.size < 2000:
+            return None
+        iq_i = np.percentile(i_all, 90) - np.percentile(i_all, 10)
+        iq_o = np.percentile(o_all, 90) - np.percentile(o_all, 10)
+        ss.append(iq_i / max(iq_o, 1.0))
+    s = float(np.clip(np.median(ss), 0.05, 1.2))
+    C = np.array([p[0] for p in PAIRS], np.float32)
+    B = np.array([p[1] for p in PAIRS], np.float32)
+    t_vec = np.array([float(np.median(C[:, ch] - s * B[:, ch])) for ch in range(3)],
+                     np.float32)
     return s, t_vec
 
 
@@ -680,11 +734,13 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
         if keep:
             raw[i] = h29.rasterize(keep, ww, hh)
             masked += 1
-    # 박스형 자막 (Phase B v8):
-    #  - 반투명 박스(α≤0.75): 경계쌍 회귀로 (α, 박스색)을 정밀 추정해 역블렌딩(un-blend v2)
-    #    → 배경이 그대로 복원됨. AI는 글자만. (전체폭 밴드 AI 복원은 뭉개짐 — run5 증거)
-    #  - 불투명 박스(α>0.75): 배경 정보가 없어 역블렌딩 불가 → AI 복원 (+12px 테두리)
+    # 박스형 자막 (Phase B v9):
+    #  - 반투명 박스(α≤0.75): 그룹 시간축 집계로 (α, 박스색) 정밀 추정 후 역블렌딩.
+    #    (전체폭 밴드 AI 복원은 뭉개짐 — run5 증거. 코덱 정보소실로 PSNR 상한
+    #     ~23-25는 물리 한계 — 게이트는 이 상한 기준으로 보정됨)
+    #  - 불투명 박스(α>0.75) 또는 추정 실패: AI 복원 (+12px 테두리, scale 1.0)
     #  - 오탐 차단: 시간축 지지도 필터 — 지지 키 < max(3, 40%·masked) 그룹 기각
+    #  - 이동 박스: 프레임별 rect를 인접 키 사이 선형 보간
     box_stats = {"box_keys": 0, "box_conf_max": 0.0, "box_low_conf": 0,
                  "box_unblend": 0, "box_ai": 0, "box_rej": 0}
     box_fixes = {}   # local frame idx -> [(rect, gain(3,), bias(3,))]
@@ -706,16 +762,8 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                 box_stats["box_rej"] += 1
                 continue
             box_stats["box_keys"] += len(gkeys)
-            # 그룹의 각 키에서 (slope=1-α, intercept=α·C) 추정 → 중앙값으로 합의
-            ests = []
-            for i in gkeys:
-                gmd_i = cv2.dilate((raw[i] > 0).astype(np.uint8),
-                                   np.ones((9, 9), np.uint8)) > 0
-                e = _estimate_blend(frames_local[i], rects_by_key[i], gmd_i, hh, ww)
-                if e is not None:
-                    ests.append(e)
-            s_med = float(np.median([e[0] for e in ests])) if ests else 0.0
-            if not ests or s_med < 0.25:
+            est = _estimate_blend_group(frames_local, rects_by_key, gkeys, raw, hh, ww)
+            if est is None or est[0] < 0.25:
                 # 불투명(또는 추정 실패): AI 복원 경로
                 box_stats["box_ai"] += 1
                 x0, y0, x1, y1 = grect
@@ -726,7 +774,7 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                 continue
             # 반투명: bg = (obs - t)/s → gain=1/s, bias=-t/s
             box_stats["box_unblend"] += 1
-            t_med = np.median(np.stack([e[1] for e in ests]), axis=0)
+            s_med, t_med = est
             gain = np.full(3, 1.0 / s_med, np.float32)
             bias = (-t_med / s_med).astype(np.float32)
             gk = sorted(gkeys)
@@ -734,8 +782,17 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                 near = min(gk, key=lambda k: abs(k - i))
                 if abs(near - i) > ring2:
                     continue
+                prev = max((k for k in gk if k <= i), default=near)
+                nxt = min((k for k in gk if k >= i), default=near)
+                if prev == nxt:
+                    r_i = rects_by_key[prev]
+                else:
+                    wgt = (i - prev) / float(nxt - prev)
+                    ra, rb = rects_by_key[prev], rects_by_key[nxt]
+                    r_i = tuple(int(round(a * (1 - wgt) + b * wgt))
+                                for a, b in zip(ra, rb))
                 box_fixes.setdefault(i, []).append(
-                    (tuple(int(v) for v in rects_by_key[near]), gain, bias))
+                    (tuple(int(v) for v in r_i), gain, bias))
         # un-blend를 AI 입력에 선적용 (AI는 복원된 배경 위 글자만 지움)
         for i, fixes in box_fixes.items():
             fr = frames_local[i]
