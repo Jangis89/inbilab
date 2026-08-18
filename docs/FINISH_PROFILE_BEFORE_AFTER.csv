@@ -1,0 +1,7 @@
+run_id,mode,k,warm,total_s,t_segments_done,tail_after_segs_s,dl_s,dl_mode,verify_s,concat_s,up_s
+p1-stream-k12-ks5-0-12555c,after-stream,12,12,395.6,281.9,113.7,167.5,stream,0.0,17.9,85.2
+p1-stream-k12-ks5-1-1944ad,after-stream,12,12,317.4,218.7,98.7,127.3,stream,0.0,16.9,74.8
+p1-stream-k12-ks5-2-6eed4d,after-stream,12,12,335.9,227.4,108.5,120.0,stream,0.0,16.8,85.9
+p50-v3-k12-ks5-0-1f1d5e,before-nonstream,12,12,355.7,224.9,130.8,14.4,block,11.4,9.4,87.7
+p50-v3-k12-ks5-1-9d0411,before-nonstream,12,12,355.5,239.9,115.6,7.3,block,11.2,9.3,82.6
+p50-v3-k12-ks5-2-4187d6,before-nonstream,12,12,348.1,214.4,133.7,31.3,block,9.5,9.2,78.7
