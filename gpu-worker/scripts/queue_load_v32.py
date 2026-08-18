@@ -23,8 +23,8 @@ BENCH_PID_BASE = "beac0003-0000-4000-8000-0000000000"  # +NN (부하검사 전�
 SRC_PROJECT = "31118dec-b65d-4d99-b67e-61ab3333094b"
 SRC_PATH = "4117e902-3396-4b14-aea0-957b326ab563/1786760197372_s94d16lfj6.mp4"
 
-# 실측 기반 단계 예상 (초) — (p25, p50, p90)
-EST = {"scan": (92, 104, 118), "seg": (100, 125, 165), "finish": (95, 108, 120)}
+# 실측 기반 단계 예상 (초) — (p25, p50, p90). 2026-08-18 p1-final 실측으로 갱신
+EST = {"scan": (45, 55, 95), "seg": (95, 120, 165), "finish": (23, 30, 40)}
 
 
 def sbh(extra=None):
@@ -83,7 +83,10 @@ class FifoRunner:
 
     def __init__(self, k, warm, key_step):
         self.k, self.warm, self.key_step = k, warm, key_step
-        self.gpu_lock = threading.Lock()   # GPU 세그먼트 단계 직렬화
+        # 공정한 선착순: 제출 순서표(ticket) — threading.Lock은 순서를 보장하지 않음
+        self.cv = threading.Condition()
+        self.next_serve = 0
+        self.abandoned = set()   # scan 실패 등으로 차례를 포기한 작업
         self.scan_fn = modal.Function.from_name(APP, "scan_v32_cpu")
         self.seg_fn = modal.Function.from_name(APP, "segment_v32_gpu")
         self.fin_fn = modal.Function.from_name(APP, "finish_v32_cpu")
@@ -97,9 +100,17 @@ class FifoRunner:
                                               "seg_k": self.k}})
         if scan.get("error") or scan.get("note"):
             rec["result"] = "SCAN_FAIL"; rec["scan"] = scan
+            with self.cv:                  # 차례 포기 등록 (실패해도 뒷사람 진행)
+                self.abandoned.add(idx)
+                while self.next_serve in self.abandoned:
+                    self.next_serve += 1
+                self.cv.notify_all()
             return
         rec["t_scan_done"] = round(time.time() - t_submit, 1)
-        with self.gpu_lock:                # FIFO: GPU 단계는 한 번에 한 작업
+        with self.cv:                      # FIFO: 제출 순서(idx)대로 GPU 차례를 기다림
+            while self.next_serve != idx:
+                self.cv.wait(timeout=5)
+        try:
             rec["gpu_wait_s"] = round(time.time() - t_submit - rec["t_scan_done"], 1)
             segs = [self.seg_fn.spawn({"input": {"project_id": pid, "phase": "segment_v32",
                                                  "part": p, "key_step": self.key_step}})
@@ -116,7 +127,14 @@ class FifoRunner:
                     seg_err += 1
             rec["t_segments_done"] = round(time.time() - t_submit, 1)
             rec["seg_errors"] = seg_err
-        # finish는 락 해제 후 대기 (finish_overlap — 다음 작업 GPU 시작 허용)
+        finally:
+            with self.cv:
+                if self.next_serve == idx:
+                    self.next_serve = idx + 1
+                while self.next_serve in self.abandoned:
+                    self.next_serve += 1
+                self.cv.notify_all()
+        # finish는 차례 반납 후 대기 (finish_overlap — 다음 작업 GPU 시작 허용)
         try:
             fin = fin_call.get(timeout=900)
         except Exception as e:
