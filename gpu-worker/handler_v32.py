@@ -682,8 +682,12 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                     ((int(x0), int(y0), int(x1), int(y1)),
                      gain.astype(np.float32), bias.astype(np.float32)))
         # un-blend를 AI 입력에도 선적용 (AI가 보정된 배경 기준으로 글자 복원)
+        # read_crop_range 결과는 읽기전용일 수 있음 → 쓰기 가능 복사본으로 교체
         for i, fixes in box_fixes.items():
             fr = frames_local[i]
+            if not fr.flags.writeable:
+                fr = fr.copy()
+                frames_local[i] = fr
             for (x0, y0, x1, y1), gain, bias in fixes:
                 sub = fr[y0:y1, x0:x1].astype(np.float32) * gain + bias
                 fr[y0:y1, x0:x1] = np.clip(sub, 0, 255).astype(np.uint8)
