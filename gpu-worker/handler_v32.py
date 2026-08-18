@@ -920,6 +920,16 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
             for (x0, y0, x1, y1), gain, bias in fl:
                 gy0, gy1 = reg["y"] + y0, reg["y"] + y1
                 gx0, gx1 = reg["x"] + x0, reg["x"] + x1
+                # rect가 crop 경계에 닿아 있으면 박스가 crop 밖으로 이어진 것
+                # → 전체 프레임 좌표로 프레임 끝까지 연장 (floor16 crop의 잔여 스트립)
+                open_l = x0 <= 2 and reg["x"] > 0
+                open_r = x1 >= reg["w"] - 2 and reg["x"] + reg["w"] < W
+                open_t = y0 <= 2 and reg["y"] > 0
+                open_b = y1 >= reg["h"] - 2 and reg["y"] + reg["h"] < H
+                if open_l: gx0 = 0
+                if open_r: gx1 = W
+                if open_t: gy0 = 0
+                if open_b: gy1 = H
                 sub = frame[gy0:gy1, gx0:gx1].astype(np.float32) * gain + bias
                 fixed = np.clip(sub, 0, 255).astype(np.uint8)
                 fh, fw = fixed.shape[:2]
@@ -927,8 +937,11 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                     a = np.ones((fh, fw), np.float32)
                     e = 8
                     ramp = np.linspace(0, 1, e, dtype=np.float32)
-                    a[:e] *= ramp[:, None]; a[-e:] *= ramp[::-1][:, None]
-                    a[:, :e] *= ramp[None, :]; a[:, -e:] *= ramp[::-1][None, :]
+                    # 프레임 경계로 연장된 쪽은 feather 생략 (경계엔 이음새 없음)
+                    if not (open_t or gy0 == 0): a[:e] *= ramp[:, None]
+                    if not (open_b or gy1 == H): a[-e:] *= ramp[::-1][:, None]
+                    if not (open_l or gx0 == 0): a[:, :e] *= ramp[None, :]
+                    if not (open_r or gx1 == W): a[:, -e:] *= ramp[::-1][None, :]
                     orig = frame[gy0:gy1, gx0:gx1].astype(np.float32)
                     frame[gy0:gy1, gx0:gx1] = np.clip(
                         orig * (1 - a[..., None]) + fixed * a[..., None], 0, 255
