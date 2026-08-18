@@ -348,6 +348,42 @@ def scan_v32(proj, tmp, scan_step=12, seg_k=10):
             if c: regions.append(c)
         del samples
         sw.mark("scan")
+    # 박스형 자막: 감지 영역이 박스보다 좁으면 세그 단계에서 복원 불가 →
+    # scan 샘플에서 박스를 감지해 region을 박스 전체로 확장 (Phase B)
+    if mode == "auto" and regions:
+        try:
+            samples2 = list(h29.stream_frames(work, W, H, sample_every=scan_step * 3))[:6]
+            for reg in regions:
+                if reg.get("static_mask") is not None:
+                    continue
+                votes = []
+                for fr in samples2:
+                    crop = fr[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]]
+                    cl = h29.glyph_clusters(crop)
+                    if not cl:
+                        continue
+                    gmm = h29.rasterize(cl, reg["w"], reg["h"])
+                    rect, conf, _bd = detect_box(crop, gmm)
+                    if rect is not None:
+                        votes.append(rect)
+                if len(votes) >= 2:
+                    bx0 = min(v[0] for v in votes) + reg["x"]
+                    by0 = min(v[1] for v in votes) + reg["y"]
+                    bx1 = max(v[2] for v in votes) + reg["x"]
+                    by1 = max(v[3] for v in votes) + reg["y"]
+                    nx = max(0, min(reg["x"], bx0 - 8))
+                    ny = max(0, min(reg["y"], by0 - 8))
+                    nx1 = min(W, max(reg["x"] + reg["w"], bx1 + 8))
+                    ny1 = min(H, max(reg["y"] + reg["h"], by1 + 8))
+                    nw = h29.floor16(nx1 - nx) if hasattr(h29, "floor16") else (nx1 - nx) // 16 * 16
+                    nh = h29.floor16(ny1 - ny) if hasattr(h29, "floor16") else (ny1 - ny) // 16 * 16
+                    if nw >= reg["w"] and nh >= reg["h"] and nw > 0 and nh > 0:
+                        if nx + nw > W: nx = W - nw
+                        if ny + nh > H: ny = H - nh
+                        reg.update(x=int(nx), y=int(ny), w=int(nw), h=int(nh))
+            sw.mark("box_expand")
+        except Exception:
+            pass
     if not regions:
         h29.set_proj(pid, "wm_done", {"note": "no_target", "ver": V32_VER,
             "msg": "지울 자막·워터마크를 찾지 못했어요. [직접 지정] 모드로 영역을 그려서 다시 시도해 주세요."})
