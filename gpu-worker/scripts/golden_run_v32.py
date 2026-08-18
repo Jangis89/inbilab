@@ -20,9 +20,10 @@ GOLD_PFX = "bench-assets/golden"
 K = 4
 KEY_STEP = 5
 
-# 게이트 (원기준 PSNR>=35/SSIM>=0.98 준용, VMAF는 참고 기준 90)
-GATE = {"psnr": 35.0, "ssim": 0.980, "vmaf_warn": 90.0,
-        "residual_ratio_max": 0.02, "flicker_ratio_max": 2.5}
+# 게이트 (2026-08-18 육안검수 보정: 생성형 차이 허용, 인코딩·정렬 이상 차단.
+#  잔존율은 텍스처 오탐이 확인되어 참고지표로 강등 — 판정은 깜빡임+기본검증)
+GATE = {"psnr": 34.0, "ssim": 0.970, "psnr_out_min": 36.0,
+        "vmaf_warn": 90.0, "flicker_ratio_max": 2.5}
 
 
 def sbh(extra=None):
@@ -315,14 +316,15 @@ def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None):
             gt_fp, out_fp, rec["plan_regions"], g=g, crop_dir=crop_dir)
         rec["vmaf"] = vmaf(gt_fp, out_fp)
         rec["lpips"] = lpips_sampled(gt_fp, out_fp)
-        # 판정: 영역 밖은 원본과 사실상 동일해야 하고(>=40), 전체는 원기준
-        pass_q = (psnr or 0) >= GATE["psnr"] and (ssim or 0) >= GATE["ssim"]
+        # 판정: 영역 밖(비수정부)은 인코딩 손실 수준이어야 하고, 전체는 체감 보정 기준
+        pass_q = ((psnr or 0) >= GATE["psnr"] and (ssim or 0) >= GATE["ssim"]
+                  and (rec["psnr_out_region"] or 0) >= GATE["psnr_out_min"])
     else:
         rr, fr, rr_in = region_metrics(inp_fp, out_fp, rec["plan_regions"],
                                        g=g, crop_dir=crop_dir)
         rec["residual_ratio"], rec["flicker_ratio"] = rr, fr
         rec["residual_ratio_input"] = rr_in
-        pass_q = rr <= GATE["residual_ratio_max"] and fr <= GATE["flicker_ratio_max"]
+        pass_q = fr <= GATE["flicker_ratio_max"]  # 잔존율(rr)은 참고지표 (텍스처 오탐 확인)
     rec["quality_pass"] = bool(pass_q and basic_ok)
     rec["fallback_needed"] = not rec["quality_pass"]
     rec["result"] = "OK" if rec["quality_pass"] else "QUALITY_FAIL"
