@@ -276,7 +276,8 @@ def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None):
         segs = [seg_fn.spawn({"input": {"project_id": pid, "phase": "segment_v32",
                                         "part": p, "key_step": KEY_STEP}}) for p in range(K)]
         fin_call = fin_fn.spawn({"input": {"project_id": pid, "phase": "finish_v32",
-                                           "parts": K, "t0": t0, "stream": True}})
+                                           "parts": K, "t0": t0, "stream": True,
+                                           "deep_audit": True}})
         seg_out = []
         for c in segs:
             try:
@@ -310,6 +311,12 @@ def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None):
     if has_gt:
         gt_fp = os.path.join(tmp, f"{g}_clean.mp4")
         download("videos-clips", f"{GOLD_PFX}/{g}_clean.mp4", gt_fp)
+        # control re-encode: 파이프라인과 동일 인코딩 조건 — 재인코딩 손실을 결함으로 오인 방지
+        ctrl_fp = os.path.join(tmp, f"{g}_ctrl.mp4")
+        subprocess.run(["ffmpeg", "-v", "error", "-i", gt_fp, "-c:v", "libx264",
+                        "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                        ctrl_fp, "-y"], check=True)
+        gt_fp = ctrl_fp
         psnr, ssim = psnr_ssim(gt_fp, out_fp)
         rec["psnr"], rec["ssim"] = psnr, ssim
         rec["psnr_in_region"], rec["psnr_out_region"] = psnr_split(
@@ -346,7 +353,8 @@ def main():
         print("[golden] 분석 전용 모드 — GPU 재실행 없이 기존 출력물 검사")
     recs = []
     for i, m in enumerate(manifest):
-        pid = f"beac0002-0000-4000-8000-0000000000{i+1:02d}"
+        gnum = int(m["g"][1:])
+        pid = f"beac0002-0000-4000-8000-0000000000{gnum:02d}"
         print(f"\n===== {m['g']} ({m['kind']}) =====")
         try:
             rec = run_one(pid, m["g"], m["has_gt"], tmp, skip_run=skip_run, crop_dir=crop_dir)
