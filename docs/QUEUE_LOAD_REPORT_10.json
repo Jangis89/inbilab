@@ -1,0 +1,229 @@
+{
+ "summary": {
+  "label": "queue10-r2",
+  "jobs": 10,
+  "k": 12,
+  "warm": 12,
+  "success": 10,
+  "fail": 0,
+  "wall_all_s": 1049.0,
+  "p50": 601.3,
+  "min": 194.4,
+  "max": 1035.7,
+  "p95": 942.3,
+  "eta_in_range": 10,
+  "eta_err_pct_mean": 16.7
+ },
+ "records": [
+  {
+   "job": 1,
+   "pid": "beac0003-0000-4000-8000-000000000001",
+   "eta_at_submit": {
+    "lo_s": 163,
+    "mid_s": 205,
+    "hi_s": 300
+   },
+   "t_submit": 1787050201.14806,
+   "wait_before_scan_s": 0.0,
+   "t_scan_done": 66.0,
+   "gpu_wait_s": -0.0,
+   "t_segments_done": 159.7,
+   "seg_errors": 0,
+   "finish_ok": true,
+   "up_mode": "s3-16x8",
+   "total_s": 194.4,
+   "result": "OK",
+   "eta_in_range": true,
+   "eta_err_pct": -5.2
+  },
+  {
+   "job": 2,
+   "pid": "beac0003-0000-4000-8000-000000000002",
+   "eta_at_submit": {
+    "lo_s": 283,
+    "mid_s": 325,
+    "hi_s": 420
+   },
+   "t_submit": 1787050202.4802065,
+   "wait_before_scan_s": 0.0,
+   "t_scan_done": 46.9,
+   "gpu_wait_s": 111.5,
+   "t_segments_done": 244.6,
+   "seg_errors": 0,
+   "finish_ok": true,
+   "up_mode": "s3-16x8",
+   "total_s": 287.1,
+   "result": "OK",
+   "eta_in_range": true,
+   "eta_err_pct": -11.7
+  },
+  {
+   "job": 3,
+   "pid": "beac0003-0000-4000-8000-000000000003",
+   "eta_at_submit": {
+    "lo_s": 403,
+    "mid_s": 445,
+    "hi_s": 540
+   },
+   "t_submit": 1787050203.7717538,
+   "wait_before_scan_s": 0.0,
+   "t_scan_done": 60.0,
+   "gpu_wait_s": 183.3,
+   "t_segments_done": 336.6,
+   "seg_errors": 0,
+   "finish_ok": true,
+   "up_mode": "s3-16x8",
+   "total_s": 370.8,
+   "result": "OK",
+   "eta_in_range": true,
+   "eta_err_pct": -16.7
+  },
+  {
+   "job": 4,
+   "pid": "beac0003-0000-4000-8000-000000000004",
+   "eta_at_submit": {
+    "lo_s": 523,
+    "mid_s": 565,
+    "hi_s": 660
+   },
+   "t_submit": 1787050204.3294811,
+   "wait_before_scan_s": 0.0,
+   "t_scan_done": 47.7,
+   "gpu_wait_s": 288.3,
+   "t_segments_done": 427.2,
+   "seg_errors": 0,
+   "finish_ok": true,
+   "up_mode": "s3-16x8",
+   "total_s": 461.6,
+   "result": "OK",
+   "eta_in_range": true,
+   "eta_err_pct": -18.3
+  },
+  {
+   "job": 5,
+   "pid": "beac0003-0000-4000-8000-000000000005",
+   "eta_at_submit": {
+    "lo_s": 643,
+    "mid_s": 685,
+    "hi_s": 780
+   },
+   "t_submit": 1787050205.2114568,
+   "wait_before_scan_s": 0.0,
+   "t_scan_done": 63.4,
+   "gpu_wait_s": 362.9,
+   "t_segments_done": 518.6,
+   "seg_errors": 0,
+   "finish_ok": true,
+   "up_mode": "s3-16x8",
+   "total_s": 552.3,
+   "result": "OK",
+   "eta_in_range": true,
+   "eta_err_pct": -19.4
+  },
+  {
+   "job": 6,
+   "pid": "beac0003-0000-4000-8000-000000000006",
+   "eta_at_submit": {
+    "lo_s": 763,
+    "mid_s": 805,
+    "hi_s": 900
+   },
+   "t_submit": 1787050207.3970263,
+   "wait_before_scan_s": 0.0,
+   "t_scan_done": 60.7,
+   "gpu_wait_s": 455.8,
+   "t_segments_done": 611.0,
+   "seg_errors": 0,
+   "finish_ok": true,
+   "up_mode": "s3-16x8",
+   "total_s": 650.4,
+   "result": "OK",
+   "eta_in_range": true,
+   "eta_err_pct": -19.2
+  },
+  {
+   "job": 7,
+   "pid": "beac0003-0000-4000-8000-000000000007",
+   "eta_at_submit": {
+    "lo_s": 883,
+    "mid_s": 925,
+    "hi_s": 1020
+   },
+   "t_submit": 1787050208.3989766,
+   "wait_before_scan_s": 0.0,
+   "t_scan_done": 55.2,
+   "gpu_wait_s": 554.8,
+   "t_segments_done": 700.8,
+   "seg_errors": 0,
+   "finish_ok": true,
+   "up_mode": "s3-16x8",
+   "total_s": 740.5,
+   "result": "OK",
+   "eta_in_range": true,
+   "eta_err_pct": -19.9
+  },
+  {
+   "job": 8,
+   "pid": "beac0003-0000-4000-8000-000000000008",
+   "eta_at_submit": {
+    "lo_s": 1003,
+    "mid_s": 1045,
+    "hi_s": 1140
+   },
+   "t_submit": 1787050209.773676,
+   "wait_before_scan_s": 0.0,
+   "t_scan_done": 57.7,
+   "gpu_wait_s": 641.7,
+   "t_segments_done": 819.1,
+   "seg_errors": 0,
+   "finish_ok": true,
+   "up_mode": "s3-16x8",
+   "total_s": 852.5,
+   "result": "OK",
+   "eta_in_range": true,
+   "eta_err_pct": -18.4
+  },
+  {
+   "job": 9,
+   "pid": "beac0003-0000-4000-8000-000000000009",
+   "eta_at_submit": {
+    "lo_s": 1123,
+    "mid_s": 1165,
+    "hi_s": 1260
+   },
+   "t_submit": 1787050211.3239353,
+   "wait_before_scan_s": 0.0,
+   "t_scan_done": 58.8,
+   "gpu_wait_s": 758.7,
+   "t_segments_done": 909.0,
+   "seg_errors": 0,
+   "finish_ok": true,
+   "up_mode": "s3-16x8",
+   "total_s": 942.3,
+   "result": "OK",
+   "eta_in_range": true,
+   "eta_err_pct": -19.1
+  },
+  {
+   "job": 10,
+   "pid": "beac0003-0000-4000-8000-000000000010",
+   "eta_at_submit": {
+    "lo_s": 1243,
+    "mid_s": 1285,
+    "hi_s": 1380
+   },
+   "t_submit": 1787050212.341877,
+   "wait_before_scan_s": 0.0,
+   "t_scan_done": 60.4,
+   "gpu_wait_s": 847.6,
+   "t_segments_done": 997.6,
+   "seg_errors": 0,
+   "finish_ok": true,
+   "up_mode": "s3-16x8",
+   "total_s": 1035.7,
+   "result": "OK",
+   "eta_in_range": true,
+   "eta_err_pct": -19.4
+  }
+ ]
+}
