@@ -369,6 +369,103 @@ def scan_v32(proj, tmp, scan_step=12, seg_k=10):
             "segments": segments, "ver": V32_VER, "tms": sw.out()}
 
 
+# ---------------- 박스형(예능체·반투명) 자막 오버레이 감지 (Phase B) ----------------
+def _row_step_profile(gray, x0, x1):
+    band = gray[:, x0:x1].mean(axis=1)
+    k = 5
+    prof = np.zeros_like(band)
+    for y in range(k, len(band) - k):
+        prof[y] = abs(band[y:y + k].mean() - band[y - k:y].mean())
+    return prof
+
+
+def detect_box(frame_rgb, glyph_mask, conf_accept=0.6):
+    """글자를 둘러싼 사각 오버레이(박스자막) 감지. (rect|None, conf, diag)
+    가드: 경계 edge 필수 / 글자 내포 필수 / 면적 상한 / 내부 색이동·대비감소 증거."""
+    h, w = frame_rgb.shape[:2]
+    if glyph_mask is None or not glyph_mask.any():
+        return None, 0.0, {"why": "no_glyph"}
+    gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    gm = glyph_mask > 0
+    gmd = cv2.dilate(gm.astype(np.uint8), np.ones((7, 7), np.uint8)) > 0
+    _ys, _xs = np.nonzero(gm)
+    gx0, gx1 = int(_xs.min()), int(_xs.max()) + 1
+    gy0, gy1 = int(_ys.min()), int(_ys.max()) + 1
+    prof = _row_step_profile(gray, max(0, gx0 - 20), min(w, gx1 + 20))
+    thr = max(8.0, float(np.percentile(prof, 90)) * 0.8)
+    up = [y for y in range(max(0, gy0 - 220), gy0) if prof[y] > thr]
+    dn = [y for y in range(gy1, min(h, gy1 + 220)) if prof[y] > thr]
+    if not up or not dn:
+        return None, 0.0, {"why": "no_h_edges"}
+    by0, by1 = max(up), min(dn) + 1
+    band = gray[by0:by1]
+    k = 5
+    cb = band.mean(axis=0)
+    colp = np.zeros(w)
+    for x in range(k, w - k):
+        colp[x] = abs(cb[x:x + k].mean() - cb[x - k:x].mean())
+    cthr = max(8.0, float(np.percentile(colp, 90)) * 0.8)
+    lf = [x for x in range(max(0, gx0 - 260), gx0) if colp[x] > cthr]
+    rt = [x for x in range(gx1, min(w, gx1 + 260)) if colp[x] > cthr]
+    bx0 = max(lf) if lf else (0 if gx0 < 260 else max(0, gx0 - 24))
+    bx1 = (min(rt) + 1) if rt else (w if w - gx1 < 260 else min(w, gx1 + 24))
+    bx0 = min(bx0, max(0, gx0 - 4)); bx1 = max(bx1, min(w, gx1 + 4))
+    by0 = min(by0, max(0, gy0 - 4)); by1 = max(by1, min(h, gy1 + 4))
+    rect = (int(bx0), int(by0), int(bx1), int(by1))
+    rect_area = (bx1 - bx0) * (by1 - by0)
+    area_ratio = rect_area / float(w * h)
+    glyph_area = int(gm.sum())
+    inbox = float(gm[by0:by1, bx0:bx1].sum()) / max(1, glyph_area)
+    if (bx1 - bx0) < 0.9 * w:
+        cols = list(range(0, max(0, bx0 - 8))) + list(range(min(w, bx1 + 8), w))
+        outside = gray[by0:by1][:, cols] if cols else np.zeros((0,))
+    else:
+        pad = max(8, min(40, by0, h - by1))
+        outside = np.concatenate([gray[max(0, by0 - pad):by0],
+                                  gray[by1:min(h, by1 + pad)]])
+    inner_mask = ~gmd[by0:by1, bx0:bx1]
+    inner_vals = gray[by0:by1, bx0:bx1][inner_mask]
+    if inner_vals.size < 100 or outside.size < 100:
+        return None, 0.0, {"why": "no_stats"}
+    shift = abs(float(inner_vals.mean()) - float(outside.mean()))
+    damp = float(inner_vals.std()) < 0.8 * float(outside.std()) + 4
+    conf = 0.30
+    if inbox >= 0.90: conf += 0.20
+    if area_ratio <= 0.40: conf += 0.15
+    if rect_area <= 20 * max(1, glyph_area): conf += 0.10
+    if shift >= 8 or damp: conf += 0.25
+    else: conf = min(conf, 0.40)
+    diag = {"rect": rect, "conf": round(conf, 2), "shift": round(shift, 1),
+            "inbox": round(inbox, 3), "area_ratio": round(area_ratio, 3)}
+    if conf < conf_accept or inbox < 0.95 or area_ratio > 0.45:
+        return None, conf, dict(diag, why="low_conf")
+    return rect, conf, diag
+
+
+def stable_boxes(rects_by_key, min_support=2):
+    """키프레임별 박스 rect의 시간축 안정성: IoU>0.5 그룹(합집합 rect), 지지 키 반환."""
+    def iou(a, b):
+        ix0, iy0 = max(a[0], b[0]), max(a[1], b[1])
+        ix1, iy1 = min(a[2], b[2]), min(a[3], b[3])
+        if ix1 <= ix0 or iy1 <= iy0: return 0.0
+        inter = (ix1 - ix0) * (iy1 - iy0)
+        ua = (a[2]-a[0])*(a[3]-a[1]) + (b[2]-b[0])*(b[3]-b[1]) - inter
+        return inter / ua
+    groups = []
+    for kk, r in rects_by_key.items():
+        for g in groups:
+            if iou(g[0], r) > 0.5:
+                g[1].append(kk)
+                g[0] = (min(g[0][0], r[0]), min(g[0][1], r[1]),
+                        max(g[0][2], r[2]), max(g[0][3], r[3]))
+                break
+        else:
+            groups.append([list(r) and r, [kk]])
+    total = len(rects_by_key)
+    need = 1 if total < min_support else min_support
+    return [(tuple(g[0]), g[1]) for g in groups if len(g[1]) >= need]
+
+
 # ---------------- 세그먼트-로컬 마스크 (키프레임 정밀 + 시간축 전파) ----------------
 def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
     """구간 crop 프레임에서 v29와 같은 glyph 감지를 키프레임만 수행하고
@@ -483,6 +580,25 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
         if keep:
             raw[i] = h29.rasterize(keep, ww, hh)
             masked += 1
+    # 박스형 자막: 키프레임별 박스 감지 → 시간축 안정 그룹만 마스크에 합산 (Phase B)
+    box_stats = {"box_keys": 0, "box_conf_max": 0.0, "box_low_conf": 0}
+    if not kind.startswith("manual") and masked:
+        rects_by_key = {}
+        for i in keys:
+            if raw[i] is None:
+                continue
+            rect, conf, _bd = detect_box(frames_local[i], raw[i])
+            box_stats["box_conf_max"] = max(box_stats["box_conf_max"], round(conf, 2))
+            if rect is not None:
+                rects_by_key[i] = rect
+            elif 0.4 <= conf < 0.6:
+                box_stats["box_low_conf"] += 1     # review-required 신호
+        for grect, gkeys in stable_boxes(rects_by_key):
+            x0, y0, x1, y1 = grect
+            for i in gkeys:
+                raw[i][y0:y1, x0:x1] = 255
+            box_stats["box_keys"] += len(gkeys)
+    _seg_masks_for_region._last_box_stats = box_stats
     # ±(6 + ceil((key_step-1)/2)) union — 키 간격의 절반만 넓혀 커버리지 보존 + 과도한 번짐 방지
     ks = max(1, int(key_step))
     ring = 6 + (ks - 1 + 1) // 2
@@ -534,6 +650,12 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
         masks, masked = _seg_masks_for_region(frames_local, reg, key_step, E0)
         t_mask += time.time() - tm
         counters["precise_keyframes"] += masked
+        bs = getattr(_seg_masks_for_region, "_last_box_stats", None)
+        if bs:
+            counters["box_keys"] = counters.get("box_keys", 0) + bs["box_keys"]
+            counters["box_low_conf"] = counters.get("box_low_conf", 0) + bs["box_low_conf"]
+            counters["box_conf_max"] = max(counters.get("box_conf_max", 0.0),
+                                           bs["box_conf_max"])
         if masked == 0 or not any(m.any() for m in masks):
             del frames_local
             continue
@@ -605,6 +727,77 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
             "t_enter": round(t_enter, 3), "t_done": round(time.time(), 3)}
 
 
+# ---------------- 계층형 출력 검증 (Phase D — fault-injection 12종 검증 완료) ----------------
+import re as _re
+_BAD_DECODE = _re.compile(r"corrupt|invalid|missing picture|concealing|error while decoding|"
+                          r"decode_slice_header error|no frame", _re.I)
+
+
+def _decode_span_check(path, start_s, n_frames):
+    r = subprocess.run(["ffmpeg", "-v", "warning", "-err_detect", "explode",
+                        "-ss", f"{max(0.0, start_s):.3f}", "-i", path,
+                        "-frames:v", str(n_frames), "-f", "null", "-"],
+                       capture_output=True, timeout=300)
+    bad = [l for l in r.stderr.decode().splitlines() if _BAD_DECODE.search(l)]
+    return r.returncode == 0 and not bad, (bad[0][:150] if bad else "")
+
+
+def validate_output_layer1(path, N, fps, W, H, audio, boundaries):
+    """동기 검증 (실측 P50 ~5초): 컨테이너/스트림/해상도/FPS/duration/패킷수/
+    오디오길이/시작·중간·끝·세그경계 샘플 디코드. 미탐 잔여(임의 위치 무음 손상)는
+    Layer2 전체 디코드(deep audit)가 커버."""
+    issues = []
+    info = h29.probe_info(path)
+    if (info["W"], info["H"]) != (W, H):
+        issues.append(f"resolution {info['W']}x{info['H']}")
+    if abs(info["fps"] - fps) > 0.02:
+        issues.append(f"fps {info['fps']}")
+    dur_exp = N / float(fps)
+    if abs(info["dur"] - dur_exp) > 0.5:
+        issues.append(f"duration {info['dur']:.2f}!={dur_exp:.2f}")
+    if audio and not info["audio"]:
+        issues.append("no_audio_stream")
+    n = frame_count_fast(path)
+    if n != N:
+        issues.append(f"packet_count {n}!={N}")
+    if audio and info["audio"]:
+        out = h29.run(["ffprobe", "-v", "error", "-select_streams", "a:0",
+                       "-show_entries", "stream=duration", "-of", "csv=p=0", path]).stdout
+        try:
+            adur = float(out.decode().strip().split("\n")[0] or 0)
+            if adur and abs(adur - info["dur"]) > 0.5:
+                issues.append(f"audio_duration {adur:.2f}")
+        except ValueError:
+            pass
+    spans = [(0.0, 10), (dur_exp / 2, 10), (max(0.0, dur_exp - 12 / fps - 0.5), 12)]
+    spans += [(max(0.0, (b - 1) / fps), 3) for b in boundaries]
+    for st, nf in spans:
+        ok, err = _decode_span_check(path, st, nf)
+        if not ok:
+            issues.append(f"decode_fail@{st:.1f}s {err}")
+            break
+    return issues
+
+
+def deep_audit_full_decode(path, dur_s, jobs=8):
+    """Layer2: 전체 프레임 병렬 디코드 — 무음 손상 전수 검출 (fault 12/12 검증).
+    staging/C0에서는 동기 실행, 운영에서는 표본/비동기."""
+    from concurrent.futures import ThreadPoolExecutor
+    span = dur_s / jobs
+    def _one(i):
+        ss = max(0.0, i * span - (1.0 if i else 0))
+        r = subprocess.run(["ffmpeg", "-v", "warning", "-err_detect", "explode",
+                            "-ss", f"{ss:.2f}", "-t", f"{span + 1.0:.2f}",
+                            "-i", path, "-f", "null", "-"],
+                           capture_output=True, timeout=600)
+        return [l for l in r.stderr.decode().splitlines() if _BAD_DECODE.search(l)]
+    errs = []
+    with ThreadPoolExecutor(jobs) as ex:
+        for bad in ex.map(_one, range(jobs)):
+            errs.extend(bad)
+    return errs[:5]
+
+
 # ---------------- 단계: finish (CPU) ----------------
 def _seg_exists(pid, name):
     """세그 도착 확인 — 일시적 네트워크 오류는 '아직 없음'으로 간주 (다음 폴링에 재시도).
@@ -618,7 +811,8 @@ def _seg_exists(pid, name):
         return False
 
 
-def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500):
+def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500,
+               deep_audit=False):
     """stream=True: 세그먼트가 저장소에 '도착하는 대로' 내려받고 검증까지 겹쳐 수행
     (마지막 세그 완료 시점에는 concat+mux+업로드만 남음 — Phase 1 스트리밍 마무리)."""
     pid = proj["id"]
@@ -683,10 +877,18 @@ def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500):
         h29.run(["ffmpeg", "-v", "error", "-f", "concat", "-safe", "0", "-i", lst,
                  "-c", "copy", "-movflags", "+faststart", outp, "-y"])
     sw.mark("concat")
-    fin_n = frame_count_fast(outp)
-    sw.mark("cnt_out")
-    if fin_n != N:
-        raise RuntimeError(f"[v32] 최종 프레임 수 {fin_n} != N {N}")
+    bounds = [seg[0] for seg in plan["segments"][1:]]
+    v_issues = validate_output_layer1(outp, N, fps, plan["W"], plan["H"],
+                                      bool(plan.get("audio")), bounds)
+    sw.mark("validate")
+    if v_issues:
+        raise RuntimeError(f"[v32] 출력 검증 실패: {'; '.join(v_issues[:4])}")
+    if deep_audit or os.environ.get("WM_DEEP_AUDIT") == "1":
+        da = deep_audit_full_decode(outp, N / float(fps))
+        sw.mark("deep_audit")
+        if da:
+            raise RuntimeError(f"[v32] deep audit 실패: {da[0]}")
+    fin_n = N
     dest = f"{proj['user_id']}/wm_v32_{pid}.mp4"
     out_mb = round(os.path.getsize(outp) / 1e6, 1)
     url_out, up_mode = upload_clip_fast(dest, outp, sw)
@@ -810,7 +1012,8 @@ def handler_v32(event):
                                key_step=int(inp.get("key_step") or KEY_STEP_DEF))
         if phase == "finish_v32":
             return finish_v32(proj, tmp, t0, int(inp.get("parts") or 0), inp.get("tms"),
-                              stream=bool(inp.get("stream")), wait_s=int(inp.get("wait_s") or 1500))
+                              stream=bool(inp.get("stream")), wait_s=int(inp.get("wait_s") or 1500),
+                              deep_audit=bool(inp.get("deep_audit")))
         if phase == "upbench_v32":
             return upbench_v32(proj, tmp, inp)
         return {"error": f"알 수 없는 phase: {phase}"}
