@@ -47,6 +47,22 @@ def _content_length(url):
     return int(r.headers.get("Content-Length") or 0)
 
 
+def frame_count_fast(path):
+    """프레임 수를 '해독 없이' 패킷 수로 센다 (mp4 H.264: 패킷=프레임).
+    v29의 frame_count(-count_frames, 전체 해독 ~50초)와 달리 1초 미만.
+    실패 시 기존 방식으로 폴백."""
+    try:
+        out = h29.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                       "-count_packets", "-show_entries", "stream=nb_read_packets",
+                       "-of", "csv=p=0", path]).stdout
+        n = int(out.decode().strip() or 0)
+        if n > 0:
+            return n
+    except Exception:
+        pass
+    return h29.frame_count(path)
+
+
 def download_to_par(url, dest, conc=8, chunk_mb=16):
     """HTTP Range 병렬 다운로드 — 서명 URL 그대로 사용(키 불필요). 실패 조각은 3회 재시도."""
     import requests as rq
@@ -89,7 +105,7 @@ def fetch_source_fast(proj, tmp, sw=None):
     if info["dur"] > 900:
         raise RuntimeError("지금은 15분 이하 영상만 지원해요. 나눠서 올려주세요.")
     work = src
-    N = h29.frame_count(work)
+    N = frame_count_fast(work)
     if sw: sw.mark("cnt")
     expected = round(info["dur"] * info["fps"])
     if N and abs(N - expected) > max(5, expected * 0.02):
@@ -97,7 +113,7 @@ def fetch_source_fast(proj, tmp, sw=None):
         h29.run(["ffmpeg", "-v", "error"] + h29.hw_dec_args()
                 + ["-i", src, "-vf", f"fps={info['fps']}", "-an"]
                 + h29.hw_enc_args(12) + [work, "-y"])
-        N = h29.frame_count(work)
+        N = frame_count_fast(work)
         if sw: sw.mark("cfr_enc")
     return src, work, info, N
 
@@ -611,7 +627,7 @@ def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500):
     def _dl_one(k):
         with open(seg_paths[k], "wb") as f:
             f.write(tmp_download(pid, f"seg_{k}.mp4"))
-        counts[k] = h29.frame_count(seg_paths[k])
+        counts[k] = frame_count_fast(seg_paths[k])
     if stream:
         pending = set(range(parts))
         deadline = time.time() + wait_s
@@ -662,7 +678,8 @@ def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500):
         h29.run(["ffmpeg", "-v", "error", "-f", "concat", "-safe", "0", "-i", lst,
                  "-c", "copy", "-movflags", "+faststart", outp, "-y"])
     sw.mark("concat")
-    fin_n = h29.frame_count(outp)
+    fin_n = frame_count_fast(outp)
+    sw.mark("cnt_out")
     if fin_n != N:
         raise RuntimeError(f"[v32] 최종 프레임 수 {fin_n} != N {N}")
     dest = f"{proj['user_id']}/wm_v32_{pid}.mp4"
