@@ -1,0 +1,14 @@
+fault,desc,layer1_detects,issues,time_s
+F01,끝 truncate,True,"packet_count 571!=600;decode_fail@19.2s:[mov,mp4,m4a,3gp,3g2,mj2 @ 0x557bdd704f40] Packet corrupt (stream = 0, dts = 290816).",1.1
+F02,중간 4KB 손상,True,decode_fail@10.0s:[vist#0:0/h264 @ 0x55ea2507fc40] corrupt decoded frame,2.9
+F03,세그 누락,True,duration 15.07;packet_count 452!=600,5.0
+F04,세그 중복,True,"duration 25.36;packet_count 760!=600;decode_fail@10.0s:[null @ 0x55939bd6f840] Application provided invalid, non monotonically inc",1.0
+F05,순서 변경,True,duration 21.15;packet_count 652!=600,5.2
+F06,TS 불연속,True,duration 23.00;audio_duration 20.00,5.1
+F07,비디오 없음,True,no_video_stream,0.1
+F08,오디오 없음,True,no_audio_stream,4.6
+F09,오디오 길이,True,audio_duration 10.00,8.0
+F10,FPS 메타,True,fps 25.000;duration 23.91;audio_duration 20.00,4.2
+F11,끝 GOP 손상,True,decode_fail@19.2s:[NULL @ 0x55dd2b2a4e80] Invalid NAL unit size (-559030611 > 48358).,1.1
+F12,중간 512B 손상,False,,4.7
+REF,정상,False,,4.7
