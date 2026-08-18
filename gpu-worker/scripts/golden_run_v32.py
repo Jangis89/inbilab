@@ -144,14 +144,18 @@ def lpips_sampled(ref, dist, every=30):
     return round(sum(vals) / len(vals), 4) if vals else None
 
 
-def region_metrics(inp_fp, out_fp, regions):
-    """실영상용: (a) 출력의 감지영역 잔존 글자 비율 (b) 영역 깜빡임 배율."""
+def region_metrics(inp_fp, out_fp, regions, g=None, crop_dir=None):
+    """실영상용 지표 + 증거 수집:
+    (a) 잔존 글자 비율 — 입력과 출력을 '같은 검출기'로 검사해 오탐 보정
+    (b) 영역 깜빡임 배율
+    (c) 증거 크롭 저장 — 검출기가 출력에서 글자를 봤다고 주장하는 프레임의 전/후 비교"""
     import cv2, numpy as np
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     import handler as h29
     ci, co = cv2.VideoCapture(inp_fp), cv2.VideoCapture(out_fp)
-    n_checked = resid = 0
+    n_checked = resid_o = resid_i = 0
     flick_in = []; flick_out = []
+    saved = 0
     prev_o = None
     i = 0
     while True:
@@ -159,14 +163,24 @@ def region_metrics(inp_fp, out_fp, regions):
         if not (ri and ro):
             break
         if i % 10 == 0:
-            for reg in regions:
+            for rj, reg in enumerate(regions):
                 x, y, w, h = reg["x"], reg["y"], reg["w"], reg["h"]
-                crop_o = fo_[y:y + h, x:x + w]
+                crop_o = np.ascontiguousarray(fo_[y:y + h, x:x + w, ::-1])  # BGR→RGB
+                crop_i = np.ascontiguousarray(fi_[y:y + h, x:x + w, ::-1])
                 try:
-                    cl = h29.glyph_clusters(crop_o)
+                    cl_o = h29.glyph_clusters(crop_o)
+                    cl_i = h29.glyph_clusters(crop_i)
                     n_checked += 1
-                    if cl:
-                        resid += 1
+                    if cl_o:
+                        resid_o += 1
+                        if crop_dir and saved < 6:
+                            pair = np.concatenate([crop_i[:, :, ::-1], crop_o[:, :, ::-1]], axis=1)
+                            cv2.imwrite(os.path.join(crop_dir,
+                                        f"{g}_f{i}_r{rj}_inVSout.jpg"), pair,
+                                        [cv2.IMWRITE_JPEG_QUALITY, 88])
+                            saved += 1
+                    if cl_i:
+                        resid_i += 1
                 except Exception:
                     pass
         if prev_o is not None and i % 3 == 0:
@@ -180,13 +194,58 @@ def region_metrics(inp_fp, out_fp, regions):
         prev_o = fo_
         i += 1
     ci.release(); co.release()
-    rr = round(resid / max(1, n_checked), 4)
+    rr = round(resid_o / max(1, n_checked), 4)
+    rr_in = round(resid_i / max(1, n_checked), 4)
     fr = round((sum(flick_in) / max(1e-6, len(flick_in))) /
                max(1e-6, sum(flick_out) / max(1e-6, len(flick_out))), 2)
-    return rr, fr
+    return rr, fr, rr_in
 
 
-def run_one(pid, g, has_gt, tmp):
+def psnr_split(gt_fp, out_fp, regions, g=None, crop_dir=None, every=5):
+    """GT쌍용: 영역 안/밖 PSNR 분리 — 밖이 낮으면 인코딩/정렬 문제, 안만 낮으면 복원 차이.
+    최악 프레임 전/후 크롭도 저장."""
+    import cv2, numpy as np
+    ca, cb = cv2.VideoCapture(gt_fp), cv2.VideoCapture(out_fp)
+    se_in = n_in = se_out = n_out = 0.0
+    worst = []  # (mse_in, i, gt_crop, out_crop)
+    i = 0
+    while True:
+        ra, fa = ca.read(); rb, fb = cb.read()
+        if not (ra and rb):
+            break
+        if i % every == 0:
+            m = np.zeros(fa.shape[:2], bool)
+            for reg in regions:
+                m[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]] = True
+            d = (fa.astype(np.float64) - fb.astype(np.float64)) ** 2
+            dm = d.mean(axis=2)
+            if m.any():
+                se_in += float(dm[m].sum()); n_in += int(m.sum())
+                mi = float(dm[m].mean())
+                if regions:
+                    reg = regions[0]
+                    worst.append((mi, i,
+                                  fa[reg["y"]:reg["y"]+reg["h"], reg["x"]:reg["x"]+reg["w"]].copy(),
+                                  fb[reg["y"]:reg["y"]+reg["h"], reg["x"]:reg["x"]+reg["w"]].copy()))
+            if (~m).any():
+                se_out += float(dm[~m].sum()); n_out += int((~m).sum())
+        i += 1
+    ca.release(); cb.release()
+    import math
+    def _p(se, n):
+        if n == 0: return None
+        mse = se / n
+        return round(10 * math.log10(255 * 255 / max(mse, 1e-9)), 2)
+    if crop_dir and worst:
+        worst.sort(key=lambda t: -t[0])
+        for mi, fi_, ga, gb in worst[:3]:
+            pair = np.concatenate([ga, gb], axis=1)
+            cv2.imwrite(os.path.join(crop_dir, f"{g}_f{fi_}_gtVSout.jpg"), pair,
+                        [cv2.IMWRITE_JPEG_QUALITY, 88])
+    return _p(se_in, n_in), _p(se_out, n_out)
+
+
+def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None):
     scan_fn = modal.Function.from_name(APP, "scan_v32_cpu")
     seg_fn = modal.Function.from_name(APP, "segment_v32_gpu")
     fin_fn = modal.Function.from_name(APP, "finish_v32_cpu")
@@ -208,24 +267,28 @@ def run_one(pid, g, has_gt, tmp):
     plan = json.loads(requests.get(
         f"{SB_URL}/storage/v1/object/videos-clips/wmtmp-v32/{pid}/plan.json",
         headers=sbh(), timeout=60).content.decode())
-    segs = [seg_fn.spawn({"input": {"project_id": pid, "phase": "segment_v32",
-                                    "part": p, "key_step": KEY_STEP}}) for p in range(K)]
-    fin_call = fin_fn.spawn({"input": {"project_id": pid, "phase": "finish_v32",
-                                       "parts": K, "t0": t0, "stream": True}})
-    seg_out = []
-    for c in segs:
-        try:
-            seg_out.append(c.get(timeout=1200))
-        except Exception as e:
-            seg_out.append({"error": str(e)[:200]})
-    fin = fin_call.get(timeout=900)
-    rec = {"g": g, "pid": pid, "total_s": round(time.time() - t0, 1),
-           "scan_regions": scan.get("regions"), "segments": seg_out, "finish": fin,
+    rec = {"g": g, "pid": pid,
+           "scan_regions": scan.get("regions"),
            "plan_regions": [{k: r0[k] for k in ("kind", "x", "y", "w", "h")}
                             for r0 in plan.get("regions", [])]}
-    if fin.get("error") or not fin.get("ok"):
-        rec["result"] = "FINISH_FAIL"
-        return rec
+    if not skip_run:
+        segs = [seg_fn.spawn({"input": {"project_id": pid, "phase": "segment_v32",
+                                        "part": p, "key_step": KEY_STEP}}) for p in range(K)]
+        fin_call = fin_fn.spawn({"input": {"project_id": pid, "phase": "finish_v32",
+                                           "parts": K, "t0": t0, "stream": True}})
+        seg_out = []
+        for c in segs:
+            try:
+                seg_out.append(c.get(timeout=1200))
+            except Exception as e:
+                seg_out.append({"error": str(e)[:200]})
+        fin = fin_call.get(timeout=900)
+        rec["total_s"] = round(time.time() - t0, 1)
+        rec["segments"] = seg_out
+        rec["finish"] = fin
+        if fin.get("error") or not fin.get("ok"):
+            rec["result"] = "FINISH_FAIL"
+            return rec
     # 결과 다운로드
     uid = requests.get(f"{SB_URL}/rest/v1/sc_projects",
                        params={"id": f"eq.{pid}", "select": "user_id"},
@@ -248,12 +311,17 @@ def run_one(pid, g, has_gt, tmp):
         download("videos-clips", f"{GOLD_PFX}/{g}_clean.mp4", gt_fp)
         psnr, ssim = psnr_ssim(gt_fp, out_fp)
         rec["psnr"], rec["ssim"] = psnr, ssim
+        rec["psnr_in_region"], rec["psnr_out_region"] = psnr_split(
+            gt_fp, out_fp, rec["plan_regions"], g=g, crop_dir=crop_dir)
         rec["vmaf"] = vmaf(gt_fp, out_fp)
         rec["lpips"] = lpips_sampled(gt_fp, out_fp)
+        # 판정: 영역 밖은 원본과 사실상 동일해야 하고(>=40), 전체는 원기준
         pass_q = (psnr or 0) >= GATE["psnr"] and (ssim or 0) >= GATE["ssim"]
     else:
-        rr, fr = region_metrics(inp_fp, out_fp, rec["plan_regions"])
+        rr, fr, rr_in = region_metrics(inp_fp, out_fp, rec["plan_regions"],
+                                       g=g, crop_dir=crop_dir)
         rec["residual_ratio"], rec["flicker_ratio"] = rr, fr
+        rec["residual_ratio_input"] = rr_in
         pass_q = rr <= GATE["residual_ratio_max"] and fr <= GATE["flicker_ratio_max"]
     rec["quality_pass"] = bool(pass_q and basic_ok)
     rec["fallback_needed"] = not rec["quality_pass"]
@@ -269,12 +337,17 @@ def main():
                             headers=sbh(), timeout=60).json()
     ensure_golden_sources(manifest)
     tmp = tempfile.mkdtemp(prefix="goldenrun-")
+    skip_run = os.environ.get("GOLDEN_SKIP_RUN") == "1"
+    crop_dir = "golden_review"
+    os.makedirs(crop_dir, exist_ok=True)
+    if skip_run:
+        print("[golden] 분석 전용 모드 — GPU 재실행 없이 기존 출력물 검사")
     recs = []
     for i, m in enumerate(manifest):
         pid = f"beac0002-0000-4000-8000-0000000000{i+1:02d}"
         print(f"\n===== {m['g']} ({m['kind']}) =====")
         try:
-            rec = run_one(pid, m["g"], m["has_gt"], tmp)
+            rec = run_one(pid, m["g"], m["has_gt"], tmp, skip_run=skip_run, crop_dir=crop_dir)
         except Exception as e:
             rec = {"g": m["g"], "result": "ERROR", "error": f"{type(e).__name__}: {e}"[:300]}
         rec["kind"] = m["kind"]
@@ -290,12 +363,13 @@ def main():
               open("GOLDEN_QUALITY_REPORT.json", "w"), ensure_ascii=False, indent=1)
     lines = ["# V32 골든 영상 품질 리포트", "",
              f"통과 {n_ok}/{len(recs)} — 실패: {summary['fail'] or '없음'}", "",
-             "| g | 종류 | 결과 | PSNR | SSIM | VMAF | LPIPS | 잔존비율 | 깜빡임배율 | 처리(s) |",
+             "| g | 종류 | 결과 | PSNR | PSNR영역내 | PSNR영역외 | SSIM | 잔존(출력/입력) | 깜빡임 | 처리(s) |",
              "|---|---|---|---|---|---|---|---|---|---|"]
     for r in recs:
-        lines.append("| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
-            r.get("g"), r.get("kind"), r.get("result"), r.get("psnr", ""), r.get("ssim", ""),
-            r.get("vmaf", ""), r.get("lpips", ""), r.get("residual_ratio", ""),
+        lines.append("| {} | {} | {} | {} | {} | {} | {} | {}/{} | {} | {} |".format(
+            r.get("g"), r.get("kind"), r.get("result"), r.get("psnr", ""),
+            r.get("psnr_in_region", ""), r.get("psnr_out_region", ""), r.get("ssim", ""),
+            r.get("residual_ratio", ""), r.get("residual_ratio_input", ""),
             r.get("flicker_ratio", ""), r.get("total_s", "")))
     open("GOLDEN_QUALITY_REPORT.md", "w").write("\n".join(lines) + "\n")
     print("\n[SUMMARY]", json.dumps(summary, ensure_ascii=False))
