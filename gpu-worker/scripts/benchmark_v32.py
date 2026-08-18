@@ -152,6 +152,9 @@ def one_run(k, warm_n, key_step, run_id):
         segs.append(seg_fn.spawn({"input": {"project_id": BENCH_PID, "phase": "segment_v32",
                                             "part": p, "key_step": key_step}}))
     rec["t_first_dispatch"] = round(time.time() - t0, 1)
+    # 스트리밍 마무리: 세그 도착을 finish node가 폴링하며 즉시 다운로드·검증 (Phase 1)
+    fin_call = fin_fn.spawn({"input": {"project_id": BENCH_PID, "phase": "finish_v32",
+                                       "parts": k, "t0": t0, "stream": True}})
     warm_results = []
     for c in warm_calls:
         try:
@@ -196,10 +199,10 @@ def one_run(k, warm_n, key_step, run_id):
         rec["total_s"] = round(time.time() - t0, 1)
         return rec
 
-    fin = fin_fn.remote({"input": {"project_id": BENCH_PID, "phase": "finish_v32",
-                                   "parts": k, "t0": t0,
-                                   "tms": {"scan": scan.get("tms"),
-                                           "seg": [s.get("tms") for s in seg_out]}}})
+    try:
+        fin = fin_call.get(timeout=600)
+    except Exception as e:
+        fin = {"error": f"finish: {e}"}
     rec["finish"] = fin
     rec["total_s"] = round(time.time() - t0, 1)
     rec["result"] = "OK" if fin.get("ok") else "FINISH_FAIL"
