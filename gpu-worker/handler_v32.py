@@ -112,12 +112,17 @@ def _s3_client():
     _S3_CACHED["tried"] = True
     kid = os.environ.get("SUPABASE_S3_ACCESS_KEY_ID", "")
     sec = os.environ.get("SUPABASE_S3_SECRET_ACCESS_KEY", "")
-    if not kid or not sec or "PLACEHOLDER" in (kid, sec):
+    _S3_CACHED["diag"] = {"key_len": len(kid), "sec_len": len(sec),
+                          "placeholder": ("PLACEHOLDER" in kid) or ("PLACEHOLDER" in sec),
+                          "region": os.environ.get("SUPABASE_S3_REGION", "(없음)"), "errors": []}
+    if not kid or not sec or "PLACEHOLDER" in kid or "PLACEHOLDER" in sec:
+        _S3_CACHED["diag"]["why"] = "키 없음 또는 PLACEHOLDER"
         return None
     try:
         import boto3
         from botocore.config import Config
-    except Exception:
+    except Exception as e:
+        _S3_CACHED["diag"]["why"] = f"boto3 import 실패: {type(e).__name__}"
         return None
     region = os.environ.get("SUPABASE_S3_REGION", "ap-northeast-2")
     eps = [e for e in [os.environ.get("SUPABASE_S3_ENDPOINT"),
@@ -134,8 +139,10 @@ def _s3_client():
             c.head_bucket(Bucket="videos-clips")
             _S3_CACHED.update(c=c, ep=ep)
             return c
-        except Exception:
+        except Exception as e:
+            _S3_CACHED["diag"]["errors"].append(f"{ep.split('/')[2]}: {type(e).__name__}: {str(e)[:160]}")
             continue
+    _S3_CACHED["diag"]["why"] = "모든 endpoint 연결 실패"
     return None
 
 
@@ -673,7 +680,8 @@ def upbench_v32(proj, tmp, inp):
     다운로드도 직렬 vs Range 병렬을 함께 계측. 테스트 객체는 끝나면 삭제."""
     t_begin = time.time()
     res = {"phase": "upbench_v32", "s3_enabled": _s3_client() is not None,
-           "s3_endpoint": _S3_CACHED.get("ep"), "dl": [], "up": []}
+           "s3_endpoint": _S3_CACHED.get("ep"), "s3_diag": _S3_CACHED.get("diag"),
+           "dl": [], "up": []}
     url = h29.signed_url(proj["source_path"], 7200)
     f = os.path.join(tmp, "payload.mp4")
     t = time.time(); h29.download_to(url, f)
