@@ -702,6 +702,19 @@ def detect_windowed_transient_overlays(samples, W, H, scan_step, fps,
                 # (밴드 자체 추정이 성공하면 그것을 쓰고, 실패/밝은 카드일 때만 사용)
                 if entry is not None:
                     host.setdefault("card_blends", []).append(entry)
+                    # 카드 rect 안의 정적 영역은 제거 — 카드가 '있던' 원본으로
+                    # 획을 복원해 un-blend 결과 위에 잔상을 덧칠한다 (run98 실측).
+                    # 카드 글자는 밴드의 프레임별 감지가 담당 (로컬 검증: 키 30/30).
+                    for sr in list(prior_regions or []):
+                        if not str(sr.get("kind", "")).startswith("static"):
+                            continue
+                        if sr["x"] >= rx0 - 8 and sr["y"] >= ry0 - 8 \
+                                and sr["x"] + sr["w"] <= rx1 + 8 \
+                                and sr["y"] + sr["h"] <= ry1 + 8:
+                            try:
+                                prior_regions.remove(sr)
+                            except ValueError:
+                                pass
                 continue
             if cov > 0.95 and entry is None:
                 continue    # 상시 카드인데 추정도 실패 — 기존 경로 유지 (오탐/오처리 방지)
@@ -1355,6 +1368,19 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                     if size_ok and 0.2 <= float(cb["s"]) <= 0.85:
                         est = (float(cb["s"]), np.array(cb["t"], np.float32))
                         box_stats["box_scan_blend"] = box_stats.get("box_scan_blend", 0) + 1
+                        # 카드 테두리는 내부보다 불투명해 un-blend 후 halo가 남는다
+                        # → 테두리 링(±10px)을 AI 마스크에 추가 (un-blend된 배경 위 복원)
+                        for i2 in gkeys:
+                            r2b = rects_by_key[i2]
+                            ox0 = max(0, r2b[0] - 10); oy0 = max(0, r2b[1] - 10)
+                            ox1 = min(ww, r2b[2] + 10); oy1 = min(hh, r2b[3] + 10)
+                            ring_m = np.zeros((hh, ww), np.uint8)
+                            ring_m[oy0:oy1, ox0:ox1] = 255
+                            ix0 = min(ww, r2b[0] + 10); iy0 = min(hh, r2b[1] + 10)
+                            ix1 = max(0, r2b[2] - 10); iy1 = max(0, r2b[3] - 10)
+                            if ix1 > ix0 and iy1 > iy0:
+                                ring_m[iy0:iy1, ix0:ix1] = 0
+                            raw[i2] = np.maximum(raw[i2], ring_m)
                         break
             if est is None or est[0] < 0.25:
                 # 불투명(또는 추정 실패): AI 복원 경로
