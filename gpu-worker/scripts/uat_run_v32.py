@@ -49,8 +49,9 @@ def clone_project(src_row, uat_pid, idx):
            "source_bytes": src_row.get("source_bytes"),
            "source_duration_sec": src_row.get("source_duration_sec"),
            "probe": src_row.get("probe"),
-           "objective": "wm_remove", "status": "wm_queued",
-           "status_detail": "v32 uat", "wm_mode": "auto", "wm_tier": "fast"}
+           "objective": "wm_remove", "status": "wm_done",
+           "status_detail": "v32 staging UAT (검증용 복제본 — 사이트에서 처리하지 마세요)",
+           "wm_mode": "auto", "wm_tier": "fast"}
     r = requests.post(f"{SB_URL}/rest/v1/sc_projects",
                       headers=sbh({"Content-Type": "application/json",
                                    "Prefer": "resolution=merge-duplicates,return=minimal"}),
