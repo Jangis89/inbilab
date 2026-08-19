@@ -281,6 +281,7 @@ def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None, kind=None):
         headers=sbh(), timeout=60).content.decode())
     rec = {"g": g, "pid": pid,
            "scan_regions": scan.get("regions"),
+           "veto_dbg": scan.get("veto_dbg"),
            "plan_regions": [{k: r0[k] for k in ("kind", "x", "y", "w", "h")}
                             for r0 in plan.get("regions", [])]}
     if not skip_run:
