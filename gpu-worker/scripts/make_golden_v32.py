@@ -180,13 +180,119 @@ def make_goldens(tmp):
     return out
 
 
+# ---- RC2 Phase E: transient positive 5종 (g16~g20, clean GT 보유) ----
+def make_transient_goldens(tmp, master):
+    f_kr, f_en = font(True), font(False)
+    styles = [
+        # T01(g16): 10~30초 구간형 — 저대비 반투명 카드 (6~14s만 등장)
+        ("g16", f"drawtext=fontfile={f_kr}:text='잠깐 나타나는 카드 자막':fontsize=52:"
+                f"fontcolor=0x202020:box=1:boxcolor=white@0.55:boxborderw=22:"
+                f"x=(w-text_w)/2:y=(h-text_h)/2-120:enable='between(t,6,14)'"),
+        # T02(g17): 화면 중앙 짧은 반투명 텍스트 워터마크 (4~9s)
+        ("g17", f"drawtext=fontfile={f_en}:text='SAMPLE MARK':fontsize=64:"
+                f"fontcolor=white@0.45:borderw=2:bordercolor=black@0.35:"
+                f"x=(w-text_w)/2:y=(h-text_h)/2:enable='between(t,4,9)'"),
+        # T03(g18): 천천히 이동하는 반투명 워터마크 (3~16s)
+        ("g18", f"drawtext=fontfile={f_en}:text='@channel_mark':fontsize=54:"
+                f"fontcolor=white@0.5:borderw=2:bordercolor=black@0.3:"
+                f"x=(w-text_w)/2+60*sin(t/3):y=(h-text_h)/2+40*sin(t/4):"
+                f"enable='between(t,3,16)'"),
+        # T05(g20): 간헐 재등장 반투명 카드 (2~5, 8~11, 14~17s)
+        ("g20", f"drawtext=fontfile={f_kr}:text='간헐 등장 카드':fontsize=50:"
+                f"fontcolor=0x101010:box=1:boxcolor=white@0.6:boxborderw=20:"
+                f"x=(w-text_w)/2:y=(h-text_h)/2+60:"
+                f"enable='between(t,2,5)+between(t,8,11)+between(t,14,17)'"),
+    ]
+    out = []
+    for i, (g, flt) in enumerate(styles):
+        clean = os.path.join(tmp, f"{g}_clean.mp4")
+        run(["ffmpeg", "-v", "error", "-ss", str(20 + i * 25), "-t", str(DUR),
+             "-i", master, "-vf", f"crop=1080:1080:0:300,fps={FPS}", "-an",
+             "-c:v", "libx264", "-crf", "16", "-preset", "medium", clean, "-y"])
+        burned = os.path.join(tmp, f"{g}_input.mp4")
+        run(["ffmpeg", "-v", "error", "-i", clean, "-vf", flt,
+             "-c:v", "libx264", "-crf", "16", "-preset", "medium", burned, "-y"])
+        out.append((g, clean, burned, "gt-transient"))
+    # T04(g19): scene cut 전후에 걸치는 lower-third 카드 (cut=t10, 카드 6~14s)
+    g = "g19"
+    clean = os.path.join(tmp, "g19_clean.mp4")
+    run(["ffmpeg", "-v", "error",
+         "-ss", "15", "-t", "10", "-i", master,
+         "-ss", "110", "-t", "10", "-i", master,
+         "-filter_complex",
+         f"[0:v]crop=1080:1080:0:300,fps={FPS}[a];[1:v]crop=1080:1080:0:600,fps={FPS}[b];"
+         f"[a][b]concat=n=2:v=1:a=0[c]",
+         "-map", "[c]", "-an", "-c:v", "libx264", "-crf", "16", "-preset", "medium",
+         clean, "-y"])
+    burned = os.path.join(tmp, "g19_input.mp4")
+    run(["ffmpeg", "-v", "error", "-i", clean, "-vf",
+         f"drawtext=fontfile={f_kr}:text='장면 전환을 걸치는 하단 카드':fontsize=48:"
+         f"fontcolor=white:box=1:boxcolor=0x123B70@0.6:boxborderw=18:"
+         f"x=(w-text_w)/2:y=h-260:enable='between(t,6,14)'",
+         "-c:v", "libx264", "-crf", "16", "-preset", "medium", burned, "-y"])
+    out.append(("g19", clean, burned, "gt-transient"))
+    return out
+
+
+# ---- RC2 Phase E: negative 5종 (g21~g25 — 실물 텍스트/사각형, 제거 0 요구) ----
+def _still_pan(tmp, master, g, ss, draw, pan_x="min(iw-1080\\,t*36)", pan_y="300",
+               pre_scale="scale=2160:-2"):
+    """마스터의 한 프레임을 큰 캔버스로 → 텍스트/도형을 '장면의 일부'로 구운 뒤
+    카메라 팬처럼 crop 창을 움직여 영상화 — 실물(장면 부착) 텍스트를 모사."""
+    still = os.path.join(tmp, f"{g}_still.png")
+    run(["ffmpeg", "-v", "error", "-ss", str(ss), "-i", master, "-frames:v", "1",
+         "-vf", pre_scale + ("," + draw if draw else ""), still, "-y"])
+    outp = os.path.join(tmp, f"{g}_input.mp4")
+    run(["ffmpeg", "-v", "error", "-loop", "1", "-i", still, "-t", str(DUR),
+         "-vf", f"crop=1080:1080:{pan_x}:{pan_y},fps={FPS}",
+         "-an", "-c:v", "libx264", "-crf", "16", "-preset", "medium", outp, "-y"])
+    return outp
+
+
+def make_negative_goldens(tmp, master):
+    f_kr, f_en = font(True), font(False)
+    out = []
+    # N01(g21): 장면 속 표지판 — 팬과 함께 움직이는 큰 글자
+    d = (f"drawbox=x=760:y=520:w=560:h=260:color=0x1B5E20@1:t=fill,"
+         f"drawtext=fontfile={f_kr}:text='주차금지':fontsize=96:fontcolor=white:"
+         f"x=800:y=560,drawtext=fontfile={f_en}:text='NO PARKING':fontsize=44:"
+         f"fontcolor=white:x=800:y=690")
+    out.append(("g21", None, _still_pan(tmp, master, "g21", 40, d), "negative"))
+    # N02(g22): 모니터 화면 — 사각 베젤+텍스트, 느린 팬
+    d = (f"drawbox=x=700:y=400:w=760:h=500:color=0x111111@1:t=fill,"
+         f"drawbox=x=730:y=430:w=700:h=440:color=0x2266AA@1:t=fill,"
+         f"drawtext=fontfile={f_en}:text='SYSTEM MONITOR':fontsize=52:fontcolor=white:"
+         f"x=760:y=470,drawtext=fontfile={f_en}:text='CPU 43  MEM 71':fontsize=40:"
+         f"fontcolor=0xCCEEFF:x=760:y=560")
+    out.append(("g22", None, _still_pan(tmp, master, "g22", 75, d,
+                                        pan_x="min(iw-1080\\,t*22)"), "negative"))
+    # N03(g23): 창문·문틀 — 글자 없는 강한 사각형들
+    d = ("drawbox=x=650:y=250:w=500:h=700:color=0x3E2B1F@1:t=24,"
+         "drawbox=x=700:y=300:w=190:h=280:color=0x87CEEB@1:t=fill,"
+         "drawbox=x=910:y=300:w=190:h=280:color=0x9AD1E8@1:t=fill,"
+         "drawbox=x=700:y=620:w=190:h=280:color=0x7FB8D6@1:t=fill,"
+         "drawbox=x=910:y=620:w=190:h=280:color=0x8FC4DE@1:t=fill")
+    out.append(("g23", None, _still_pan(tmp, master, "g23", 100, d,
+                                        pan_x="min(iw-1080\\,t*30)"), "negative"))
+    # N04(g24): 옷/물체에 인쇄된 글자 — 완만한 상하 흔들림 포함
+    d = (f"drawtext=fontfile={f_en}:text='SPORTS CLUB 88':fontsize=58:"
+         f"fontcolor=0xEEEEEE:borderw=1:bordercolor=0x555555:x=820:y=760")
+    out.append(("g24", None, _still_pan(tmp, master, "g24", 130, d,
+                                        pan_x="min(iw-1080\\,t*26)",
+                                        pan_y="280+20*sin(t*1.7)"), "negative"))
+    # N05(g25): 고정카메라 정적 장면 — 오버레이 없음, 미세 드리프트만
+    out.append(("g25", None, _still_pan(tmp, master, "g25", 55, "",
+                                        pan_x="8*sin(t/5)+40", pan_y="300"), "negative"))
+    return out
+
+
 def ensure_projects():
     src = requests.get(f"{SB_URL}/rest/v1/sc_projects",
                        params={"id": f"eq.{SRC_PROJECT}", "select": "user_id"},
                        headers=sbh(), timeout=30)
     src.raise_for_status()
     uid = src.json()[0]["user_id"]
-    for i in range(1, 16):
+    for i in range(1, 26):
         pid = f"beac0002-0000-4000-8000-0000000000{i:02d}"
         g = f"g{i:02d}"
         r = requests.get(f"{SB_URL}/rest/v1/sc_projects",
@@ -208,8 +314,23 @@ def ensure_projects():
 
 def main():
     tmp = tempfile.mkdtemp(prefix="golden-")
-    made = make_goldens(tmp)
-    manifest = []
+    # 기존 manifest 재사용 — 이미 있는 골든(g01~g15)은 절대 다시 만들지 않는다
+    # (기존 15/15 기준선 보존). 새 항목(g16~g25)만 추가 제작.
+    try:
+        prev = requests.get(f"{SB_URL}/storage/v1/object/videos-clips/{GOLD_PFX}/manifest.json",
+                            headers=sbh(), timeout=60).json()
+        have = {m["g"] for m in prev}
+    except Exception:
+        prev, have = [], set()
+    made = []
+    if not have:
+        made += make_goldens(tmp)
+    master = os.path.join(tmp, "master.mp4")
+    if not os.path.exists(master):
+        download("videos-clips", MASTER_PATH, master)
+    made += [m for m in make_transient_goldens(tmp, master) if m[0] not in have]
+    made += [m for m in make_negative_goldens(tmp, master) if m[0] not in have]
+    manifest = list(prev)
     for g, clean, inp, kind in made:
         if clean:
             upload("videos-clips", f"{GOLD_PFX}/{g}_clean.mp4", clean)
@@ -218,6 +339,7 @@ def main():
         manifest.append({"g": g, "kind": kind, "has_gt": bool(clean),
                          "bytes": os.path.getsize(inp)})
         print(f"[golden] {g} ({kind}) 업로드 완료 {os.path.getsize(inp)/1e6:.1f}MB")
+    manifest.sort(key=lambda m: m["g"])
     ensure_projects()
     with open(os.path.join(tmp, "manifest.json"), "w") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=1)
