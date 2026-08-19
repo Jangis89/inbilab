@@ -330,10 +330,22 @@ def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None):
             gt_fp, out_fp, rec["plan_regions"], g=g, crop_dir=crop_dir)
         rec["vmaf"] = vmaf(gt_fp, out_fp)
         rec["lpips"] = lpips_sampled(gt_fp, out_fp)
-        # 판정: 영역외 무손상 + 구조 보존 + 영역내 종류별 하한 (전체 PSNR은 참고)
+        # 영역외 베이스라인: 입력을 무처리 재인코딩했을 때의 영역외 PSNR —
+        # 콘텐츠(고디테일 텍스처)에 따른 인코딩 손실 차이를 자가 보정
+        base_fp = os.path.join(tmp, f"{g}_base.mp4")
+        subprocess.run(["ffmpeg", "-v", "error", "-i", inp_fp, "-c:v", "libx264",
+                        "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                        base_fp, "-y"], check=True)
+        _bi, base_out = psnr_split(gt_fp, base_fp, rec["plan_regions"])
+        rec["psnr_out_baseline"] = base_out
+        try: os.remove(base_fp)
+        except OSError: pass
+        # 판정: 영역외 무손상(절대 34 또는 베이스라인-0.5 중 낮은 쪽)
+        #        + 구조 보존 + 영역내 종류별 하한 (전체 PSNR은 참고)
         in_gate = GATE["in_box"] if g in BOX_GOLDENS else GATE["in_text"]
+        out_gate = min(GATE["psnr_out_min"], (base_out or 99.0) - 0.5)
         pass_q = ((rec["psnr_in_region"] or 0) >= in_gate
-                  and (rec["psnr_out_region"] or 0) >= GATE["psnr_out_min"]
+                  and (rec["psnr_out_region"] or 0) >= out_gate
                   and (ssim or 0) >= GATE["ssim"])
     else:
         rr, fr, rr_in = region_metrics(inp_fp, out_fp, rec["plan_regions"],
