@@ -736,6 +736,30 @@ def detect_windowed_transient_overlays(samples, W, H, scan_step, fps,
                 skip_static = True; break
         if skip_static:
             continue
+        # Type B 영역 확장: 존재 구간의 글자 상자 union으로 넓힌다 —
+        # 넓은 캡션의 좌우 꼬리가 클러스터 밖이면 잔존 (2차 UAT 실측).
+        # 2회 반복(연결 확장), 성장 한도 각 방향 +260px.
+        ex0, ey0, ex1, ey1 = bx0, by0, bx1, by1
+        for _pass in range(2):
+            for si in c["hits"]:
+                if not pres[si]:
+                    continue
+                for x0, y0, x1, y1 in items_t[si]:
+                    # 가로로만 잇는다(같은 줄의 꼬리 글자) — 세로 확장은 이웃
+                    # 자막 줄을 삼켜 영역이 폭주 (UAT-01 실측)
+                    if x0 < ex1 + 60 and x1 > ex0 - 60 and y0 < ey1 + 8 and y1 > ey0 - 8:
+                        ex0 = min(ex0, x0); ey0 = min(ey0, y0)
+                        ex1 = max(ex1, x1); ey1 = max(ey1, y1)
+        ex0 = max(bx0 - 260, ex0); ey0 = max(by0 - 40, ey0)
+        ex1 = min(bx1 + 260, ex1); ey1 = min(by1 + 40, ey1)
+        if (ex0, ey0, ex1, ey1) != (bx0, by0, bx1, by1):
+            fx0 = max(0, ex0 - 24); fy0 = max(0, ey0 - 24)
+            gw = min(W, ex1 + 24) - fx0; gh = min(H, ey1 + 24) - fy0
+            gw = max(48, gw // 16 * 16); gh = max(48, gh // 16 * 16)
+            fx0 = max(0, min(fx0, W - gw)); fy0 = max(0, min(fy0, H - gh))
+            area_frac = gw * gh / float(W * H)
+            if area_frac > 0.10:
+                continue                         # 확장 후에도 대면적 금지
         # Type B — 워터마크: "구간별" 시간축 누적 마스크 (전 구간 union은
         # 서로 다른 시점의 글자 자리를 전부 합쳐 AI가 넓게 뭉갬 — run91 실측).
         # 구간마다 그 구간의 글자 상자 union + edge 지속성만 마스크로 만든다.
