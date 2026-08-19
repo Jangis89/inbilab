@@ -712,19 +712,17 @@ def detect_windowed_transient_overlays(samples, W, H, scan_step, fps,
                 # (밴드 자체 추정이 성공하면 그것을 쓰고, 실패/밝은 카드일 때만 사용)
                 if entry is not None:
                     host.setdefault("card_blends", []).append(entry)
-                    # 카드 rect 안의 정적 영역은 제거 — 카드가 '있던' 원본으로
-                    # 획을 복원해 un-blend 결과 위에 잔상을 덧칠한다 (run98 실측).
-                    # 카드 글자는 밴드의 프레임별 감지가 담당 (로컬 검증: 키 30/30).
-                    for sr in list(prior_regions or []):
+                    # 카드 rect 안의 정적 영역(시간축 글자 감지)은 유지하되,
+                    # 그 영역에는 카드 un-blend를 '선적용'하도록 표시한다 —
+                    # 제거하면 일부 구간에서 글자가 남고(run102 t15 실측),
+                    # 그냥 두면 카드-존재 원본으로 복원해 잔상을 덧칠(run98 실측).
+                    for sr in (prior_regions or []):
                         if not str(sr.get("kind", "")).startswith("static"):
                             continue
                         if sr["x"] >= rx0 - 8 and sr["y"] >= ry0 - 8 \
                                 and sr["x"] + sr["w"] <= rx1 + 8 \
                                 and sr["y"] + sr["h"] <= ry1 + 8:
-                            try:
-                                prior_regions.remove(sr)
-                            except ValueError:
-                                pass
+                            sr["card_unblend"] = dict(entry)
                 continue
             if cov > 0.95 and entry is None:
                 continue    # 상시 카드인데 추정도 실패 — 기존 경로 유지 (오탐/오처리 방지)
@@ -1211,6 +1209,15 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
         masks = h29._limit_masks_range(masks, n, reg_l)
         return masks, sum(1 for m in masks if m is not None and m.any())
     if "static_pack" in reg:
+        cu = reg.get("card_unblend")
+        if cu and 0.15 <= float(cu["s"]) <= 0.9:
+            s_u = float(cu["s"]); t_u = np.array(cu["t"], np.float32)
+            for li in range(n):
+                fr = frames_local[li]
+                if not fr.flags.writeable:
+                    fr = fr.copy(); frames_local[li] = fr
+                fr[:] = np.clip((fr.astype(np.float32) - t_u) / s_u, 0, 255) \
+                    .astype(np.uint8)
         m = _unpack_static(reg)
         if reg.get("ivals"):
             # transient: 등장 구간 밖은 zero mask → 조각 계획·AI 비용이 구간 안으로 제한.
