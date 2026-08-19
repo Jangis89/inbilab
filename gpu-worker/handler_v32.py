@@ -442,6 +442,8 @@ def _scene_text_veto(regions, items_t, samples, W, H):
         (dx, dy), _resp = cv2.phaseCorrelate(gq[i - 1], gq[i], win)
         gdx[i] = dx / sc; gdy[i] = dy / sc        # 전역 배경(콘텐츠) 이동 (원본 px)
     out = []
+    dbg = []
+    _scene_text_veto._last_dbg = dbg
     for reg in regions:
         kind = str(reg.get("kind", ""))
         if not (kind.startswith("subtitle") or kind.startswith("label")):
@@ -459,15 +461,18 @@ def _scene_text_veto(regions, items_t, samples, W, H):
         ok_i = [i for i in range(1, n)
                 if not (np.isnan(mx[i]) or np.isnan(mx[i - 1]))]
         if len(ok_i) < 6:
+            dbg.append({"k": kind, "why": "pairs<6", "pairs": len(ok_i)})
             out.append(reg); continue
         idx = np.array(ok_i)
         ddx = mx[idx] - mx[idx - 1]; ddy = my[idx] - my[idx - 1]
         gx = gdx[idx]; gy = gdy[idx]
         move = float(np.sum(np.hypot(gx, gy)))
         if move < 60.0:
+            dbg.append({"k": kind, "why": "move<60", "move": round(move, 1)})
             out.append(reg); continue             # 카메라가 거의 안 움직임 — 판정 불가
         big = np.hypot(gx, gy) > 1.5              # 실제로 움직인 표본만
         if big.sum() < 5:
+            dbg.append({"k": kind, "why": "big<5", "big": int(big.sum())})
             out.append(reg); continue
         a = np.concatenate([ddx[big], ddy[big]])
         b = np.concatenate([gx[big], gy[big]])
@@ -477,7 +482,12 @@ def _scene_text_veto(regions, items_t, samples, W, H):
         slope = float(np.sum(a * b) / max(1e-6, np.sum(b * b)))
         need_corr = 0.7 if big.sum() >= 8 else 0.8   # 표본 적으면 더 강한 상관 요구
         if corr > need_corr and 0.5 <= slope <= 1.6:
+            dbg.append({"k": kind, "why": "VETO", "corr": round(corr, 2),
+                        "slope": round(slope, 2), "move": round(move, 1)})
             continue                              # 장면 부착 텍스트 — 영역 제외
+        dbg.append({"k": kind, "why": "keep", "corr": round(corr, 2),
+                    "slope": round(slope, 2), "move": round(move, 1),
+                    "pairs": len(ok_i), "big": int(big.sum())})
         out.append(reg)
     return out
 
@@ -967,7 +977,8 @@ def scan_v32(proj, tmp, scan_step=12, seg_k=10):
     tmp_upload(pid, "plan.json", json.dumps(plan).encode(), "application/json")
     sw.mark("plan_up")
     return {"phase": "scan_v32", "regions": len(plan_regions), "N": N,
-            "segments": segments, "ver": V32_VER, "tms": sw.out()}
+            "segments": segments, "ver": V32_VER, "tms": sw.out(),
+            "veto_dbg": getattr(_scene_text_veto, "_last_dbg", None)}
 
 
 # ---------------- 박스형(예능체·반투명) 자막 오버레이 감지 (Phase B) ----------------
