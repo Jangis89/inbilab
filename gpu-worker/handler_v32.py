@@ -423,6 +423,65 @@ def detect_static_overlays(samples, W, H):
     return regs
 
 
+def _scene_text_veto(regions, items_t, samples, W, H):
+    """실물(장면 부착) 텍스트 보호 (RC2 Phase D — 골든 g21/g22 실측 오탐 수정).
+    오버레이 글자는 카메라가 움직여도 화면 좌표가 고정이지만, 표지판·모니터 등
+    장면 속 실물 글자는 전역 움직임(팬)을 그대로 따라간다.
+    밴드/라벨 영역별로 '영역 안 글자들의 중앙 x·y'가 전역 이동과 강하게
+    같이 움직이면(상관>0.7, 이동량 충분) 그 영역을 계획에서 제외한다."""
+    if not items_t or len(samples) < 16:
+        return regions
+    n = len(samples)
+    sc = 256.0 / max(W, H)
+    sw2, sh2 = max(32, int(W * sc) // 2 * 2), max(32, int(H * sc) // 2 * 2)
+    gq = [cv2.resize(cv2.cvtColor(f, cv2.COLOR_RGB2GRAY), (sw2, sh2),
+                     interpolation=cv2.INTER_AREA).astype(np.float32) for f in samples]
+    win = cv2.createHanningWindow((sw2, sh2), cv2.CV_32F)
+    gdx = np.zeros(n); gdy = np.zeros(n)
+    for i in range(1, n):
+        (dx, dy), _resp = cv2.phaseCorrelate(gq[i - 1], gq[i], win)
+        gdx[i] = dx / sc; gdy[i] = dy / sc        # 전역 배경(콘텐츠) 이동 (원본 px)
+    out = []
+    for reg in regions:
+        kind = str(reg.get("kind", ""))
+        if not (kind.startswith("subtitle") or kind.startswith("label")):
+            out.append(reg); continue
+        mx = np.full(n, np.nan); my = np.full(n, np.nan)
+        for i, its in enumerate(items_t):
+            xs = [(b[0] + b[2]) / 2 for b in its or []
+                  if b[1] < reg["y"] + reg["h"] and b[3] > reg["y"]
+                  and b[0] < reg["x"] + reg["w"] and b[2] > reg["x"]]
+            ys = [(b[1] + b[3]) / 2 for b in its or []
+                  if b[1] < reg["y"] + reg["h"] and b[3] > reg["y"]
+                  and b[0] < reg["x"] + reg["w"] and b[2] > reg["x"]]
+            if xs:
+                mx[i] = float(np.median(xs)); my[i] = float(np.median(ys))
+        ok_i = [i for i in range(1, n)
+                if not (np.isnan(mx[i]) or np.isnan(mx[i - 1]))]
+        if len(ok_i) < 6:
+            out.append(reg); continue
+        idx = np.array(ok_i)
+        ddx = mx[idx] - mx[idx - 1]; ddy = my[idx] - my[idx - 1]
+        gx = gdx[idx]; gy = gdy[idx]
+        move = float(np.sum(np.hypot(gx, gy)))
+        if move < 60.0:
+            out.append(reg); continue             # 카메라가 거의 안 움직임 — 판정 불가
+        big = np.hypot(gx, gy) > 1.5              # 실제로 움직인 표본만
+        if big.sum() < 5:
+            out.append(reg); continue
+        a = np.concatenate([ddx[big], ddy[big]])
+        b = np.concatenate([gx[big], gy[big]])
+        if float(np.std(a)) < 1e-3 or float(np.std(b)) < 1e-3:
+            out.append(reg); continue
+        corr = float(np.corrcoef(a, b)[0, 1])
+        slope = float(np.sum(a * b) / max(1e-6, np.sum(b * b)))
+        need_corr = 0.7 if big.sum() >= 8 else 0.8   # 표본 적으면 더 강한 상관 요구
+        if corr > need_corr and 0.5 <= slope <= 1.6:
+            continue                              # 장면 부착 텍스트 — 영역 제외
+        out.append(reg)
+    return out
+
+
 def detect_windowed_transient_overlays(samples, W, H, scan_step, fps,
                                        prior_regions=None, items_t=None):
     """구간별로 잠깐 나타나는 반투명 오버레이 감지 (RC2 Phase C).
@@ -790,6 +849,12 @@ def scan_v32(proj, tmp, scan_step=12, seg_k=10):
             if c: regions.append(c)
         try:
             regions.extend(detect_static_overlays(samples, W, H))
+        except Exception:
+            pass
+        try:
+            regions = _scene_text_veto(
+                regions, getattr(detect_sub_bands_shm, "_last_items_t", None),
+                samples, W, H)
         except Exception:
             pass
         try:
