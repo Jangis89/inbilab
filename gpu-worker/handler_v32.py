@@ -322,6 +322,80 @@ def detect_sub_bands_shm(samples, W, H):
             except Exception: pass
 
 
+def detect_static_overlays(samples, W, H):
+    """전 구간 고정 오버레이 감지 (Phase 2 UAT hotfix — 자막 밴드가 놓치는
+    고정 자막 획·워터마크·불투명 카드). corner 감지와 동일 원리를 전면으로 확장:
+    시간축 max-min≤22(정적) & 시간축 median gradient>14(무늬).
+    글자 성분들을 인접 병합하고, 채움률 낮은 카드형은 rect 전체를 마스크로.
+    반환: static_mask region 목록 (최대 3개, 총면적 프레임 10% 한도)."""
+    sub = samples[::3][:60]
+    if len(sub) < 8:
+        return []
+    g = np.stack([cv2.cvtColor(f, cv2.COLOR_RGB2GRAY) for f in sub])
+    mx = g.max(0).astype(np.int32); mn = g.min(0).astype(np.int32)
+    static = (mx - mn) <= 22
+    if static.mean() > 0.5:
+        return []                      # 전면 정지 영상 — 신뢰 불가
+    med = np.median(g, 0).astype(np.int32)
+    gx = np.abs(np.diff(med, axis=1)); gx = np.pad(gx, ((0, 0), (0, 1)))
+    gy = np.abs(np.diff(med, axis=0)); gy = np.pad(gy, ((0, 1), (0, 0)))
+    sig = (static & ((gx + gy) > 14)).astype(np.uint8)
+    d = cv2.dilate(sig, np.ones((3, 3), np.uint8), iterations=6)
+    ncc, lab, stats, _c = cv2.connectedComponentsWithStats(d)
+    boxes = []
+    for i in range(1, ncc):
+        x, y, w2, h2, area = stats[i]
+        if area < 300 or area > W * H * 0.10:
+            continue
+        boxes.append([int(x), int(y), int(x + w2), int(y + h2)])
+    # 인접 성분 병합 (가로 글자열·카드 글자 묶음)
+    merged = True
+    while merged and len(boxes) > 1:
+        merged = False
+        out = []
+        while boxes:
+            b = boxes.pop()
+            j = 0
+            while j < len(boxes):
+                o = boxes[j]
+                if not (b[2] + 48 < o[0] or o[2] + 48 < b[0]
+                        or b[3] + 48 < o[1] or o[3] + 48 < b[1]):
+                    b = [min(b[0], o[0]), min(b[1], o[1]),
+                         max(b[2], o[2]), max(b[3], o[3])]
+                    boxes.pop(j); merged = True
+                else:
+                    j += 1
+            out.append(b)
+        boxes = out
+    boxes.sort(key=lambda b: -(b[2] - b[0]) * (b[3] - b[1]))
+    regs = []
+    total_px = 0
+    for b in boxes[:3]:
+        x0, y0, x1, y1 = b
+        gx0 = max(0, x0 - 24); gy0 = max(0, y0 - 24)
+        gx1 = min(W, x1 + 24); gy1 = min(H, y1 + 24)
+        gw = (gx1 - gx0) // 16 * 16
+        gh = (gy1 - gy0) // 16 * 16
+        if gw < 48: gw = 48
+        if gh < 48: gh = 48
+        gx0 = max(0, min(gx0, W - gw)); gy0 = max(0, min(gy0, H - gh))
+        if total_px + gw * gh > W * H * 0.10:
+            continue
+        total_px += gw * gh
+        crop_d = d[gy0:gy0 + gh, gx0:gx0 + gw]
+        crop_static = static[gy0:gy0 + gh, gx0:gx0 + gw]
+        fill = float(crop_d.mean())
+        if fill < 0.5 and float(crop_static.mean()) > 0.8:
+            # 카드형(불투명 균일면 위 글자): rect 전체 복원
+            m = np.full((gh, gw), 255, np.uint8)
+        else:
+            m = (cv2.dilate(crop_d, np.ones((3, 3), np.uint8), iterations=3) * 255
+                 ).astype(np.uint8)
+        regs.append({"x": int(gx0), "y": int(gy0), "w": int(gw), "h": int(gh),
+                     "kind": "static" + str(len(regs)), "static_mask": m})
+    return regs
+
+
 # ---------------- 단계: scan (가벼운 계획 — 영역·구간만, 마스크 없음) ----------------
 def scan_v32(proj, tmp, scan_step=12, seg_k=10):
     pid = proj["id"]
@@ -346,6 +420,10 @@ def scan_v32(proj, tmp, scan_step=12, seg_k=10):
         for side in ("tl", "tr"):
             c = h29.detect_corner_from(samples, W, H, side)
             if c: regions.append(c)
+        try:
+            regions.extend(detect_static_overlays(samples, W, H))
+        except Exception:
+            pass
         del samples
         sw.mark("scan")
     # 박스형 자막: 감지 영역이 박스보다 좁으면 세그 단계에서 복원 불가 →

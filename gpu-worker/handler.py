@@ -666,7 +666,7 @@ def _bands_from_hits(hits, W, H):
     groups.sort(key=lambda g: -len(g["items"]))
     bands = []
     for g in groups:
-        if len(bands) >= 4: break   # 최대 4줄, 단 총높이 1280px 한도(메모리 보호)
+        if len(bands) >= 6: break   # 최대 6줄(실영상 다중 위치 자막), 총높이 한도(메모리 보호)
         top = max(0, int(min(a for a, b in g["items"]) - 40))
         bot = min(H, int(max(b for a, b in g["items"]) + 40))
         bh = floor16(bot - top)
@@ -675,7 +675,7 @@ def _bands_from_hits(hits, W, H):
         bx = (W - bw) // 2
         by = clamp(top, 0, H - bh)
         if any(not (by + bh <= b2["y"] or b2["y"] + b2["h"] <= by) for b2 in bands): continue
-        if sum(b2["h"] for b2 in bands) + bh > 1280: continue   # 총높이 한도
+        if sum(b2["h"] for b2 in bands) + bh > 1792: continue   # 총높이 한도
         bands.append({"x": bx, "y": by, "w": bw, "h": bh, "kind": "subtitle" + str(len(bands))})
     return bands
 
