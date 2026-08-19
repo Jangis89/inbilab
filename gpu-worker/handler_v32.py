@@ -625,6 +625,7 @@ def detect_windowed_transient_overlays(samples, W, H, scan_step, fps,
             total_px += aw * ah
             regs.append({"x": int(ax0), "y": int(ay0), "w": int(aw), "h": int(ah),
                          "kind": "transient_box" + str(len(regs)), "ivals": ivals,
+                         "force_ai": True,   # 밝은 반투명 카드 un-blend 오추정 방지 (run91 실측)
                          "conf": "high" if inshot >= 1 else "medium", "src": "windowed"})
             continue
         if cov > 0.95:
@@ -642,39 +643,47 @@ def detect_windowed_transient_overlays(samples, W, H, scan_step, fps,
                 skip_static = True; break
         if skip_static:
             continue
-        # Type B — 워터마크: 시간축 누적 마스크: 존재 샘플의 글자 상자 union + edge 지속성
-        m = np.zeros((gh, gw), np.uint8)
-        for si in c["hits"]:
-            if not pres[si]:
-                continue
-            for x0, y0, x1, y1 in items_t[si]:
-                if x1 < fx0 or x0 > fx0 + gw or y1 < fy0 or y0 > fy0 + gh:
+        # Type B — 워터마크: "구간별" 시간축 누적 마스크 (전 구간 union은
+        # 서로 다른 시점의 글자 자리를 전부 합쳐 AI가 넓게 뭉갬 — run91 실측).
+        # 구간마다 그 구간의 글자 상자 union + edge 지속성만 마스크로 만든다.
+        iv_masks = []
+        for (a0, b0) in ivs:
+            m = np.zeros((gh, gw), np.uint8)
+            for si in c["hits"]:
+                if not (a0 <= si < b0):
                     continue
-                mx0 = max(0, x0 - fx0 - 2); my0 = max(0, y0 - fy0 - 2)
-                mx1 = min(gw, x1 - fx0 + 3); my1 = min(gh, y1 - fy0 + 3)
-                if mx1 > mx0 and my1 > my0:
-                    m[my0:my1, mx0:mx1] = 255
-        sel = [i for i in range(n) if pres[i]][:48]
-        acc = np.zeros((gh, gw), np.float32)
-        for i in sel:
-            g = cv2.cvtColor(samples[i][fy0:fy0 + gh, fx0:fx0 + gw],
-                             cv2.COLOR_RGB2GRAY).astype(np.int16)
-            gx = np.abs(np.diff(g, axis=1)); gx = np.pad(gx, ((0, 0), (0, 1)))
-            gy = np.abs(np.diff(g, axis=0)); gy = np.pad(gy, ((0, 1), (0, 0)))
-            acc += ((gx + gy) > 18)
-        esig = (acc / max(1, len(sel)) > 0.6).astype(np.uint8) * 255
-        near = cv2.dilate((m > 0).astype(np.uint8), np.ones((3, 3), np.uint8),
-                          iterations=11) > 0          # 글자 union의 ±32px 근방
-        esig[~near] = 0                               # 배경 edge가 마스크를 삼키는 것 방지
-        m = cv2.dilate(np.maximum(m, esig), np.ones((3, 3), np.uint8), iterations=2)
-        if float((m > 0).mean()) < 0.005:
+                for x0, y0, x1, y1 in items_t[si]:
+                    if x1 < fx0 or x0 > fx0 + gw or y1 < fy0 or y0 > fy0 + gh:
+                        continue
+                    mx0 = max(0, x0 - fx0 - 2); my0 = max(0, y0 - fy0 - 2)
+                    mx1 = min(gw, x1 - fx0 + 3); my1 = min(gh, y1 - fy0 + 3)
+                    if mx1 > mx0 and my1 > my0:
+                        m[my0:my1, mx0:mx1] = 255
+            sel = list(range(a0, min(b0, a0 + 48)))
+            acc = np.zeros((gh, gw), np.float32)
+            for i in sel:
+                g = cv2.cvtColor(samples[i][fy0:fy0 + gh, fx0:fx0 + gw],
+                                 cv2.COLOR_RGB2GRAY).astype(np.int16)
+                gx = np.abs(np.diff(g, axis=1)); gx = np.pad(gx, ((0, 0), (0, 1)))
+                gy = np.abs(np.diff(g, axis=0)); gy = np.pad(gy, ((0, 1), (0, 0)))
+                acc += ((gx + gy) > 18)
+            esig = (acc / max(1, len(sel)) > 0.6).astype(np.uint8) * 255
+            near = cv2.dilate((m > 0).astype(np.uint8), np.ones((3, 3), np.uint8),
+                              iterations=11) > 0      # 글자 union의 ±32px 근방
+            esig[~near] = 0                           # 배경 edge 삼킴 방지
+            iv_masks.append(cv2.dilate(np.maximum(m, esig),
+                                       np.ones((3, 3), np.uint8), iterations=2))
+        if not any(float((m > 0).mean()) >= 0.005 for m in iv_masks):
             continue
         if total_px + gw * gh > W * H * 0.12:
             continue
         total_px += gw * gh
+        union = iv_masks[0].copy()
+        for m in iv_masks[1:]:
+            union = np.maximum(union, m)
         regs.append({"x": int(fx0), "y": int(fy0), "w": int(gw), "h": int(gh),
-                     "kind": "transient" + str(len(regs)), "static_mask": m,
-                     "ivals": ivals,
+                     "kind": "transient" + str(len(regs)), "static_mask": union,
+                     "ival_masks": iv_masks, "ivals": ivals,
                      "conf": "high" if (inshot >= 1 and support >= 0.3) else "medium",
                      "src": "windowed"})
     return regs
@@ -765,9 +774,13 @@ def scan_v32(proj, tmp, scan_step=12, seg_k=10):
         return {"note": "no_target"}
     plan_regions = []
     for reg in regions:
-        reg2 = {k: v for k, v in reg.items() if k != "static_mask"}
+        reg2 = {k: v for k, v in reg.items() if k not in ("static_mask", "ival_masks")}
         if reg.get("static_mask") is not None:
             reg2.update(_pack_static(reg["static_mask"]))
+        if reg.get("ival_masks"):
+            reg2["ival_packs"] = [
+                base64.b64encode(np.packbits(m > 20).tobytes()).decode()
+                for m in reg["ival_masks"]]
         plan_regions.append(reg2)
     K = max(1, min(int(seg_k), 16))
     segments = [[k * N // K, (k + 1) * N // K] for k in range(K)]
@@ -1012,13 +1025,28 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
     if "static_pack" in reg:
         m = _unpack_static(reg)
         if reg.get("ivals"):
-            # transient: 등장 구간 밖은 zero mask → 조각 계획·AI 비용이 구간 안으로 제한
+            # transient: 등장 구간 밖은 zero mask → 조각 계획·AI 비용이 구간 안으로 제한.
+            # 구간별 마스크(ival_packs)가 있으면 각 구간은 자기 구간의 글자 자리만 가린다
+            # (전 구간 union은 넓은 뭉갬 유발 — run91 실측).
+            hh2, ww2 = reg["static_shape"]
+            iv_m = None
+            if reg.get("ival_packs"):
+                iv_m = []
+                for p in reg["ival_packs"]:
+                    bits = np.frombuffer(base64.b64decode(p), np.uint8)
+                    iv_m.append((np.unpackbits(bits, count=hh2 * ww2)
+                                 .reshape(hh2, ww2) * 255).astype(np.uint8))
             zeros = np.zeros_like(m)
             out = []; cnt = 0
             for li in range(n):
                 gi = li + e0_global
-                if any(int(a) <= gi < int(b) for a, b in reg["ivals"]):
-                    out.append(m); cnt += 1
+                pick = None
+                for k2, (a, b) in enumerate(reg["ivals"]):
+                    if int(a) <= gi < int(b):
+                        pick = iv_m[k2] if iv_m is not None else m
+                        break
+                if pick is not None and pick.any():
+                    out.append(pick); cnt += 1
                 else:
                     out.append(zeros)
             return out, cnt
@@ -1143,7 +1171,15 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                 box_stats["box_rej"] += 1
                 continue
             box_stats["box_keys"] += len(gkeys)
-            est = _estimate_blend_group(frames_local, rects_by_key, gkeys, raw, hh, ww)
+            est = None if reg.get("force_ai") else \
+                _estimate_blend_group(frames_local, rects_by_key, gkeys, raw, hh, ww)
+            # 밝은 반투명 카드는 un-blend 추정이 불안정(어두운 잔상 실측, RC2 run91)
+            # → 복원 색이 밝으면(t/(1-s)>150) AI 경로로 강제
+            if est is not None and est[0] >= 0.25:
+                s_chk, t_chk = est
+                bright = float(np.mean(t_chk)) / max(0.05, 1.0 - float(s_chk))
+                if bright > 150.0:
+                    est = None
             if est is None or est[0] < 0.25:
                 # 불투명(또는 추정 실패): AI 복원 경로
                 box_stats["box_ai"] += 1
@@ -1263,6 +1299,8 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
             t2["scale"] = 1.0
         if bs and bs.get("box_ai"):
             t2["scale"] = 1.0     # 불투명 박스 AI 복원은 원해상도로 (뭉개짐 방지)
+        if str(reg.get("kind", "")).startswith("transient"):
+            t2["scale"] = 1.0     # transient 마스크 복원도 원해상도 (뭉갬 방지, 구간 제한이라 저비용)
         rest = {}
         for c in chunks:
             # 이 세그먼트 소유 프레임과 무관한 조각은 건너뜀
