@@ -600,22 +600,52 @@ def detect_windowed_transient_overlays(samples, W, H, scan_step, fps,
                  for iv in ivs]
         if len(rect_votes) >= 2 and cov > 0.95 and len(cuts) < 3:
             continue    # 상시 카드인데 장면전환도 거의 없음 — 실물 오인 위험, 정적 몫
-        if len(rect_votes) >= 2 and cov > 0.95:
-            # 상시 카드가 기존 영역(밴드 등) 안에 이미 있으면 기존 경로 유지 —
-            # 골든(상시 박스자막) 동작 불변 보장. 기존 영역 밖 상시 카드만 신규 처리.
+        if len(rect_votes) >= 2:
+            # Type A — 반투명 카드. 장시간 분산비로 (α, 카드색) 추정:
+            # 카드 안 밝기 분산은 배경 분산의 (1-α)² 배 — 175초 표본이면 안정
+            # (UAT-02 실측: 채널별 α 0.496/0.509/0.515, C≈흰색 248 — 일관).
+            # 카드는 장면마다 위치가 바뀔 수 있다(UAT-02 실측) — vote마다
+            # "그 시점 주변 ±10초 × 그 시점의 rect"로 나눠 추정하고 합산
+            vote_est = []
+            for vi, v in enumerate(rect_votes):
+                vrx0 = v[0] + px0; vry0 = v[1] + py0
+                vrx1 = v[2] + px0; vry1 = v[3] + py0
+                mid = mid_idx[min(vi, len(mid_idx) - 1)]
+                sel_v = [i for i in range(max(0, mid - 25), min(n, mid + 25)) if pres[i]]
+                b = _ring_variance_blend(samples, sel_v, vrx0, vry0, vrx1, vry1, W, H,
+                                         min_sel=8)
+                if b is not None:
+                    vote_est.append(b)
+            blend = None
+            if len(vote_est) >= 2:
+                ss2 = [b[0] for b in vote_est]
+                if max(ss2) - min(ss2) <= 0.15:      # 시점 간 일관성
+                    s_f = round(float(np.mean(ss2)), 4)
+                    t_f = [round(float(np.mean([b[1][c] for b in vote_est])), 2)
+                           for c in range(3)]
+                    blend = (s_f, t_f)
+            rx0 = min(v[0] for v in rect_votes) + px0; ry0 = min(v[1] for v in rect_votes) + py0
+            rx1 = max(v[2] for v in rect_votes) + px0; ry1 = max(v[3] for v in rect_votes) + py0
             cb_a = max(1, (bx1 - bx0) * (by1 - by0))
-            inside = False
+            host = None
             for r in (prior_regions or []):
                 ix = max(0, min(bx1, r["x"] + r["w"]) - max(bx0, r["x"]))
                 iy = max(0, min(by1, r["y"] + r["h"]) - max(by0, r["y"]))
-                if ix * iy >= 0.85 * cb_a:
-                    inside = True; break
-            if inside:
+                if ix * iy >= 0.85 * cb_a and rx0 >= r["x"] - 8 and ry0 >= r["y"] - 8 \
+                        and rx1 <= r["x"] + r["w"] + 8 and ry1 <= r["y"] + r["h"] + 8:
+                    host = r; break
+            entry = None
+            if blend is not None:
+                entry = {"rect": [int(rx0), int(ry0), int(rx1), int(ry1)],
+                         "s": blend[0], "t": blend[1]}
+            if host is not None:
+                # 기존 밴드가 crop하는 영역 — 밴드의 box 경로에 추정값만 공급
+                # (밴드 자체 추정이 성공하면 그것을 쓰고, 실패/밝은 카드일 때만 사용)
+                if entry is not None:
+                    host.setdefault("card_blends", []).append(entry)
                 continue
-        if len(rect_votes) >= 2:
-            # Type A — 카드: rect 전체를 포함하는 영역을 표준 경로로 (box un-blend/AI)
-            rx0 = min(v[0] for v in rect_votes) + px0; ry0 = min(v[1] for v in rect_votes) + py0
-            rx1 = max(v[2] for v in rect_votes) + px0; ry1 = max(v[3] for v in rect_votes) + py0
+            if cov > 0.95 and entry is None:
+                continue    # 상시 카드인데 추정도 실패 — 기존 경로 유지 (오탐/오처리 방지)
             ax0 = max(0, rx0 - 32); ay0 = max(0, ry0 - 32)
             aw = min(W, rx1 + 32) - ax0; ah = min(H, ry1 + 32) - ay0
             aw = max(48, aw // 16 * 16); ah = max(48, ah // 16 * 16)
@@ -623,10 +653,14 @@ def detect_windowed_transient_overlays(samples, W, H, scan_step, fps,
             if total_px + aw * ah > W * H * 0.12:
                 continue
             total_px += aw * ah
-            regs.append({"x": int(ax0), "y": int(ay0), "w": int(aw), "h": int(ah),
-                         "kind": "transient_box" + str(len(regs)), "ivals": ivals,
-                         "force_ai": True,   # 밝은 반투명 카드 un-blend 오추정 방지 (run91 실측)
-                         "conf": "high" if inshot >= 1 else "medium", "src": "windowed"})
+            reg_a = {"x": int(ax0), "y": int(ay0), "w": int(aw), "h": int(ah),
+                     "kind": "transient_box" + str(len(regs)), "ivals": ivals,
+                     "conf": "high" if inshot >= 1 else "medium", "src": "windowed"}
+            if entry is not None:
+                reg_a["card_blends"] = [entry]
+            else:
+                reg_a["force_ai"] = True   # 추정 실패 — AI 경로 (un-blend 오추정 방지)
+            regs.append(reg_a)
             continue
         if cov > 0.95:
             continue                             # 상시 존재 텍스트 = 전체 정적/코너 몫
@@ -687,6 +721,47 @@ def detect_windowed_transient_overlays(samples, W, H, scan_step, fps,
                      "conf": "high" if (inshot >= 1 and support >= 0.3) else "medium",
                      "src": "windowed"})
     return regs
+
+
+def _ring_variance_blend(samples, sel, rx0, ry0, rx1, ry1, W, H, min_sel=20):
+    """반투명 카드 (s=1-α, t=α·C) 추정 — 경계 인접 픽셀쌍 회귀.
+    카드 안쪽 가장자리(+4px)의 실제 배경은 바로 바깥(+8px) 픽셀과 연속이므로
+    obs_in = s·obs_out + t 를 표본 프레임들에서 강건 회귀로 푼다
+    (UAT-02 실측: 5회 반복 수렴 s=0.502, α=0.498, C≈254 — 채널 일관).
+    검증: 인라이어 40%+, 0.15≤s≤0.9, 카드색 -20..300. 실패 시 None."""
+    if len(sel) < min_sel or rx1 - rx0 < 120 or ry1 - ry0 < 50:
+        return None
+    xa = rx0 + int(0.2 * (rx1 - rx0)); xb = rx0 + int(0.8 * (rx1 - rx0))
+    if ry0 - 8 < 0 or ry1 + 8 >= H:
+        return None
+    X = []; Y = []
+    for i in sel[:: max(1, len(sel) // 60)]:
+        fr = samples[i].astype(np.float32)
+        Y.append(fr[ry0 + 4, xa:xb]); X.append(fr[ry0 - 8, xa:xb])
+        Y.append(fr[ry1 - 4, xa:xb]); X.append(fr[ry1 + 8, xa:xb])
+    X = np.concatenate(X).reshape(-1, 3); Y = np.concatenate(Y).reshape(-1, 3)
+    if len(X) < 400:
+        return None
+    keep = np.ones(len(X), bool)
+    s = 1.0; t = np.zeros(3, np.float32)
+    for _it in range(5):
+        if keep.sum() < 200:
+            return None
+        Xa = np.concatenate([X[keep][:, c] for c in range(3)])
+        Ya = np.concatenate([Y[keep][:, c] for c in range(3)])
+        if float(Xa.std()) < 10.0:
+            return None                  # 경계 밖 배경 대비 부족 — 추정 불가
+        s, _b = np.polyfit(Xa, Ya, 1)
+        t = np.array([np.median(Y[keep][:, c] - s * X[keep][:, c]) for c in range(3)])
+        res = np.abs(Y - (s * X + t)).mean(1)
+        keep = res < 10
+    if float(keep.mean()) < 0.4 or not (0.15 <= s <= 0.9):
+        return None
+    alpha = 1.0 - float(s)
+    C = [float(tc) / max(alpha, 1e-3) for tc in t]
+    if not all(-20.0 <= c <= 300.0 for c in C):
+        return None
+    return round(float(s), 4), [round(float(tc), 2) for tc in t]
 
 
 # ---------------- 단계: scan (가벼운 계획 — 영역·구간만, 마스크 없음) ----------------
@@ -1173,13 +1248,25 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
             box_stats["box_keys"] += len(gkeys)
             est = None if reg.get("force_ai") else \
                 _estimate_blend_group(frames_local, rects_by_key, gkeys, raw, hh, ww)
-            # 밝은 반투명 카드는 un-blend 추정이 불안정(어두운 잔상 실측, RC2 run91)
-            # → 복원 색이 밝으면(t/(1-s)>150) AI 경로로 강제
+            # 밝은 반투명 카드는 그룹 un-blend 추정이 불안정(어두운 잔상 실측, run91)
+            # → 복원 색이 밝으면(t/(1-s)>150) 그룹 추정을 버린다
             if est is not None and est[0] >= 0.25:
                 s_chk, t_chk = est
                 bright = float(np.mean(t_chk)) / max(0.05, 1.0 - float(s_chk))
                 if bright > 150.0:
                     est = None
+            # 2차: scan이 장시간 분산비로 추정한 카드 (α, 색) — 그룹 추정 실패 시만
+            if (est is None or est[0] < 0.25) and reg.get("card_blends"):
+                gx0, gy0, gx1, gy1 = grect
+                for cb in reg["card_blends"]:
+                    # 카드가 장면마다 이동 — 위치 대신 크기 유사성으로 매칭
+                    cw = cb["rect"][2] - cb["rect"][0]; ch = cb["rect"][3] - cb["rect"][1]
+                    gw2 = gx1 - gx0; gh2 = gy1 - gy0
+                    size_ok = (0.5 * cw <= gw2 <= 2.0 * cw and 0.5 * ch <= gh2 <= 2.0 * ch)
+                    if size_ok and 0.2 <= float(cb["s"]) <= 0.85:
+                        est = (float(cb["s"]), np.array(cb["t"], np.float32))
+                        box_stats["box_scan_blend"] = box_stats.get("box_scan_blend", 0) + 1
+                        break
             if est is None or est[0] < 0.25:
                 # 불투명(또는 추정 실패): AI 복원 경로
                 box_stats["box_ai"] += 1
