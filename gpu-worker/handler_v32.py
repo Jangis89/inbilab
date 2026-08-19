@@ -926,10 +926,12 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                 open_r = x1 >= reg["w"] - 2 and reg["x"] + reg["w"] < W
                 open_t = y0 <= 2 and reg["y"] > 0
                 open_b = y1 >= reg["h"] - 2 and reg["y"] + reg["h"] < H
-                if open_l: gx0 = 0
-                if open_r: gx1 = W
-                if open_t: gy0 = 0
-                if open_b: gy1 = H
+                # 연장은 floor16 잔여 스트립 한도(16px)까지만 — 개방 경계 오탐이
+                # 프레임 전체를 오염시키는 회귀 방지 (run8 증거)
+                if open_l: gx0 = max(0, reg["x"] - 16)
+                if open_r: gx1 = min(W, reg["x"] + reg["w"] + 16)
+                if open_t: gy0 = max(0, reg["y"] - 16)
+                if open_b: gy1 = min(H, reg["y"] + reg["h"] + 16)
                 sub = frame[gy0:gy1, gx0:gx1].astype(np.float32) * gain + bias
                 fixed = np.clip(sub, 0, 255).astype(np.uint8)
                 fh, fw = fixed.shape[:2]
