@@ -367,6 +367,23 @@ def detect_static_overlays(samples, W, H):
                     j += 1
             out.append(b)
         boxes = out
+    # 어두운 반투명 박스 위 글자는 제외 — 그 영역은 box un-blend 경로가 담당
+    # (안쪽 링(+16px)이 바깥 링(+16~48px)보다 8 이상 어두우면 반투명 박스 위로 판정)
+    def _ring_vals(b, a, c):
+        x0, y0, x1, y1 = b
+        m = np.zeros(med.shape, bool)
+        m[max(0, y0 - c):min(H, y1 + c), max(0, x0 - c):min(W, x1 + c)] = True
+        m[max(0, y0 - a):min(H, y1 + a), max(0, x0 - a):min(W, x1 + a)] = False
+        return med[m]
+    kept = []
+    for b in boxes:
+        inner = _ring_vals(b, 0, 16)
+        outer = _ring_vals(b, 16, 48)
+        if inner.size >= 50 and outer.size >= 50 \
+                and float(np.mean(outer)) - float(np.mean(inner)) >= 8.0:
+            continue
+        kept.append(b)
+    boxes = kept
     boxes.sort(key=lambda b: -(b[2] - b[0]) * (b[3] - b[1]))
     regs = []
     total_px = 0
