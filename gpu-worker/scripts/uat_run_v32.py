@@ -82,7 +82,13 @@ def sign_url(bucket, path, expires=604800):
     return SB_URL + "/storage/v1" + r.json().get("signedURL", "")
 
 
-def run_one(idx, src_pid, rec):
+def run_one(idx, src_spec, rec):
+    # src_spec: "<원본pid>" 또는 "<원본pid>@NN" (NN = 복제 pid 접미번호, 충돌 방지)
+    if "@" in src_spec:
+        src_pid, suffix = src_spec.split("@", 1)
+        idx = int(suffix)
+    else:
+        src_pid = src_spec
     scan_fn = modal.Function.from_name(APP, "scan_v32_cpu")
     seg_fn = modal.Function.from_name(APP, "segment_v32_gpu")
     fin_fn = modal.Function.from_name(APP, "finish_v32_cpu")
