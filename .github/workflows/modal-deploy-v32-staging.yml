@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "deploy | bench | verify | clips | golden | goldenrun | queue | queuee2e | export"
+        description: "deploy | bench | verify | clips | golden | goldenrun | queue | queuee2e | export | uat"
         required: true
         default: "deploy"
       ref:
@@ -41,6 +41,10 @@ on:
         description: "queue 부하검사 동시 작업 수"
         required: false
         default: "3"
+      pids:
+        description: "UAT 원본 프로젝트 id (쉼표 구분)"
+        required: false
+        default: ""
 
 jobs:
   v32:
@@ -130,6 +134,25 @@ jobs:
         with:
           name: comp-clip-${{ github.run_id }}
           path: comp_clip.mp4
+          if-no-files-found: ignore
+      - name: UAT run (deep audit 100%)
+        if: ${{ github.event.inputs.action == 'uat' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          UAT_SRC_PIDS: ${{ github.event.inputs.pids }}
+        run: |
+          python -u gpu-worker/scripts/uat_run_v32.py --label "${{ github.event.inputs.label }}"
+      - name: Upload UAT artifacts
+        if: ${{ always() && github.event.inputs.action == 'uat' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: uat-v32-${{ github.run_id }}
+          path: |
+            UAT_RUN_REPORT.json
+            UAT_RUN_REPORT.md
           if-no-files-found: ignore
       - name: Queue staging E2E
         if: ${{ github.event.inputs.action == 'queuee2e' }}
