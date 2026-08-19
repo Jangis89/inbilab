@@ -369,6 +369,8 @@
     var st=p.status||"", d=p.status_detail||"";
     var msg=w.querySelector(".wl-msg"), eta=w.querySelector(".wl-eta"), done=w.querySelector(".wl-done");
     if(st==="wm_done"){
+      if(w.dataset.doneRendered==="1") return;   // 완료 카드는 한 번만 그린다 (재생 중 영상 끊김 방지)
+      w.dataset.doneRendered="1";
       var info={}; try{ info=JSON.parse(d); }catch(e){}
       w.querySelector(".steps").style.display="none"; msg.style.display="none"; eta.style.display="none";
       done.style.display="block";
@@ -420,7 +422,9 @@
       return a.created_at<b.created_at?1:(a.created_at>b.created_at?-1:0);
     });
     var keep={};
-    arr.forEach(function(p){ keep[p.id]=1; var w=rows[p.id]||makeRow(p.id,p.title); updateRow(w,p); $id("worklist").appendChild(w);
+    arr.forEach(function(p){ keep[p.id]=1; var w=rows[p.id]||makeRow(p.id,p.title); updateRow(w,p);
+      var vv=w.querySelector("video"), playing=vv&&!vv.paused&&!vv.ended;
+      if(!w.parentNode||!playing) $id("worklist").appendChild(w);   // 재생 중이면 자리 이동 생략 (끊김 방지)
       if(p.status!=="wm_done" && (p.status||"").indexOf("failed")!==0) active=true; });
     // 목록(최신 10개)에서 밀려난 옛 화면 조각은 제거 — 안 지우면 맨 위에 눌러앉아 순서가 꼬임
     Object.keys(rows).forEach(function(id){ if(!keep[id]&&rows[id]){ if(rows[id].parentNode) rows[id].parentNode.removeChild(rows[id]); delete rows[id]; } });
