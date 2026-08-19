@@ -424,11 +424,11 @@ def detect_static_overlays(samples, W, H):
 
 
 def _scene_text_veto(regions, items_t, samples, W, H):
-    """실물(장면 부착) 텍스트 보호 (RC2 Phase D — 골든 g21/g22 실측 오탐 수정).
-    오버레이 글자는 카메라가 움직여도 화면 좌표가 고정이지만, 표지판·모니터 등
-    장면 속 실물 글자는 전역 움직임(팬)을 그대로 따라간다.
-    밴드/라벨 영역별로 '영역 안 글자들의 중앙 x·y'가 전역 이동과 강하게
-    같이 움직이면(상관>0.7, 이동량 충분) 그 영역을 계획에서 제외한다."""
+    """실물(장면 부착) 텍스트 보호 (RC2 Phase D).
+    항목별 최근접 매칭: 연속 표본에서 같은 글자를 짝지어 이동량을 재고,
+    전역 배경 이동과 같이 움직인 짝(scene)과 화면 고정 짝(fixed)을 센다.
+    scene 비율이 높으면 그 영역은 실물 텍스트 — 계획에서 제외.
+    (중앙값 추적은 실물+기타가 섞이면 희석돼 실패 — run103 g21 corr 0.62 실측)"""
     if not items_t or len(samples) < 16:
         return regions
     n = len(samples)
@@ -441,53 +441,53 @@ def _scene_text_veto(regions, items_t, samples, W, H):
     for i in range(1, n):
         (dx, dy), _resp = cv2.phaseCorrelate(gq[i - 1], gq[i], win)
         gdx[i] = dx / sc; gdy[i] = dy / sc        # 전역 배경(콘텐츠) 이동 (원본 px)
+    move_total = float(np.sum(np.hypot(gdx, gdy)))
     out = []
     dbg = []
     _scene_text_veto._last_dbg = dbg
+    cents = [[((b2[0] + b2[2]) / 2.0, (b2[1] + b2[3]) / 2.0) for b2 in (its or [])]
+             for its in items_t]
     for reg in regions:
         kind = str(reg.get("kind", ""))
-        if not (kind.startswith("subtitle") or kind.startswith("label")):
+        if not (kind.startswith("subtitle") or kind.startswith("label")
+                or kind.startswith("static")):
             out.append(reg); continue
-        mx = np.full(n, np.nan); my = np.full(n, np.nan)
-        for i, its in enumerate(items_t):
-            xs = [(b[0] + b[2]) / 2 for b in its or []
-                  if b[1] < reg["y"] + reg["h"] and b[3] > reg["y"]
-                  and b[0] < reg["x"] + reg["w"] and b[2] > reg["x"]]
-            ys = [(b[1] + b[3]) / 2 for b in its or []
-                  if b[1] < reg["y"] + reg["h"] and b[3] > reg["y"]
-                  and b[0] < reg["x"] + reg["w"] and b[2] > reg["x"]]
-            if xs:
-                mx[i] = float(np.median(xs)); my[i] = float(np.median(ys))
-        ok_i = [i for i in range(1, n)
-                if not (np.isnan(mx[i]) or np.isnan(mx[i - 1]))]
-        if len(ok_i) < 6:
-            dbg.append({"k": kind, "why": "pairs<6", "pairs": len(ok_i)})
+        if move_total < 60.0:
+            dbg.append({"k": kind, "why": "move<60", "move": round(move_total, 1)})
             out.append(reg); continue
-        idx = np.array(ok_i)
-        ddx = mx[idx] - mx[idx - 1]; ddy = my[idx] - my[idx - 1]
-        gx = gdx[idx]; gy = gdy[idx]
-        move = float(np.sum(np.hypot(gx, gy)))
-        if move < 60.0:
-            dbg.append({"k": kind, "why": "move<60", "move": round(move, 1)})
-            out.append(reg); continue             # 카메라가 거의 안 움직임 — 판정 불가
-        big = np.hypot(gx, gy) > 1.5              # 실제로 움직인 표본만
-        if big.sum() < 5:
-            dbg.append({"k": kind, "why": "big<5", "big": int(big.sum())})
-            out.append(reg); continue
-        a = np.concatenate([ddx[big], ddy[big]])
-        b = np.concatenate([gx[big], gy[big]])
-        if float(np.std(a)) < 1e-3 or float(np.std(b)) < 1e-3:
-            out.append(reg); continue
-        corr = float(np.corrcoef(a, b)[0, 1])
-        slope = float(np.sum(a * b) / max(1e-6, np.sum(b * b)))
-        need_corr = 0.7 if big.sum() >= 8 else 0.8   # 표본 적으면 더 강한 상관 요구
-        if corr > need_corr and 0.5 <= slope <= 1.6:
-            dbg.append({"k": kind, "why": "VETO", "corr": round(corr, 2),
-                        "slope": round(slope, 2), "move": round(move, 1)})
+        rx0, ry0 = reg["x"], reg["y"]
+        rx1, ry1 = reg["x"] + reg["w"], reg["y"] + reg["h"]
+        scene_n = 0; fixed_n = 0
+        for i in range(1, n):
+            g = (gdx[i], gdy[i]); gm = float(np.hypot(*g))
+            if gm <= 1.5:
+                continue                          # 배경이 안 움직인 표본은 정보 없음
+            cur = [c for c in cents[i] if rx0 <= c[0] <= rx1 and ry0 <= c[1] <= ry1]
+            prev = cents[i - 1]
+            if not cur or not prev:
+                continue
+            for cx, cy in cur:
+                best = None; bd = 1e9
+                for px, py in prev:
+                    d2 = (cx - px) ** 2 + (cy - py) ** 2
+                    if d2 < bd:
+                        bd = d2; best = (px, py)
+                if best is None or bd > 120.0 ** 2:
+                    continue
+                ddx = cx - best[0]; ddy = cy - best[1]
+                err_scene = float(np.hypot(ddx - g[0], ddy - g[1]))
+                mag = float(np.hypot(ddx, ddy))
+                if err_scene < max(4.0, 0.35 * gm):
+                    scene_n += 1
+                elif mag < max(3.0, 0.25 * gm):
+                    fixed_n += 1
+        tot = scene_n + fixed_n
+        if scene_n >= 8 and tot > 0 and scene_n / float(tot) >= 0.7:
+            dbg.append({"k": kind, "why": "VETO", "scene": scene_n, "fixed": fixed_n,
+                        "move": round(move_total, 1)})
             continue                              # 장면 부착 텍스트 — 영역 제외
-        dbg.append({"k": kind, "why": "keep", "corr": round(corr, 2),
-                    "slope": round(slope, 2), "move": round(move, 1),
-                    "pairs": len(ok_i), "big": int(big.sum())})
+        dbg.append({"k": kind, "why": "keep", "scene": scene_n, "fixed": fixed_n,
+                    "move": round(move_total, 1)})
         out.append(reg)
     return out
 
