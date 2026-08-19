@@ -282,13 +282,22 @@ def _scan_block(args):
     out = []
     for i in idxs:
         ref = arr[i - 1] if i > 0 else (arr[1] if n > 1 else None)
-        out.append(_h._scan_boxes2((arr[i], ref)))
+        # _scan_boxes2와 동일 계산 + 글자 전체상자(items)도 수집 (transient 감지용,
+        # glyph_clusters는 어차피 계산되므로 추가 비용 없음)
+        cl = _h.glyph_clusters(arr[i])
+        lines = [(c["y0"], c["y1"]) for c in cl]
+        items = [(int(it["x0"]), int(it["y0"]), int(it["x1"]), int(it["y1"]))
+                 for c in cl for it in c["items"]]
+        labs = [(g["x0"], g["y0"], g["x1"], g["y1"])
+                for g in _h.glyph_labels(arr[i], ref)]
+        out.append((lines, labs, items))
     return out
 
 
 def detect_sub_bands_shm(samples, W, H):
     """h29.detect_sub_bands_from과 동일 결과 — 샘플 전달만 공유메모리 (그룹핑은 순서 무관)."""
     global _V32_POOL
+    detect_sub_bands_shm._last_items_t = None            # 폴백 시 transient 감지 생략
     n = len(samples)
     if n < 4:
         return h29.detect_sub_bands_from(samples, W, H)
@@ -304,10 +313,11 @@ def detect_sub_bands_shm(samples, W, H):
         jobs = [(shm.name, (n, hh, ww, 3), list(range(a, min(n, a + per_b))))
                 for a in range(0, n, per_b)]
         parts = _v32_scan_pool().map_async(_scan_block, jobs).get(timeout=600)
-        hits = []; labs = []
+        hits = []; labs = []; items_t = []
         for pt in parts:
-            for boxes, lb in pt:
-                hits.extend(boxes); labs.extend(lb)
+            for boxes, lb, items in pt:
+                hits.extend(boxes); labs.extend(lb); items_t.append(items)
+        detect_sub_bands_shm._last_items_t = items_t     # transient 감지가 재사용
         return h29._bands_from_hits(hits, W, H) + h29._label_regions_from(labs, W, H)
     except Exception:
         try:
@@ -413,6 +423,263 @@ def detect_static_overlays(samples, W, H):
     return regs
 
 
+def detect_windowed_transient_overlays(samples, W, H, scan_step, fps,
+                                       prior_regions=None, items_t=None):
+    """구간별로 잠깐 나타나는 반투명 오버레이 감지 (RC2 Phase C).
+    scan에서 이미 계산한 프레임별 글자 상자(items_t)를 시간·공간으로 묶어
+    기존 밴드·정적 감지가 놓치는 두 유형을 찾는다:
+      Type A(반투명 카드): 카드 rect를 포함하는 영역을 표준 경로로 내보내
+        기존 box 감지(un-blend/AI)가 박스째 처리하게 한다.
+      Type B(반투명 워터마크): 프레임별 감지가 끊기는(반투명 저대비) 글자를
+        시간축 누적 마스크(static_pack)+등장구간(ivals)으로 내보낸다 —
+        단일 프레임 glyph=0이어도 구간 증거로 제거 (명세 C.3).
+    구간(ivals)은 원해상도 crop의 edge 지속성 타임라인 + hysteresis로 정한다.
+    실물 오탐 방지: 장면 안(in-shot) 등장·퇴장 증거 또는 복수 구간 재등장 필수,
+    glyph 증거 필수, 저신뢰 대면적 mask 금지 (명세 D)."""
+    n = len(samples)
+    if n < 12 or fps <= 0 or not items_t:
+        return []
+    spf = scan_step / float(fps)                 # 샘플 1개당 초
+    # ---------- 1) 글자 지속성 히트맵 → 후보 클러스터 ----------
+    # 프레임별 글자 상자를 1/8 해상도 히트맵에 누적. '같은 자리에 글자가
+    # 오래 머무는' 픽셀(≥15% 샘플)만 남긴다 — 일반 자막은 글자가 계속
+    # 바뀌므로 픽셀 지속성이 낮아(≈0.07) 자동으로 걸러진다 (UAT-02 실측:
+    # 카드 0.72 / 巴图 0.24 / 자막 밴드 p90 0.07).
+    S8 = 8
+    hw8, hh8 = max(8, W // S8), max(8, H // S8)
+    acc = np.zeros((hh8, hw8), np.int32)
+    any_items = False
+    for its in items_t:
+        if not its:
+            continue
+        any_items = True
+        m8 = np.zeros((hh8, hw8), bool)
+        for x0, y0, x1, y1 in its:
+            m8[y0 // S8:(y1 // S8) + 1, x0 // S8:(x1 // S8) + 1] = True
+        acc += m8
+    if not any_items:
+        return []
+    frac8 = acc / float(n)
+    cand8 = (frac8 >= 0.15).astype(np.uint8)
+    if not cand8.any():
+        return []
+    cand8 = cv2.dilate(cand8, np.ones((3, 3), np.uint8), iterations=2)
+    ncc, lab8, stats8, _c8 = cv2.connectedComponentsWithStats(cand8)
+    cboxes = []
+    for ci in range(1, ncc):
+        x, y, w2, h2, area = stats8[ci]
+        if area < 20 or area > hw8 * hh8 * 0.12:
+            continue
+        cboxes.append([int(x * S8), int(y * S8),
+                       int((x + w2) * S8), int((y + h2) * S8)])
+    # 인접 병합 (가로 48px / 세로 16px — 서로 다른 오버레이가 상하로 붙는 것 방지)
+    merged = True
+    while merged and len(cboxes) > 1:
+        merged = False
+        out = []
+        while cboxes:
+            bb = cboxes.pop()
+            j = 0
+            while j < len(cboxes):
+                ob = cboxes[j]
+                if not (bb[2] + 48 < ob[0] or ob[2] + 48 < bb[0]
+                        or bb[3] + 16 < ob[1] or ob[3] + 16 < bb[1]):
+                    bb = [min(bb[0], ob[0]), min(bb[1], ob[1]),
+                          max(bb[2], ob[2]), max(bb[3], ob[3])]
+                    cboxes.pop(j); merged = True
+                else:
+                    j += 1
+            out.append(bb)
+        cboxes = out
+    clusters = []
+    for bb in cboxes:
+        hits = set()
+        for si, its in enumerate(items_t):
+            for x0, y0, x1, y1 in its or []:
+                if x0 < bb[2] and x1 > bb[0] and y0 < bb[3] and y1 > bb[1]:
+                    hits.add(si); break
+        clusters.append({"box": bb, "hits": hits})
+    # 장면전환 (in-shot 판정용, 저해상도)
+    sc = 384.0 / max(W, H)
+    gq = np.stack([cv2.cvtColor(cv2.resize(f, (int(W * sc), int(H * sc)),
+                   interpolation=cv2.INTER_AREA), cv2.COLOR_RGB2GRAY)
+                   for f in samples]).astype(np.int16)
+    dif = np.array([0.0] + [float(np.abs(gq[i] - gq[i - 1]).mean()) for i in range(1, n)])
+    cuts = set(np.where(dif > 28)[0].tolist())
+    del gq
+    min_hits = max(3, int(round(1.0 / spf) // 2))
+    clusters = [c for c in clusters if len(c["hits"]) >= min_hits]
+    clusters.sort(key=lambda c: -len(c["hits"]))
+    # ---------- 2) 후보별 정밀 검증 ----------
+    regs = []
+    total_px = 0
+    for c in clusters[:6]:
+        if len(regs) >= 2:
+            break
+        bx0, by0, bx1, by1 = c["box"]
+        # 영역 상자: 여유 24px + 16 정렬
+        fx0 = max(0, bx0 - 24); fy0 = max(0, by0 - 24)
+        gw = min(W, bx1 + 24) - fx0; gh = min(H, by1 + 24) - fy0
+        gw = max(48, gw // 16 * 16); gh = max(48, gh // 16 * 16)
+        fx0 = max(0, min(fx0, W - gw)); fy0 = max(0, min(fy0, H - gh))
+        area_frac = gw * gh / float(W * H)
+        if area_frac > 0.10:
+            continue                             # 대면적 자동 mask 금지 (명세 D.3)
+        # 등장 타임라인: 원해상도 crop edge 에너지 (작은 crop이라 저비용)
+        en = np.zeros(n, np.float32)
+        for i in range(n):
+            g = cv2.cvtColor(samples[i][fy0:fy0 + gh, fx0:fx0 + gw],
+                             cv2.COLOR_RGB2GRAY).astype(np.int16)
+            gx = np.abs(np.diff(g, axis=1)).sum(); gy = np.abs(np.diff(g, axis=0)).sum()
+            en[i] = (gx + gy) / float(gw * gh)
+        lo, hi = float(np.percentile(en, 10)), float(np.percentile(en, 90))
+        if hi - lo < 1.0:
+            continue                             # 시간축 대비 없음 — 항상 유사 = 실물/정적 몫
+        th_on = lo + 0.55 * (hi - lo); th_off = lo + 0.30 * (hi - lo)
+        hitv = np.zeros(n, bool)
+        for si in c["hits"]:
+            hitv[si] = True
+        ivs = []; on = False; s0 = 0; low = 0
+        for i in range(n):
+            if not on:
+                if (en[i] >= th_on and (hitv[max(0, i - 2):i + 3].any())):
+                    on = True; s0 = i; low = 0
+            else:
+                if en[i] < th_off:
+                    low += 1
+                    if low >= 3:
+                        ivs.append([s0, i - low + 1]); on = False
+                else:
+                    low = 0
+        if on:
+            ivs.append([s0, n])
+        gap_s = max(1, int(round(1.5 / spf))); min_s = max(2, int(round(1.0 / spf)))
+        m2 = []
+        for iv in ivs:
+            if m2 and iv[0] - m2[-1][1] <= gap_s:
+                m2[-1][1] = iv[1]
+            else:
+                m2.append(list(iv))
+        ivs = [iv for iv in m2 if iv[1] - iv[0] >= min_s]
+        if not ivs:
+            continue
+        pres = np.zeros(n, bool)
+        for a, b in ivs:
+            pres[a:b] = True
+        cov = float(pres.mean())
+        support = len([s for s in c["hits"] if pres[s]]) / max(1.0, float(pres.sum()))
+        # 실물 오탐 방지: 장면 안 등장·퇴장 최소 1회 또는 복수 구간 재등장.
+        # 상시 존재(cov>0.95)는 장면전환을 수십 회 견딘 것 자체가 오버레이 증거.
+        inshot = 0
+        for iv in ivs:
+            for e in (iv[0], iv[1]):
+                if 0 < e < n and e not in cuts and dif[e] <= 20:
+                    inshot += 1
+        if inshot == 0 and len(ivs) < 2 and cov <= 0.95:
+            continue
+        # Type A 판정: 카드 rect (존재 샘플 2~3곳에서 box 감지)
+        # 카드 테두리는 글자보다 훨씬 넓다 — box 감지용 crop은 여백 120px
+        px0 = max(0, bx0 - 120); py0 = max(0, by0 - 120)
+        pw = min(W, bx1 + 120) - px0; ph = min(H, by1 + 120) - py0
+        pw = max(48, pw // 16 * 16); ph = max(48, ph // 16 * 16)
+        px0 = max(0, min(px0, W - pw)); py0 = max(0, min(py0, H - ph))
+        mid_idx = [iv[0] + (iv[1] - iv[0]) // 2 for iv in ivs][:3]
+        rect_votes = []
+        for i in mid_idx:
+            crop = samples[i][py0:py0 + ph, px0:px0 + pw]
+            try:
+                cl2 = h29.glyph_clusters(crop)
+                gm = h29.rasterize(cl2, pw, ph) if cl2 else np.zeros((ph, pw), np.uint8)
+                rect, conf_b, _bd = detect_box(crop, gm, conf_accept=0.6)
+            except Exception:
+                rect, conf_b = None, 0.0
+            if rect is not None:
+                rect_votes.append(rect)
+        pad_f = int(round(0.5 * fps))
+        ivals = [[max(0, iv[0] * scan_step - pad_f), iv[1] * scan_step + pad_f]
+                 for iv in ivs]
+        if len(rect_votes) >= 2 and cov > 0.95 and len(cuts) < 3:
+            continue    # 상시 카드인데 장면전환도 거의 없음 — 실물 오인 위험, 정적 몫
+        if len(rect_votes) >= 2 and cov > 0.95:
+            # 상시 카드가 기존 영역(밴드 등) 안에 이미 있으면 기존 경로 유지 —
+            # 골든(상시 박스자막) 동작 불변 보장. 기존 영역 밖 상시 카드만 신규 처리.
+            cb_a = max(1, (bx1 - bx0) * (by1 - by0))
+            inside = False
+            for r in (prior_regions or []):
+                ix = max(0, min(bx1, r["x"] + r["w"]) - max(bx0, r["x"]))
+                iy = max(0, min(by1, r["y"] + r["h"]) - max(by0, r["y"]))
+                if ix * iy >= 0.85 * cb_a:
+                    inside = True; break
+            if inside:
+                continue
+        if len(rect_votes) >= 2:
+            # Type A — 카드: rect 전체를 포함하는 영역을 표준 경로로 (box un-blend/AI)
+            rx0 = min(v[0] for v in rect_votes) + px0; ry0 = min(v[1] for v in rect_votes) + py0
+            rx1 = max(v[2] for v in rect_votes) + px0; ry1 = max(v[3] for v in rect_votes) + py0
+            ax0 = max(0, rx0 - 32); ay0 = max(0, ry0 - 32)
+            aw = min(W, rx1 + 32) - ax0; ah = min(H, ry1 + 32) - ay0
+            aw = max(48, aw // 16 * 16); ah = max(48, ah // 16 * 16)
+            ax0 = max(0, min(ax0, W - aw)); ay0 = max(0, min(ay0, H - ah))
+            if total_px + aw * ah > W * H * 0.12:
+                continue
+            total_px += aw * ah
+            regs.append({"x": int(ax0), "y": int(ay0), "w": int(aw), "h": int(ah),
+                         "kind": "transient_box" + str(len(regs)), "ivals": ivals,
+                         "conf": "high" if inshot >= 1 else "medium", "src": "windowed"})
+            continue
+        if cov > 0.95:
+            continue                             # 상시 존재 텍스트 = 전체 정적/코너 몫
+        # 전체-영상 정적 감지가 이미 담당하는 클러스터는 발화 억제 —
+        # 정적 경로의 정밀 획 마스크가 품질·비용 모두 우위 (UAT-01 고정자막 실측)
+        cb_area = max(1, (bx1 - bx0) * (by1 - by0))
+        skip_static = False
+        for r in (prior_regions or []):
+            if r.get("static_mask") is None and "static_pack" not in r:
+                continue
+            ix = max(0, min(bx1, r["x"] + r["w"]) - max(bx0, r["x"]))
+            iy = max(0, min(by1, r["y"] + r["h"]) - max(by0, r["y"]))
+            if ix * iy >= 0.85 * cb_area:
+                skip_static = True; break
+        if skip_static:
+            continue
+        # Type B — 워터마크: 시간축 누적 마스크: 존재 샘플의 글자 상자 union + edge 지속성
+        m = np.zeros((gh, gw), np.uint8)
+        for si in c["hits"]:
+            if not pres[si]:
+                continue
+            for x0, y0, x1, y1 in items_t[si]:
+                if x1 < fx0 or x0 > fx0 + gw or y1 < fy0 or y0 > fy0 + gh:
+                    continue
+                mx0 = max(0, x0 - fx0 - 2); my0 = max(0, y0 - fy0 - 2)
+                mx1 = min(gw, x1 - fx0 + 3); my1 = min(gh, y1 - fy0 + 3)
+                if mx1 > mx0 and my1 > my0:
+                    m[my0:my1, mx0:mx1] = 255
+        sel = [i for i in range(n) if pres[i]][:48]
+        acc = np.zeros((gh, gw), np.float32)
+        for i in sel:
+            g = cv2.cvtColor(samples[i][fy0:fy0 + gh, fx0:fx0 + gw],
+                             cv2.COLOR_RGB2GRAY).astype(np.int16)
+            gx = np.abs(np.diff(g, axis=1)); gx = np.pad(gx, ((0, 0), (0, 1)))
+            gy = np.abs(np.diff(g, axis=0)); gy = np.pad(gy, ((0, 1), (0, 0)))
+            acc += ((gx + gy) > 18)
+        esig = (acc / max(1, len(sel)) > 0.6).astype(np.uint8) * 255
+        near = cv2.dilate((m > 0).astype(np.uint8), np.ones((3, 3), np.uint8),
+                          iterations=11) > 0          # 글자 union의 ±32px 근방
+        esig[~near] = 0                               # 배경 edge가 마스크를 삼키는 것 방지
+        m = cv2.dilate(np.maximum(m, esig), np.ones((3, 3), np.uint8), iterations=2)
+        if float((m > 0).mean()) < 0.005:
+            continue
+        if total_px + gw * gh > W * H * 0.12:
+            continue
+        total_px += gw * gh
+        regs.append({"x": int(fx0), "y": int(fy0), "w": int(gw), "h": int(gh),
+                     "kind": "transient" + str(len(regs)), "static_mask": m,
+                     "ivals": ivals,
+                     "conf": "high" if (inshot >= 1 and support >= 0.3) else "medium",
+                     "src": "windowed"})
+    return regs
+
+
 # ---------------- 단계: scan (가벼운 계획 — 영역·구간만, 마스크 없음) ----------------
 def scan_v32(proj, tmp, scan_step=12, seg_k=10):
     pid = proj["id"]
@@ -441,6 +708,12 @@ def scan_v32(proj, tmp, scan_step=12, seg_k=10):
             regions.extend(detect_static_overlays(samples, W, H))
         except Exception:
             pass
+        try:
+            regions.extend(detect_windowed_transient_overlays(
+                samples, W, H, scan_step, info["fps"], prior_regions=regions,
+                items_t=getattr(detect_sub_bands_shm, "_last_items_t", None)))
+        except Exception:
+            pass
         del samples
         sw.mark("scan")
     # 박스형 자막: 감지 영역이 박스보다 좁으면 세그 단계에서 복원 불가 →
@@ -451,6 +724,8 @@ def scan_v32(proj, tmp, scan_step=12, seg_k=10):
             for reg in regions:
                 if reg.get("static_mask") is not None:
                     continue
+                if str(reg.get("kind", "")).startswith("transient"):
+                    continue    # transient 영역은 이미 rect+여유로 확정 — 재확장 금지
                 votes = []
                 for fr in samples2:
                     crop = fr[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]]
@@ -736,6 +1011,17 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
         return masks, sum(1 for m in masks if m is not None and m.any())
     if "static_pack" in reg:
         m = _unpack_static(reg)
+        if reg.get("ivals"):
+            # transient: 등장 구간 밖은 zero mask → 조각 계획·AI 비용이 구간 안으로 제한
+            zeros = np.zeros_like(m)
+            out = []; cnt = 0
+            for li in range(n):
+                gi = li + e0_global
+                if any(int(a) <= gi < int(b) for a, b in reg["ivals"]):
+                    out.append(m); cnt += 1
+                else:
+                    out.append(zeros)
+            return out, cnt
         return [m] * n, n
     # 자막/라벨 밴드: 키프레임 정밀 감지 (공유메모리 풀 — v31이 h29._par_sweep에 이식)
     ks_i = max(1, int(key_step))
@@ -1049,6 +1335,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
             if i not in rest: continue
             reg = plan["regions"][ri]
             if "f0" in reg and not (int(reg["f0"]) <= i < int(reg["f1"])): continue
+            if reg.get("ivals") and not any(int(a) <= i < int(b) for a, b in reg["ivals"]): continue
             m = local_masks[ri][i - E0]
             a = cv2.GaussianBlur(m, (0, 0), 6 if reg["kind"].startswith("manual") else 2)\
                 .astype(np.float32)[..., None] / 255.0
