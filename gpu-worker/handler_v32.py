@@ -1059,10 +1059,40 @@ def _estimate_card_model(samples, votes_v, pres, cuts, scan_step, fps, W, H):
             ratios.append(si / so)
         return ratios
 
+    def _alpha_pairs(rc_a):
+        # 폴백: 경계 인접 픽셀쌍 회귀 (배경이 안 움직여 분산비가 불가한
+        # 정적 장면 카드 — g26 실측). obs_in = (1-α)·obs_out + α·C 의 기울기.
+        ax0, ay0, ax1, ay1 = rc_a
+        X = []; Y = []
+        for i in psel[:: max(1, len(psel) // 60)]:
+            f = samples[i][cy0:cy1, cx0:cx1].astype(np.float32).mean(axis=2)
+            if ay0 - 9 >= 0 and ax1 - rd > ax0 + rd:
+                Y.append(f[ay0 + 6, ax0 + rd:ax1 - rd]); X.append(f[ay0 - 9, ax0 + rd:ax1 - rd])
+            if ay1 + 9 <= ch - 1 and ax1 - rd > ax0 + rd:
+                Y.append(f[ay1 - 6, ax0 + rd:ax1 - rd]); X.append(f[ay1 + 9, ax0 + rd:ax1 - rd])
+        if not X:
+            return None
+        Xa = np.concatenate(X); Ya = np.concatenate(Y)
+        keep = np.ones(len(Xa), bool)
+        sl = 0.5
+        for _it in range(5):
+            if keep.sum() < 200 or float(Xa[keep].std()) < 8.0:
+                return None
+            sl, icpt = np.polyfit(Xa[keep], Ya[keep], 1)
+            err = np.abs(Xa * sl + icpt - Ya)
+            keep = err < max(6.0, float(np.percentile(err[keep], 70)))
+        if float(keep.mean()) < 0.35:
+            return None
+        return 1.0 - float(sl)
+
     ratios = _alpha_est(rc)
-    if len(ratios) < 2:
-        return None
-    alpha = 1.0 - float(np.median(ratios))
+    if len(ratios) >= 2:
+        alpha = 1.0 - float(np.median(ratios))
+    else:
+        a_fb = _alpha_pairs(rc)
+        if a_fb is None:
+            return None
+        alpha = a_fb
     if not (0.30 <= alpha <= 0.72):
         return None                       # 실물(≈0)·불투명(≈1) 기각 — AI 경로 몫
 
@@ -1153,6 +1183,10 @@ def _estimate_card_model(samples, votes_v, pres, cuts, scan_step, fps, W, H):
     if len(ratios2) >= 2:
         a2 = 1.0 - float(np.median(ratios2))
         if 0.30 <= a2 <= 0.72:
+            alpha = a2
+    else:
+        a2 = _alpha_pairs(rc)
+        if a2 is not None and 0.30 <= a2 <= 0.72:
             alpha = a2
     C2 = _C_est(rc)
     if C2 is not None and all(-20.0 <= c <= 300.0 for c in C2):
