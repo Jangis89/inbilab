@@ -1,0 +1,10 @@
+uat,defect,interval_sec,worst_frames,taxonomy,evidence,dominant,fix_phase
+UAT-02,card body remains untouched,"0-36,52-63,70-119,135-175","t5,t45,t100,t150,t165",M3,"un-blend applied only in vote±10s windows; card actually spans full video (global temporal median shows static card; temporal-std ratio 0.511 => alpha=0.50 confirmed)",yes,D
+UAT-02,black over-corrected box flicker,"~98-101","t100 adjacent frames",M8,"1fps sample t100 shows dark box while -ss 100 frame shows untouched card => window-boundary flicker",no,D/F
+UAT-02,corner/border ring residue,"applied windows (~120-134)","t120,t130",M7,"hard-rect probe without rounded-corner/AA matte; card border stroke un-modeled -> dark outline after un-blend",no,D
+UAT-02,glyph ghost/hallucination,"37-51,143-173","t45,t165",M5+M9,"AI re-inpaint at 0.5 scale with card still in context -> warped orange '안녕하세요' remnants",no,D/E
+UAT-01,bright blurry stains at erased text,"whole video; worst 103-110,21-22,154","t105 (sharp_ratio 0.19)",M2+M5,"stain area >> glyph area; sharp_ratio p50 0.70, <0.6 in 56/175 frames; color cast up to 55",yes,E
+UAT-01,boundary halo,"scattered","t103",M7,"bright band around inpaint region vs surroundings",no,E/F
+UAT-01,stain shimmer over time,"103-110",,M8,"adjacent-frame stain shape varies (independent per-chunk inpaint)",no,F
+UAT-03,localized stains near erased text,"47-52,73,110-128","t128 (0.32),t52 (0.37),t73",M2+M5,"sharp_ratio <0.6 in 6/130 frames only; gate plank vertical lines broken at t73 (M6)",yes,E
+UAT-03,structure break on gate planks,"73","t73",M6,"vertical plank lines discontinuous across inpaint region",no,E
