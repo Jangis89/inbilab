@@ -1655,8 +1655,8 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
             fr[:] = np.clip((fr.astype(np.float32) - _aC) / _den, 0, 255)\
                 .astype(np.uint8)
         _b05 = (card_matte > 0.5).astype(np.uint8)
-        card_ring = ((cv2.dilate(_b05, np.ones((13, 13), np.uint8))
-                      - cv2.erode(_b05, np.ones((13, 13), np.uint8))) * 255)\
+        card_ring = ((cv2.dilate(_b05, np.ones((17, 17), np.uint8))
+                      - cv2.erode(_b05, np.ones((17, 17), np.uint8))) * 255)\
             .astype(np.uint8)
         _seg_masks_for_region._last_card_fix = {
             "rect": cm["rect"], "rad": cm["rad"], "alpha": cm["alpha"],
@@ -1755,24 +1755,60 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
             masked += 1
     # ---- RC3 Phase D: 카드 글자 stroke 폴백 + 테두리 링 마스크 ----
     # un-blend 뒤에도 남는 것은 (1)불투명 글자 획 (2)matte로 못 잡는 테두리 선.
-    # 글자 감지가 놓친 획을 국소 중앙값 대비로 보강하고, 링(±4px)은 AI가
-    # un-blend된 배경 위에서 재봉합한다 (halo 방지 — RC2 t120 모서리 흔적 수정).
+    # 핵심 안전장치 — 시간 안정성 게이트: 글자는 영상 내내 같은 자리에 있지만
+    # 배경의 어두운 물체(개·옷 그림자)는 움직인다. 후보 마스크를 ±1.5초 떨어진
+    # 키프레임 후보와 교집합해 '움직이는 어두움'을 제외한다 (round1 실측:
+    # 게이트 없이는 AI가 카드 내부의 실물 배경을 다시 그려 뭉갬/환각 발생).
     if cm is not None and card_pres_loc is not None:
         inner_c = (card_matte > 0.6)
+        stroke_cand = {}
         for i in keys:
             if not card_pres_loc[i]:
                 continue
             g8 = cv2.cvtColor(frames_local[i], cv2.COLOR_RGB2GRAY)
             med8 = cv2.medianBlur(g8, 31).astype(np.float32)
             dev = np.abs(med8 - g8.astype(np.float32))
-            stroke = ((dev > 26) & inner_c).astype(np.uint8)
-            stroke = cv2.morphologyEx(stroke, cv2.MORPH_CLOSE,
-                                      np.ones((5, 5), np.uint8))
-            stroke = (cv2.dilate(stroke, np.ones((4, 4), np.uint8)) * 255)\
-                .astype(np.uint8)
-            add = np.maximum(stroke, card_ring)
-            if i in card_phys:
-                add = np.maximum(add, card_phys[i])
+            sc = ((dev > 26) & inner_c).astype(np.uint8)
+            sc = cv2.morphologyEx(sc, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+            stroke_cand[i] = sc
+
+        def _stab(cands, i, span=45, tol=7):
+            cur = cands.get(i)
+            if cur is None:
+                return None
+            ks_here = sorted(cands.keys())
+            left = [k for k in ks_here if k <= i - span]
+            right = [k for k in ks_here if k >= i + span]
+            ref = []
+            if left:
+                ref.append(cands[left[-1]])
+            if right:
+                ref.append(cands[right[0]])
+            if not ref:
+                # 비교 상대가 없으면(짧은 구간) 가장 먼 다른 키라도 사용
+                others = [k for k in ks_here if k != i]
+                if others:
+                    far = max(others, key=lambda k: abs(k - i))
+                    if abs(far - i) >= 15:
+                        ref.append(cands[far])
+            out_m = cur.copy()
+            kt = np.ones((tol * 2 + 1, tol * 2 + 1), np.uint8)
+            for rm in ref:
+                out_m = out_m & cv2.dilate(rm, kt)
+            return out_m
+
+        phys_cand = {i: (card_phys[i] > 0).astype(np.uint8) for i in card_phys}
+        for i in keys:
+            if not card_pres_loc[i]:
+                continue
+            add = card_ring.copy()
+            st_m = _stab(stroke_cand, i)
+            if st_m is not None and st_m.any():
+                st_m = cv2.dilate(st_m, np.ones((4, 4), np.uint8))
+                add = np.maximum(add, (st_m * 255).astype(np.uint8))
+            ph_m = _stab(phys_cand, i)
+            if ph_m is not None and ph_m.any():
+                add = np.maximum(add, (ph_m * 255).astype(np.uint8))
             raw[i] = add if raw[i] is None else np.maximum(raw[i], add)
         masked = sum(1 for i in keys if raw[i] is not None and raw[i].any())
     # 박스형 자막 (Phase B v9):
@@ -2013,8 +2049,10 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
             # RC3 Phase E: 정적 텍스트(상시 자막·워터마크) 복원 해상도 상향 —
             # 0.5 스케일 복원→업스케일 붙임이 UAT-01 얼룩(sharp_ratio 0.19~0.4)의
             # 주원인(M5). 영역이 작으면 원해상도, 크면 0.75 (비용 게이트는 Phase J).
+            # 해상도만 올리고 step을 안 올리면 오히려 저품질 — steps 동반 상향.
             t2["scale"] = max(t2.get("scale", 0.5),
                               0.75 if reg["w"] * reg["h"] > 260000 else 1.0)
+            t2["steps"] = max(int(t2.get("steps", 4)), 6)
         rest = {}
         for c in chunks:
             # 이 세그먼트 소유 프레임과 무관한 조각은 건너뜀
