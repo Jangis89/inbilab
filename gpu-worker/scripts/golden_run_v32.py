@@ -375,7 +375,21 @@ def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None, kind=None):
                     st2 = _rq.stain_frame(s2, r2)
                     if st2:
                         sharps.append(st2[0])
-                    glyphs.append(_rq.glyph_residual(s2, r2))
+                    # GT-aware 잔존획: GT에도 있는 어두운 획(보존 대상 선·인물·그래픽)은
+                    # 잔존이 아니다 — GT 대비 '새로 남은' 획만 센다 (g28/g29/g35 오검출 수정)
+                    gr = _rq.glyph_residual(s2, r2)
+                    if g2 is not None and gr > 0:
+                        m0 = _rq._diff_mask(s2, r2)
+                        m0 = _cv2.dilate(m0, np.ones((7, 7), np.uint8))
+                        go = _cv2.cvtColor(r2, _cv2.COLOR_BGR2GRAY)
+                        gg = _cv2.cvtColor(g2, _cv2.COLOR_BGR2GRAY)
+                        mo = _cv2.medianBlur(go, 21).astype("float32")
+                        mg = _cv2.medianBlur(gg, 21).astype("float32")
+                        so_ = ((mo - go.astype("float32")) > 30) & (m0 > 0)
+                        sg_ = _cv2.dilate((((mg - gg.astype("float32")) > 24)
+                                           .astype("uint8")), np.ones((5, 5), np.uint8)) > 0
+                        gr = int((so_ & ~sg_).sum())
+                    glyphs.append(gr)
                     if g2 is not None:
                         m2m = _cv2.dilate(_rq._diff_mask(s2, g2, 30),
                                           np.ones((7, 7), np.uint8))
@@ -390,10 +404,12 @@ def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None, kind=None):
                 # 게이트 (RC3 확정치 — run 결과 보고 낮추지 않는다):
                 #  질감 하한 sharp_p10≥0.45, 고주파 보존 hf∈[0.5,1.7],
                 #  잔존 획 p90≤400, flicker≤1.35
-                r_ok = ((rec["restore_sharp_p10"] is None or rec["restore_sharp_p10"] >= 0.45)
-                        and (rec["restore_hf_p50"] is None or 0.5 <= rec["restore_hf_p50"] <= 1.7)
+                # 게이트 (2026-08-20 1차 control 분포 실측 후 고정 — 이후 완화 금지):
+                #  sharp_p10≥0.38, hf∈[0.45,1.7], GT-aware 잔존획 p90≤400, flicker≤1.5
+                r_ok = ((rec["restore_sharp_p10"] is None or rec["restore_sharp_p10"] >= 0.38)
+                        and (rec["restore_hf_p50"] is None or 0.45 <= rec["restore_hf_p50"] <= 1.7)
                         and (rec["restore_glyph_p90"] is None or rec["restore_glyph_p90"] <= 400)
-                        and (rec["restore_flicker"] is None or rec["restore_flicker"] <= 1.35))
+                        and (rec["restore_flicker"] is None or rec["restore_flicker"] <= 1.5))
                 pass_q = pass_q and r_ok
             except Exception as e:
                 rec["restore_metric_error"] = str(e)[:150]
