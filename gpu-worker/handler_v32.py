@@ -2009,6 +2009,12 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
             t2["scale"] = 1.0     # 불투명 박스 AI 복원은 원해상도로 (뭉개짐 방지)
         if str(reg.get("kind", "")).startswith("transient"):
             t2["scale"] = 1.0     # transient 마스크 복원도 원해상도 (뭉갬 방지, 구간 제한이라 저비용)
+        if str(reg.get("kind", "")).startswith("static"):
+            # RC3 Phase E: 정적 텍스트(상시 자막·워터마크) 복원 해상도 상향 —
+            # 0.5 스케일 복원→업스케일 붙임이 UAT-01 얼룩(sharp_ratio 0.19~0.4)의
+            # 주원인(M5). 영역이 작으면 원해상도, 크면 0.75 (비용 게이트는 Phase J).
+            t2["scale"] = max(t2.get("scale", 0.5),
+                              0.75 if reg["w"] * reg["h"] > 260000 else 1.0)
         rest = {}
         for c in chunks:
             # 이 세그먼트 소유 프레임과 무관한 조각은 건너뜀
@@ -2107,8 +2113,17 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
             a = cv2.GaussianBlur(m, (0, 0), 6 if reg["kind"].startswith("manual") else 2)\
                 .astype(np.float32)[..., None] / 255.0
             sub = frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]].astype(np.float32)
+            rr = rest[i].astype(np.float32)
+            # RC3 Phase E: 국소 색 정합 — AI 결과가 링(마스크 밖) 기준으로 원본과
+            # 어긋난 색 드리프트만큼 보정해 밝은 얼룩/색 cast(M7)를 줄인다 (±15 한도)
+            mb = (m > 127).astype(np.uint8)
+            if mb.any():
+                ringm = (cv2.dilate(mb, np.ones((21, 21), np.uint8)) - mb).astype(bool)
+                if int(ringm.sum()) > 200:
+                    dcol = sub[ringm].mean(axis=0) - rr[ringm].mean(axis=0)
+                    rr = rr + np.clip(dcol, -15, 15)[None, None, :]
             frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]] = \
-                np.clip(sub * (1 - a) + rest[i].astype(np.float32) * a, 0, 255).astype(np.uint8)
+                np.clip(sub * (1 - a) + rr * a, 0, 255).astype(np.uint8)
         enc.stdin.write(frame.tobytes())
         i += 1
     enc.stdin.close(); enc.wait()
