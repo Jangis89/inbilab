@@ -482,10 +482,14 @@ def _scene_text_veto(regions, items_t, samples, W, H):
                 elif mag < max(3.0, 0.25 * gm):
                     fixed_n += 1
         tot = scene_n + fixed_n
-        # 증거량 게이트: 총 40쌍 미만이면 판정 보류(keep) — 빠른 컷 영상에서
-        # 얇은 표본(27쌍)으로 실제 자막 밴드를 오판한 실측(bench run111) 수정.
-        # 실물 골든은 88~309쌍으로 여유 통과.
-        if scene_n >= 8 and tot >= 40 and scene_n / float(tot) >= 0.7:
+        # 판정 규칙 (실측 보정):
+        #  (a) fixed 짝이 하나도 없는 순수 scene 텍스트는 15쌍이면 충분히 확실
+        #      (실물 골든 g15-보조/g21/g22/g24: 16~309쌍 전부 fixed=0)
+        #  (b) 섞인 경우는 총 40쌍 이상 + scene 비율 70% 요구 — 빠른 컷 영상에서
+        #      얇은 표본(27쌍, fixed 6)으로 실제 자막을 오판한 실측(run111) 방지
+        ratio = scene_n / float(tot) if tot else 0.0
+        if (scene_n >= 15 and fixed_n == 0) or \
+                (scene_n >= 8 and tot >= 40 and ratio >= 0.7):
             dbg.append({"k": kind, "why": "VETO", "scene": scene_n, "fixed": fixed_n,
                         "move": round(move_total, 1)})
             continue                              # 장면 부착 텍스트 — 영역 제외
