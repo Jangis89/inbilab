@@ -1,0 +1,4 @@
+tag,frames,sharp_p50,sharp_p10,stain_frames_lt06,cast_p90,stain_composite,glyph_resid_p90,card_edge_p50,card_edge_p90,card_lift_p50,card_absl_p90,card_residual_score,flicker_ratio,roi_psnr_p50,roi_ssim_p50,hf_ratio_p50
+UAT-01-RC2,175,0.7,0.403,58,45.291,0.531,2439.2,,,,,,1.2982520444103964,,,
+UAT-03-RC2,130,0.976,0.674,6,19.885,0.2318,2337.2,,,,,,1.041685956624923,,,
+UAT-02-RC2,175,0.935,0.615,17,54.044,0.4062,2960.2,48.538,70.615,17.246,69.692,80.05,1.8860953897901196,,,
