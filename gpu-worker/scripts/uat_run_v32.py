@@ -136,7 +136,7 @@ def run_one(idx, src_spec, rec):
             gpu_ms += o.get("__exec_ms") or 0
             cc = o.get("counters") or {}
             for k2, v in cc.items():
-                if k2.startswith("box") or k2 == "regions_active":
+                if True:  # RC3: 전체 카운터 수집 (crop_hq/card_global 진단)
                     counters[k2] = max(counters.get(k2, 0), v) if k2 == "box_conf_max" \
                         else counters.get(k2, 0) + v
             seg_out.append({"part": o.get("part"), "exec_ms": o.get("__exec_ms"),
