@@ -1804,18 +1804,30 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
             return out_m
 
         phys_cand = {i: (card_phys[i] > 0).astype(np.uint8) for i in card_phys}
+        # 물리 마스크가 건강하면(카드 면적 0.5%+) stroke는 쓰지 않는다 —
+        # stroke는 un-blend로 복원된 실제 배경 질감(개 털·바구니)에 오발해
+        # AI가 배경을 다시 그리게 만든다 (round2/3 실측 t150 smear).
+        # phys는 물리 하한(α·C)이라 배경에 오발하지 않는다 (정밀 검증 완료).
+        card_area = float(max(1, int((card_matte > 0.6).sum())))
+        ph_sizes = [int(v.sum()) for v in phys_cand.values()]
+        phys_ok = bool(ph_sizes) and float(np.median(ph_sizes)) >= 0.005 * card_area
         for i in keys:
             if not card_pres_loc[i]:
                 continue
             add = card_ring.copy()
-            st_m = _stab(stroke_cand, i)
-            if st_m is not None and st_m.any():
-                st_m = cv2.dilate(st_m, np.ones((6, 6), np.uint8))
-                add = np.maximum(add, (st_m * 255).astype(np.uint8))
-            ph_m = _stab(phys_cand, i)
-            if ph_m is not None and ph_m.any():
-                ph_m = cv2.dilate(ph_m, np.ones((3, 3), np.uint8))
-                add = np.maximum(add, (ph_m * 255).astype(np.uint8))
+            if phys_ok:
+                ph_m = phys_cand.get(i)
+                if ph_m is not None and ph_m.any():
+                    ph_m = cv2.dilate(ph_m, np.ones((5, 5), np.uint8))
+                    add = np.maximum(add, (ph_m * 255).astype(np.uint8))
+            else:
+                st_m = _stab(stroke_cand, i)
+                if st_m is not None and st_m.any():
+                    st_m = cv2.dilate(st_m, np.ones((6, 6), np.uint8))
+                    add = np.maximum(add, (st_m * 255).astype(np.uint8))
+                ph_m = _stab(phys_cand, i)
+                if ph_m is not None and ph_m.any():
+                    add = np.maximum(add, (cv2.dilate(ph_m, np.ones((3, 3), np.uint8)) * 255).astype(np.uint8))
             raw[i] = add if raw[i] is None else np.maximum(raw[i], add)
         masked = sum(1 for i in keys if raw[i] is not None and raw[i].any())
     # 박스형 자막 (Phase B v9):
@@ -2095,7 +2107,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                         gmid = cv2.cvtColor(frames_local[mid_l], cv2.COLOR_RGB2GRAY).astype(np.float32)
                         lapm = np.abs(cv2.Laplacian(gmid, cv2.CV_32F))
                         risk = float(lapm[ring_r > 0].mean()) if ring_r.any() else 0.0
-                        if risk >= 5.0:
+                        if risk >= 3.0:
                             sub_f = [f[y0b:y1b, x0b:x1b] for f in frames_local]
                             sub_m = [(m[y0b:y1b, x0b:x1b] if m is not None else None)
                                      for m in masks]
