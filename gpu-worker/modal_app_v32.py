@@ -18,6 +18,7 @@ _local_files = [
     ("handler_v31.py", "/app/handler_v31.py"),
     ("handler_v32.py", "/app/handler_v32.py"),
     ("pipeline_minimax_remover.py", "/app/pipeline_minimax_remover.py"),
+    ("restore_rc4.py", "/app/restore_rc4.py"),
     ("transformer_minimax_remover.py", "/app/transformer_minimax_remover.py"),
 ]
 

@@ -15,6 +15,7 @@ import numpy as np
 
 import handler as h29        # v29 함수 재사용
 import handler_v31 as v31    # exact range decode + 공유메모리 감지 풀 재사용
+import restore_rc4 as rc4    # RC4 실화소 우선 복원 엔진 (flow propagation)
 
 V32_VER = "v32"
 PFX = "wmtmp-v32"
@@ -2198,7 +2199,32 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                             counters["crop_hq"] = counters.get("crop_hq", 0) + 1
             if arr is None:
                 ta = time.time()
-                arr = h29.restore_chunk(frames_local, masks, t2, c)
+                kind = str(reg.get("kind", ""))
+                use_flow = (not kind.startswith("manual")
+                            and os.environ.get("WM_RC4_FLOW", "1") != "0")
+                if use_flow:
+                    # RC4: 실화소 전파 우선 — 앞뒤 프레임의 진짜 화소로 먼저
+                    # 채우고, 남는 hole만 생성모델. 정지배경 상시 오버레이는
+                    # probe가 자동으로 기존 생성모델 경로로 우회한다.
+                    fstats = {}
+
+                    def _ai_fb(fr2, mk2, tier2, ch2, _t2=t2):
+                        return h29.restore_chunk(fr2, mk2, _t2, ch2)
+
+                    arr = rc4.restore_chunk_flow(frames_local, masks, c,
+                                                 ai_fallback=_ai_fb, tier=t2,
+                                                 stats=fstats)
+                    counters["flow_chunks"] = counters.get("flow_chunks", 0) + 1
+                    if fstats.get("flow_bypass"):
+                        counters["flow_bypass"] = counters.get("flow_bypass", 0) + 1
+                    elif "flow_cover" in fstats:
+                        counters["flow_used"] = counters.get("flow_used", 0) + 1
+                        counters["flow_cover_pct_sum"] = counters.get(
+                            "flow_cover_pct_sum", 0) + int(fstats["flow_cover"] * 100)
+                        counters["flow_hole_px"] = counters.get(
+                            "flow_hole_px", 0) + int(fstats.get("hole_px", 0))
+                else:
+                    arr = h29.restore_chunk(frames_local, masks, t2, c)
                 t_ai += time.time() - ta
             a = max(c["s"] + E0, F0); b = min(c["e"] + E0, F1 - 1)
             for gi in range(a, b + 1):
@@ -2222,6 +2248,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
     _card_cache = {}
     for fr in v31.stream_frames_range(work, W, H, F0, F1, fps):
         frame = fr.copy()
+        _card_skip = set()
         # RC3: 전역 카드 un-blend — 존재 구간의 모든 출력 프레임에 물리 복원 적용
         # (AI paste 이전. AI crop은 세그에서 같은 un-blend가 선적용된 문맥으로 계산됨)
         for ri, cfx in card_fix_by_region.items():
@@ -2233,15 +2260,35 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                 mlx1 = cfx["rect"][2] - reg["x"]; mly1 = cfx["rect"][3] - reg["y"]
                 mt = _card_matte(reg["w"], reg["h"], [mlx0, mly0, mlx1, mly1],
                                  cfx["rad"])
+                mb = (mt > 0.5).astype(np.uint8)
+                k15 = np.ones((15, 15), np.uint8)
+                inner_b = (mb - cv2.erode(mb, k15)).astype(bool)
+                outer_b = (cv2.dilate(mb, k15) - mb).astype(bool)
                 _card_cache[ri] = (
                     (mt * cfx["alpha"])[..., None]
                     * np.array(cfx["C"], np.float32)[None, None, :],
-                    np.maximum(1.0 - (mt * cfx["alpha"])[..., None], 0.05))
-            aC_c, den_c = _card_cache[ri]
+                    np.maximum(1.0 - (mt * cfx["alpha"])[..., None], 0.05),
+                    inner_b, outer_b)
+            aC_c, den_c, inner_b, outer_b = _card_cache[ri]
             sub = frame[reg["y"]:reg["y"] + reg["h"],
                         reg["x"]:reg["x"] + reg["w"]].astype(np.float32)
-            frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]] = \
-                np.clip((sub - aC_c) / den_c, 0, 255).astype(np.uint8)
+            unb = np.clip((sub - aC_c) / den_c, 0, 255)
+            # RC4 Preserver: 프레임 단위 존재 재검증 — un-blend가 경계 연속성을
+            # 개선하지 않으면(카드가 실제로 없는 프레임) 건드리지 않는다.
+            # (UAT-02 t=5 '카드 밖 불투명화' 게이트 — 구간 병합 오차 방어)
+            ok_unb = True
+            if inner_b.any() and outer_b.any():
+                out_m = sub[outer_b].mean(axis=0)
+                d_src = float(np.abs(sub[inner_b].mean(axis=0) - out_m).mean())
+                d_unb = float(np.abs(unb[inner_b].mean(axis=0) - out_m).mean())
+                if d_unb > d_src + 2.0:
+                    ok_unb = False
+                    _card_skip.add(ri)
+                    counters["card_skip_frames"] = counters.get(
+                        "card_skip_frames", 0) + 1
+            if ok_unb:
+                frame[reg["y"]:reg["y"] + reg["h"],
+                      reg["x"]:reg["x"] + reg["w"]] = unb.astype(np.uint8)
         # 반투명 박스 un-blend v2 (AI 결과 덮기 전에 배경 역블렌딩)
         for ri, fixes in box_fix_by_region.items():
             fl = fixes.get(i - E0)
@@ -2283,6 +2330,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                     frame[gy0:gy1, gx0:gx1] = fixed
         for ri, rest in seg_rest.items():
             if i not in rest: continue
+            if ri in _card_skip: continue   # 카드 부재 판정 프레임은 paste도 생략
             reg = plan["regions"][ri]
             if "f0" in reg and not (int(reg["f0"]) <= i < int(reg["f1"])): continue
             if reg.get("ivals") and not any(int(a) <= i < int(b) for a, b in reg["ivals"]): continue
