@@ -1666,7 +1666,13 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
     keys = list(range(0, n, ks_i))
     per = [None] * n
     with_labels = not kind.startswith("subtitle")
-    if with_labels:
+    if cm is not None:
+        # 카드 영역: 표준 글자 스윕 생략 — un-blend된 내부의 실물 질감(개 털 등)을
+        # 글자로 오인해 큰 마스크→AI 재도색을 유발 (round1/2 실측). 물리 글자마스크
+        # + 시간안정 stroke + 링이 전담한다.
+        for _i in keys:
+            per[_i] = []
+    elif with_labels:
         res = h29._par_sweep("cl", frames_local, n, ks_i)
         if res is None:
             res = [h29.glyph_clusters(frames_local[i]) for i in keys]
@@ -1804,10 +1810,11 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
             add = card_ring.copy()
             st_m = _stab(stroke_cand, i)
             if st_m is not None and st_m.any():
-                st_m = cv2.dilate(st_m, np.ones((4, 4), np.uint8))
+                st_m = cv2.dilate(st_m, np.ones((6, 6), np.uint8))
                 add = np.maximum(add, (st_m * 255).astype(np.uint8))
             ph_m = _stab(phys_cand, i)
             if ph_m is not None and ph_m.any():
+                ph_m = cv2.dilate(ph_m, np.ones((3, 3), np.uint8))
                 add = np.maximum(add, (ph_m * 255).astype(np.uint8))
             raw[i] = add if raw[i] is None else np.maximum(raw[i], add)
         masked = sum(1 for i in keys if raw[i] is not None and raw[i].any())
@@ -1821,7 +1828,7 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
     box_stats = {"box_keys": 0, "box_conf_max": 0.0, "box_low_conf": 0,
                  "box_unblend": 0, "box_ai": 0, "box_rej": 0}
     box_fixes = {}   # local frame idx -> [(rect, gain(3,), bias(3,))]
-    if not kind.startswith("manual") and masked:
+    if cm is None and not kind.startswith("manual") and masked:
         rects_by_key = {}
         for i in keys:
             if raw[i] is None:
@@ -2054,13 +2061,64 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                               0.75 if reg["w"] * reg["h"] > 260000 else 1.0)
             t2["steps"] = max(int(t2.get("steps", 4)), 6)
         rest = {}
+        hh_r, ww_r = frames_local[0].shape[:2]
         for c in chunks:
             # 이 세그먼트 소유 프레임과 무관한 조각은 건너뜀
             if c["e"] + E0 < F0 or c["s"] + E0 >= F1:
                 continue
-            ta = time.time()
-            arr = h29.restore_chunk(frames_local, masks, t2, c)
-            t_ai += time.time() - ta
+            arr = None
+            # RC3 Phase E/G: crop-HQ 라우팅 — 질감 배경 위 자막은 0.5 스케일
+            # 복원→확대 붙임이 얼룩(M5)의 주원인. 마스크 bbox만 원해상도로
+            # 잘라 복원하면 비용은 비슷하고 뭉갬이 사라진다. 질감이 낮은
+            # 배경(위험 낮음)은 기존 fast 경로 유지 (모든 영상 HQ 강제 금지).
+            if t2.get("scale", 1.0) < 0.9 and not str(reg.get("kind", "")).startswith("manual"):
+                bb = None
+                for li in range(c["s"], min(c["e"] + 1, len(masks))):
+                    m0 = masks[li]
+                    if m0 is None or not m0.any():
+                        continue
+                    ys, xs = np.nonzero(m0)
+                    b2 = [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1]
+                    bb = b2 if bb is None else [min(bb[0], b2[0]), min(bb[1], b2[1]),
+                                                max(bb[2], b2[2]), max(bb[3], b2[3])]
+                if bb is not None:
+                    x0b = max(0, bb[0] - 32) // 16 * 16
+                    y0b = max(0, bb[1] - 32) // 16 * 16
+                    x1b = min(ww_r, (bb[2] + 32 + 15) // 16 * 16)
+                    y1b = min(hh_r, (bb[3] + 32 + 15) // 16 * 16)
+                    afrac = (x1b - x0b) * (y1b - y0b) / float(ww_r * hh_r)
+                    if x1b - x0b >= 48 and y1b - y0b >= 48 and afrac <= 0.55:
+                        # 위험 판정: 마스크 주변 링 질감 (중간 프레임)
+                        mid_l = min(len(masks) - 1, (c["s"] + c["e"]) // 2)
+                        mm = (masks[mid_l] > 127).astype(np.uint8)
+                        ring_r = cv2.dilate(mm, np.ones((21, 21), np.uint8)) - mm
+                        gmid = cv2.cvtColor(frames_local[mid_l], cv2.COLOR_RGB2GRAY).astype(np.float32)
+                        lapm = np.abs(cv2.Laplacian(gmid, cv2.CV_32F))
+                        risk = float(lapm[ring_r > 0].mean()) if ring_r.any() else 0.0
+                        if risk >= 5.0:
+                            sub_f = [f[y0b:y1b, x0b:x1b] for f in frames_local]
+                            sub_m = [(m[y0b:y1b, x0b:x1b] if m is not None else None)
+                                     for m in masks]
+                            t3 = dict(t2)
+                            t3["scale"] = 1.0
+                            if afrac <= 0.30:
+                                t3["steps"] = max(int(t3.get("steps", 4)), 6)
+                            ta = time.time()
+                            arr_s = h29.restore_chunk(sub_f, sub_m, t3, c)
+                            t_ai += time.time() - ta
+                            arr = []
+                            for k2 in range(len(arr_s)):
+                                gi2 = c["s"] + k2
+                                if gi2 >= len(frames_local):
+                                    break
+                                full = frames_local[gi2].copy()
+                                full[y0b:y1b, x0b:x1b] = arr_s[k2]
+                                arr.append(full)
+                            counters["crop_hq"] = counters.get("crop_hq", 0) + 1
+            if arr is None:
+                ta = time.time()
+                arr = h29.restore_chunk(frames_local, masks, t2, c)
+                t_ai += time.time() - ta
             a = max(c["s"] + E0, F0); b = min(c["e"] + E0, F1 - 1)
             for gi in range(a, b + 1):
                 rest[gi] = arr[gi - E0 - c["s"]]
