@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "deploy | bench | verify | clips | golden | goldenrun | queue | queuee2e | export | uat | preserve"
+        description: "deploy | bench | verify | clips | golden | goldenrun | queue | queuee2e | export | uat | preserve | holdout"
         required: true
         default: "deploy"
       ref:
@@ -134,6 +134,21 @@ jobs:
         with:
           name: comp-clip-${{ github.run_id }}
           path: comp_clip.mp4
+          if-no-files-found: ignore
+      - name: Make blind holdout
+        if: ${{ github.event.inputs.action == 'holdout' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: |
+          sudo timeout 240 apt-get install -y -qq fonts-nanum fonts-dejavu-core || true
+          python -u gpu-worker/scripts/make_holdout_v32.py
+      - name: Upload holdout manifest
+        if: ${{ always() && github.event.inputs.action == 'holdout' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: holdout-v32-${{ github.run_id }}
+          path: HOLDOUT_MANIFEST.csv
           if-no-files-found: ignore
       - name: Preserve assets
         if: ${{ github.event.inputs.action == 'preserve' }}
