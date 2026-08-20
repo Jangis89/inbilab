@@ -712,17 +712,27 @@ def detect_windowed_transient_overlays(samples, W, H, scan_step, fps,
                 # (밴드 자체 추정이 성공하면 그것을 쓰고, 실패/밝은 카드일 때만 사용)
                 if entry is not None:
                     host.setdefault("card_blends", []).append(entry)
-                    # 카드 rect 안의 정적 영역(시간축 글자 감지)은 유지하되,
-                    # 그 영역에는 카드 un-blend를 '선적용'하도록 표시한다 —
-                    # 제거하면 일부 구간에서 글자가 남고(run102 t15 실측),
-                    # 그냥 두면 카드-존재 원본으로 복원해 잔상을 덧칠(run98 실측).
-                    for sr in (prior_regions or []):
+                    # 카드 rect 안의 정적 영역은 제거하고, 그 시간축 글자 마스크를
+                    # host 밴드 마스크에 병합한다 — 별도 paste는 카드-존재 원본
+                    # 기반이라 잔상을 덧칠(run98)하고, 그냥 제거하면 일부 구간
+                    # 글자가 남는다(run102 t15). 병합하면 밴드의 un-blend 선적용
+                    # 프레임 위에서 AI가 글자를 복원해 두 문제가 모두 사라진다.
+                    for sr in list(prior_regions or []):
                         if not str(sr.get("kind", "")).startswith("static"):
+                            continue
+                        if sr.get("static_mask") is None:
                             continue
                         if sr["x"] >= rx0 - 8 and sr["y"] >= ry0 - 8 \
                                 and sr["x"] + sr["w"] <= rx1 + 8 \
                                 and sr["y"] + sr["h"] <= ry1 + 8:
-                            sr["card_unblend"] = dict(entry)
+                            host.setdefault("extra_masks", []).append(
+                                {"off": [int(sr["x"]), int(sr["y"]),
+                                         int(sr["w"]), int(sr["h"])],
+                                 "mask": sr["static_mask"]})
+                            try:
+                                prior_regions.remove(sr)
+                            except ValueError:
+                                pass
                 continue
             if cov > 0.95 and entry is None:
                 continue    # 상시 카드인데 추정도 실패 — 기존 경로 유지 (오탐/오처리 방지)
@@ -959,13 +969,20 @@ def scan_v32(proj, tmp, scan_step=12, seg_k=10):
         return {"note": "no_target"}
     plan_regions = []
     for reg in regions:
-        reg2 = {k: v for k, v in reg.items() if k not in ("static_mask", "ival_masks")}
+        reg2 = {k: v for k, v in reg.items()
+                if k not in ("static_mask", "ival_masks", "extra_masks")}
         if reg.get("static_mask") is not None:
             reg2.update(_pack_static(reg["static_mask"]))
         if reg.get("ival_masks"):
             reg2["ival_packs"] = [
                 base64.b64encode(np.packbits(m > 20).tobytes()).decode()
                 for m in reg["ival_masks"]]
+        if reg.get("extra_masks"):
+            reg2.pop("extra_masks", None)
+            reg2["extra_packs"] = [
+                {"off": em["off"],
+                 "pack": base64.b64encode(np.packbits(em["mask"] > 20).tobytes()).decode()}
+                for em in reg["extra_masks"]]
         plan_regions.append(reg2)
     K = max(1, min(int(seg_k), 16))
     segments = [[k * N // K, (k + 1) * N // K] for k in range(K)]
@@ -1209,15 +1226,6 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
         masks = h29._limit_masks_range(masks, n, reg_l)
         return masks, sum(1 for m in masks if m is not None and m.any())
     if "static_pack" in reg:
-        cu = reg.get("card_unblend")
-        if cu and 0.15 <= float(cu["s"]) <= 0.9:
-            s_u = float(cu["s"]); t_u = np.array(cu["t"], np.float32)
-            for li in range(n):
-                fr = frames_local[li]
-                if not fr.flags.writeable:
-                    fr = fr.copy(); frames_local[li] = fr
-                fr[:] = np.clip((fr.astype(np.float32) - t_u) / s_u, 0, 255) \
-                    .astype(np.uint8)
         m = _unpack_static(reg)
         if reg.get("ivals"):
             # transient: 등장 구간 밖은 zero mask → 조각 계획·AI 비용이 구간 안으로 제한.
@@ -1363,8 +1371,18 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
         ring2 = 6 + (max(1, int(key_step)) - 1 + 1) // 2
         for grect, gkeys in stable_boxes(rects_by_key):
             if len(gkeys) < need:
-                box_stats["box_rej"] += 1
-                continue
+                # 이동 카드: 위치가 바뀐 뒤 키 수가 적어 기각되던 그룹도
+                # scan이 추정해 둔 카드(크기 매칭)면 un-blend 채택 (t45 실측)
+                rescue = False
+                for cb in (reg.get("card_blends") or []):
+                    cw = cb["rect"][2] - cb["rect"][0]; ch2 = cb["rect"][3] - cb["rect"][1]
+                    gw2 = grect[2] - grect[0]; gh2 = grect[3] - grect[1]
+                    if 0.5 * cw <= gw2 <= 2.0 * cw and 0.5 * ch2 <= gh2 <= 2.0 * ch2 \
+                            and len(gkeys) >= 2:
+                        rescue = True; break
+                if not rescue:
+                    box_stats["box_rej"] += 1
+                    continue
             box_stats["box_keys"] += len(gkeys)
             est = None if reg.get("force_ai") else \
                 _estimate_blend_group(frames_local, rects_by_key, gkeys, raw, hh, ww)
@@ -1445,13 +1463,34 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
     ks = max(1, int(key_step))
     ring = 6 + (ks - 1 + 1) // 2
     zeros = np.zeros((hh, ww), np.uint8)
+    # 카드 안 정적 글자 마스크 병합 — 시간축 커버를 밴드 마스크에 흡수
+    # (un-blend 선적용된 frames_local 위에서 AI가 글자를 복원)
+    extra = None
+    for ep in (reg.get("extra_packs") or []):
+        ex, ey, ew, eh = ep["off"]
+        bits = np.frombuffer(base64.b64decode(ep["pack"]), np.uint8)
+        em = (np.unpackbits(bits, count=eh * ew).reshape(eh, ew) * 255).astype(np.uint8)
+        lx = ex - reg["x"]; ly = ey - reg["y"]
+        sx0 = max(0, lx); sy0 = max(0, ly)
+        sx1 = min(ww, lx + ew); sy1 = min(hh, ly + eh)
+        if sx1 <= sx0 or sy1 <= sy0:
+            continue
+        if extra is None:
+            extra = np.zeros((hh, ww), np.uint8)
+        extra[sy0:sy1, sx0:sx1] = np.maximum(
+            extra[sy0:sy1, sx0:sx1],
+            em[sy0 - ly:sy1 - ly, sx0 - lx:sx1 - lx])
     out = []
     for i in range(n):
         u = None
         for j in range(max(0, i - ring), min(n - 1, i + ring) + 1):
             if raw[j] is not None:
                 u = raw[j].copy() if u is None else (u | raw[j])
+        if extra is not None:
+            u = extra.copy() if u is None else (u | extra)
         out.append(u if u is not None else zeros)
+    if extra is not None:
+        masked = max(masked, n)
     return out, masked
 
 
