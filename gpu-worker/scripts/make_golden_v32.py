@@ -286,13 +286,107 @@ def make_negative_goldens(tmp, master):
     return out
 
 
+# ---- RC3 Phase H: restoration 품질 골든 10종 (g26~g35, 전부 clean GT 보유) ----
+# 목적: "글자가 지워졌는가"가 아니라 "지운 자리가 자연스러운가"를 재는 세트.
+# 배경 질감·그래픽 선·얼굴·반복 패턴 등 복원이 어려운 배경 위에 오버레이를 굽는다.
+def make_restoration_goldens(tmp, master):
+    f_kr, f_en = font(True), font(False)
+    out = []
+
+    def _mk(g, ss, crop_y, clean_extra, burn_flt):
+        clean = os.path.join(tmp, f"{g}_clean.mp4")
+        vf = f"crop=1080:1080:0:{crop_y},fps={FPS}"
+        if clean_extra:
+            vf += "," + clean_extra
+        run(["ffmpeg", "-v", "error", "-ss", str(ss), "-t", str(DUR), "-i", master,
+             "-vf", vf, "-an", "-c:v", "libx264", "-crf", "16",
+             "-preset", "medium", clean, "-y"])
+        burned = os.path.join(tmp, f"{g}_input.mp4")
+        run(["ffmpeg", "-v", "error", "-i", clean, "-vf", burn_flt,
+             "-c:v", "libx264", "-crf", "16", "-preset", "medium", burned, "-y"])
+        out.append((g, clean, burned, "gt-restore"))
+
+    # R26(g26): 반투명 흰 카드 + 복잡한 질감 배경 (UAT-02 카드 재현, 상시)
+    _mk("g26", 100, 600, None,
+        f"drawtext=fontfile={f_kr}:text='안내 카드 문구입니다':fontsize=54:"
+        f"fontcolor=0x1a1a1a:box=1:boxcolor=white@0.5:boxborderw=26:"
+        f"x=(w-text_w)/2:y=(h-text_h)/2")
+    # R27(g27): 그림자 있는 카드 (박스 2중 — 그림자 근사) + gradient성 배경
+    _mk("g27", 55, 300, None,
+        f"drawbox=x=(iw-620)/2+10:y=(ih-190)/2+10:w=620:h=190:color=black@0.35:t=fill,"
+        f"drawbox=x=(iw-620)/2:y=(ih-190)/2:w=620:h=190:color=white@0.6:t=fill,"
+        f"drawtext=fontfile={f_kr}:text='그림자 카드 자막':fontsize=52:"
+        f"fontcolor=0x202020:x=(w-text_w)/2:y=(h-text_h)/2")
+    # R28(g28): 가는 그래픽 선(격자=보존 대상) 위 자막
+    _mk("g28", 15, 300, "drawgrid=w=54:h=54:t=1:color=white@0.75",
+        f"drawtext=fontfile={f_kr}:text='격자 위의 자막 복원':fontsize=52:"
+        f"fontcolor=white:borderw=3:bordercolor=black@0.7:"
+        f"x=(w-text_w)/2:y=h-280")
+    # R29(g29): 인물(얼굴·손) 구간 위 자막 — 마스터 인물 장면 사용
+    _mk("g29", 128, 300, None,
+        f"drawtext=fontfile={f_kr}:text='인물 위 자막 복원 검사':fontsize=52:"
+        f"fontcolor=white:borderw=3:bordercolor=black@0.7:"
+        f"x=(w-text_w)/2:y=(h-text_h)/2+80")
+    # R30(g30): 미세 질감(노이즈 강화) 배경 — 뭉갬이 즉시 티나는 조건
+    _mk("g30", 70, 600, "noise=alls=8:allf=t+u",
+        f"drawtext=fontfile={f_kr}:text='질감 배경 자막':fontsize=54:"
+        f"fontcolor=white:borderw=3:bordercolor=black@0.75:"
+        f"x=(w-text_w)/2:y=h-300")
+    # R31(g31): 반복 패턴(촘촘한 격자) — 구조 연속성 검사
+    _mk("g31", 40, 300, "drawgrid=w=24:h=24:t=1:color=0xC8C8C8@0.8",
+        f"drawtext=fontfile={f_en}:text='PATTERN RESTORE TEST':fontsize=50:"
+        f"fontcolor=black:box=1:boxcolor=white@0.85:boxborderw=12:"
+        f"x=(w-text_w)/2:y=(h-text_h)/2")
+    # R32(g32): 밝은 배경 + 저대비 흰 글자 (box 없음)
+    _mk("g32", 5, 100, "eq=brightness=0.12",
+        f"drawtext=fontfile={f_en}:text='LOW CONTRAST WHITE':fontsize=56:"
+        f"fontcolor=white@0.9:x=(w-text_w)/2:y=h-320")
+    # R33(g33): 두꺼운 외곽선+그림자 글자 — 계층 마스크 검사
+    _mk("g33", 90, 300, None,
+        f"drawtext=fontfile={f_kr}:text='두꺼운 외곽선 자막':fontsize=60:"
+        f"fontcolor=0xFFE24A:borderw=8:bordercolor=black:shadowx=6:shadowy=6:"
+        f"shadowcolor=black@0.7:x=(w-text_w)/2:y=h-300")
+    # R34(g34): 카메라 팬 + transient 반투명 카드 (4~12s)
+    still = os.path.join(tmp, "g34_still.png")
+    run(["ffmpeg", "-v", "error", "-ss", "45", "-i", master, "-frames:v", "1",
+         "-vf", "scale=2160:-2", still, "-y"])
+    clean34 = os.path.join(tmp, "g34_clean.mp4")
+    run(["ffmpeg", "-v", "error", "-loop", "1", "-i", still, "-t", str(DUR),
+         "-vf", f"crop=1080:1080:min(iw-1080\,t*40):200,fps={FPS}", "-an",
+         "-c:v", "libx264", "-crf", "16", "-preset", "medium", clean34, "-y"])
+    burned34 = os.path.join(tmp, "g34_input.mp4")
+    run(["ffmpeg", "-v", "error", "-i", clean34, "-vf",
+         f"drawtext=fontfile={f_kr}:text='이동 중 카드 등장':fontsize=52:"
+         f"fontcolor=0x202020:box=1:boxcolor=white@0.55:boxborderw=22:"
+         f"x=(w-text_w)/2:y=(h-text_h)/2:enable='between(t,4,12)'",
+         "-c:v", "libx264", "-crf", "16", "-preset", "medium", burned34, "-y"])
+    out.append(("g34", clean34, burned34, "gt-restore"))
+    # R35(g35): 움직이는 그래픽 바(보존 대상) 옆 자막
+    clean35 = os.path.join(tmp, "g35_clean.mp4")
+    run(["ffmpeg", "-v", "error", "-ss", "110", "-t", str(DUR), "-i", master,
+         "-filter_complex",
+         "[0:v]crop=1080:1080:0:300,fps=30[bg];"
+         "color=c=0x2A6BD4:s=420x36[bar];"
+         "[bg][bar]overlay=x=80+140*sin(t/2):y=760",
+         "-an", "-c:v", "libx264", "-crf", "16", "-preset", "medium",
+         clean35, "-y"])
+    burned35 = os.path.join(tmp, "g35_input.mp4")
+    run(["ffmpeg", "-v", "error", "-i", clean35, "-vf",
+         f"drawtext=fontfile={f_kr}:text='움직이는 그래픽 옆 자막':fontsize=50:"
+         f"fontcolor=white:borderw=3:bordercolor=black@0.7:"
+         f"x=(w-text_w)/2:y=860",
+         "-c:v", "libx264", "-crf", "16", "-preset", "medium", burned35, "-y"])
+    out.append(("g35", clean35, burned35, "gt-restore"))
+    return out
+
+
 def ensure_projects():
     src = requests.get(f"{SB_URL}/rest/v1/sc_projects",
                        params={"id": f"eq.{SRC_PROJECT}", "select": "user_id"},
                        headers=sbh(), timeout=30)
     src.raise_for_status()
     uid = src.json()[0]["user_id"]
-    for i in range(1, 26):
+    for i in range(1, 36):
         pid = f"beac0002-0000-4000-8000-0000000000{i:02d}"
         g = f"g{i:02d}"
         r = requests.get(f"{SB_URL}/rest/v1/sc_projects",
@@ -330,6 +424,7 @@ def main():
         download("videos-clips", MASTER_PATH, master)
     made += [m for m in make_transient_goldens(tmp, master) if m[0] not in have]
     made += [m for m in make_negative_goldens(tmp, master) if m[0] not in have]
+    made += [m for m in make_restoration_goldens(tmp, master) if m[0] not in have]
     manifest = list(prev)
     for g, clean, inp, kind in made:
         if clean:

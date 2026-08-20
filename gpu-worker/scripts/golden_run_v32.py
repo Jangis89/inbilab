@@ -350,12 +350,53 @@ def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None, kind=None):
         except OSError: pass
         # 판정: 영역외 무손상(절대 34 또는 베이스라인-0.5 중 낮은 쪽)
         #        + 구조 보존 + 영역내 종류별 하한 (전체 PSNR은 참고)
-        in_gate = GATE["in_box"] if (g in BOX_GOLDENS or kind == "gt-transient") \
+        in_gate = GATE["in_box"] if (g in BOX_GOLDENS or kind in ("gt-transient", "gt-restore")) \
             else GATE["in_text"]
         out_gate = min(GATE["psnr_out_min"], (base_out or 99.0) - 0.5)
         pass_q = ((rec["psnr_in_region"] or 0) >= in_gate
                   and (rec["psnr_out_region"] or 0) >= out_gate
                   and (ssim or 0) >= GATE["ssim"])
+        if kind == "gt-restore":
+            # RC3 Phase H: 복원 품질 추가 게이트 — "지운 티" 측정
+            # (evaluate_restoration_quality와 동일 정의; control 대비)
+            try:
+                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+                import numpy as np
+                import evaluate_restoration_quality as _rq
+                ds, ns = _rq._frames(inp_fp, 2); dr, nr = _rq._frames(out_fp, 2)
+                dgt, _ng = _rq._frames(gt_fp, 2)
+                n2 = min(ns, nr)
+                import cv2 as _cv2
+                sharps = []; hfs = []; glyphs = []
+                for i2 in range(n2):
+                    s2 = _rq._rd(ds, i2); r2 = _rq._rd(dr, i2); g2 = _rq._rd(dgt, i2)
+                    if s2 is None or r2 is None:
+                        continue
+                    st2 = _rq.stain_frame(s2, r2)
+                    if st2:
+                        sharps.append(st2[0])
+                    glyphs.append(_rq.glyph_residual(s2, r2))
+                    if g2 is not None:
+                        m2m = _cv2.dilate(_rq._diff_mask(s2, g2, 30),
+                                          np.ones((7, 7), np.uint8))
+                        h2 = _rq.highfreq_ratio(g2, r2, m2m)
+                        if h2 is not None:
+                            hfs.append(h2)
+                fl2 = _rq.flicker(ds, dr, n2)
+                rec["restore_sharp_p10"] = round(float(np.percentile(sharps, 10)), 3) if sharps else None
+                rec["restore_hf_p50"] = round(float(np.median(hfs)), 3) if hfs else None
+                rec["restore_glyph_p90"] = round(float(np.percentile(glyphs, 90)), 1) if glyphs else None
+                rec["restore_flicker"] = round(fl2, 3) if fl2 else None
+                # 게이트 (RC3 확정치 — run 결과 보고 낮추지 않는다):
+                #  질감 하한 sharp_p10≥0.45, 고주파 보존 hf∈[0.5,1.7],
+                #  잔존 획 p90≤400, flicker≤1.35
+                r_ok = ((rec["restore_sharp_p10"] is None or rec["restore_sharp_p10"] >= 0.45)
+                        and (rec["restore_hf_p50"] is None or 0.5 <= rec["restore_hf_p50"] <= 1.7)
+                        and (rec["restore_glyph_p90"] is None or rec["restore_glyph_p90"] <= 400)
+                        and (rec["restore_flicker"] is None or rec["restore_flicker"] <= 1.35))
+                pass_q = pass_q and r_ok
+            except Exception as e:
+                rec["restore_metric_error"] = str(e)[:150]
     elif kind == "negative":
         # 실물 negative: transient 오탐 0 + 입력 대비 사실상 무변화 요구
         trans_cnt = sum(1 for r0 in rec["plan_regions"]
