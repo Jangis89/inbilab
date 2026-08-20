@@ -192,6 +192,11 @@ def main():
               ("idx", "uat_pid", "result", "total_s", "t_scan_done",
                "t_segments_done", "seg_errors", "box_counters", "cost_est_usd")},
               ensure_ascii=False, default=str))
+        if rec.get("scan") and (rec["scan"].get("error") or rec["scan"].get("note")):
+            print("[UAT-SCAN-ERR]", json.dumps(rec["scan"], ensure_ascii=False,
+                                               default=str)[:2000])
+        if rec.get("error"):
+            print("[UAT-DRIVER-ERR]", str(rec["error"])[:1000])
     json.dump(report, open("UAT_RUN_REPORT.json", "w"), ensure_ascii=False,
               indent=1, default=str)
 
