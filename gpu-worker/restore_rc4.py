@@ -304,7 +304,22 @@ def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
             stats["flow_bypass"] = 1
             stats["probe_cover"] = round(1.0 - p_hole / p_need, 4)
         if ai_fallback is not None:
-            return ai_fallback(frames, masks, tier, chunk)
+            arr = ai_fallback(frames, masks, tier, chunk)
+            # Phase F: 격자/직선 구조는 생성 결과 위에 선 레이어 재합성
+            nline = 0
+            for k in range(n):
+                ti2 = s + k
+                m2 = masks[ti2] if ti2 < len(masks) else None
+                if m2 is None or not m2.any() or k >= len(arr):
+                    continue
+                lm, rgb = graphic_line_layer(frames[ti2], m2)
+                if lm is not None and lm.any():
+                    a2 = arr[k]
+                    a2[lm > 0] = rgb
+                    nline += 1
+            if stats is not None and nline:
+                stats["line_frames"] = nline
+            return arr
     out, holes, total_holed = _one_pass(frames, masks, cache0)
     # pass 2: 1차에서 채워진 실화소를 참조원으로 다시 전파 (시간축 체이닝)
     if total_holed > 0 and total_holed < total_need:
@@ -351,6 +366,9 @@ def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
                 out[k] = np.clip(out[k].astype(np.float32) * (1 - a)
                                  + arr[k].astype(np.float32) * a,
                                  0, 255).astype(np.uint8)
+                lm, rgb = graphic_line_layer(frames[s + k], hm)
+                if lm is not None and lm.any():
+                    out[k][lm > 0] = rgb
         elif ai_fallback is not None:
             # flow가 거의 무효(정지 배경 상시 마스크 등) → 통째 생성모델 경로
             if stats is not None:
@@ -363,6 +381,9 @@ def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
                     continue
                 out[k] = cv2.inpaint(out[k], (hm > 0).astype(np.uint8),
                                      5, cv2.INPAINT_TELEA)
+                lm, rgb = graphic_line_layer(frames[s + k], hm)
+                if lm is not None and lm.any():
+                    out[k][lm > 0] = rgb
     return out
 
 
@@ -402,3 +423,180 @@ def preserve_outside(src_frame, out_frame, allowed_mask_u8, soft=2.0):
     a = np.clip(a / 255.0, 0, 1)[..., None]
     return np.clip(src_frame.astype(np.float32) * (1 - a)
                    + out_frame.astype(np.float32) * a, 0, 255).astype(np.uint8)
+
+
+# ---------------- Phase F: 반복무늬 자기유사 복원 (periodic self-similarity) ----------------
+def _masked_autocorr_peak(gray_f, valid, lo=8, hi=140):
+    """유효 화소만으로 정규화 자기상관을 계산해 최강 주기 벡터를 찾는다.
+
+    반환: (dy, dx, corr) 또는 None. FFT 기반 masked NCC."""
+    g = gray_f.astype(np.float32)
+    w = valid.astype(np.float32)
+    mu = (g * w).sum() / max(1.0, w.sum())
+    z = (g - mu) * w
+    H, W = z.shape
+    F_z = np.fft.rfft2(z)
+    F_w = np.fft.rfft2(w)
+    F_z2 = np.fft.rfft2(z * z)
+    num = np.fft.irfft2(F_z * np.conj(F_z), s=z.shape)
+    cnt = np.fft.irfft2(F_w * np.conj(F_w), s=z.shape)
+    e2 = np.fft.irfft2(F_z2 * np.conj(F_w), s=z.shape)
+    # 순환 시프트 → fftshift로 중심 정렬
+    num = np.fft.fftshift(num)
+    cnt = np.fft.fftshift(cnt)
+    e2 = np.fft.fftshift(e2)
+    cy, cx = H // 2, W // 2
+    denom = np.maximum(e2, 1e-3)
+    corr = np.where(cnt > 0.15 * cnt[cy, cx], num / denom, 0.0)
+    yy, xx = np.mgrid[0:H, 0:W]
+    r = np.hypot(yy - cy, xx - cx)
+    corr[(r < lo) | (r > hi)] = 0.0
+    idx = int(np.argmax(corr))
+    py, px = divmod(idx, W)
+    c = float(corr[py, px])
+    if c < 0.45:
+        return None
+    return (py - cy, px - cx, c)
+
+
+def periodic_fill(frame, mask, context_band=110, min_corr=0.55,
+                  ring_err_max=14.0):
+    """반복무늬(격자·기와·타일·스트라이프) 위 마스크를 주기 복사로 복원.
+
+    반환: (filled_frame u8, remaining_mask u8, info dict|None).
+    주기 신뢰가 낮거나 링 검증 실패면 원본 그대로 + 전체 마스크 반환."""
+    mb = mask > 127
+    if not mb.any():
+        return frame, mask, None
+    ys, xs = np.nonzero(mb)
+    h, w = frame.shape[:2]
+    y0 = max(0, ys.min() - context_band); y1 = min(h, ys.max() + 1 + context_band)
+    x0 = max(0, xs.min() - context_band); x1 = min(w, xs.max() + 1 + context_band)
+    sub = frame[y0:y1, x0:x1]
+    smb = mb[y0:y1, x0:x1]
+    g = cv2.cvtColor(sub, cv2.COLOR_RGB2GRAY)
+    valid = ~smb
+    pk = _masked_autocorr_peak(g, valid)
+    if pk is None:
+        return frame, mask, None
+    dy, dx, corr = pk
+    if corr < min_corr:
+        return frame, mask, None
+    # 링 자기예측 검증: 마스크 밖 링 화소를 같은 규칙으로 예측해 실측 오차 확인
+    ring = (cv2.dilate(smb.astype(np.uint8), np.ones((15, 15), np.uint8))
+            .astype(bool) & valid)
+    sh, sw = smb.shape
+    yy, xx = np.mgrid[0:sh, 0:sw]
+    errs = []
+    filled = sub.copy()
+    remain = smb.copy()
+    for k in (1, -1, 2, -2, 3, -3):
+        sy = yy + k * dy
+        sx = xx + k * dx
+        inb = (sy >= 0) & (sy < sh) & (sx >= 0) & (sx < sw)
+        src_ok = np.zeros_like(inb)
+        src_ok[inb] = ~smb[sy[inb], sx[inb]]
+        # 링 검증 표본 (k=±1만)
+        if abs(k) == 1:
+            sel = ring & src_ok
+            if sel.sum() > 150:
+                pred = sub[sy[sel], sx[sel]].astype(np.float32)
+                act = sub[sel].astype(np.float32)
+                errs.append(float(np.abs(pred - act).mean()))
+        tgt = remain & src_ok
+        if tgt.any():
+            filled[tgt] = sub[sy[tgt], sx[tgt]]
+            remain[tgt] = False
+    if errs and (sum(errs) / len(errs)) > ring_err_max:
+        return frame, mask, None       # 주기 예측이 실측과 어긋남 → 포기
+    out = frame.copy()
+    out[y0:y1, x0:x1] = filled
+    rem_full = np.zeros_like(mask)
+    rem_full[y0:y1, x0:x1] = remain.astype(np.uint8) * 255
+    info = {"dy": int(dy), "dx": int(dx), "corr": round(corr, 3),
+            "ring_err": round(sum(errs) / len(errs), 1) if errs else None,
+            "filled_px": int(mb.sum() - remain.sum())}
+    return out, rem_full, info
+
+
+def _profile_period(prof, lo=8, hi=160):
+    """1-D 밀도 프로파일에서 (period, phase, score) 추정 — 격자 선 간격."""
+    p = prof - prof.mean()
+    n = len(p)
+    if n < lo * 3:
+        return None
+    ac = np.correlate(p, p, "full")[n - 1:]
+    ac0 = ac[0] if ac[0] > 1e-6 else 1.0
+    ac = ac / ac0
+    hi = min(hi, n // 2)
+    if hi <= lo:
+        return None
+    per = lo + int(np.argmax(ac[lo:hi]))
+    score = float(ac[per])
+    if score < 0.25:
+        return None
+    # phase: 프로파일 내 최대 평균 응답 위상
+    ph_scores = [prof[ph::per].mean() for ph in range(per)]
+    phase = int(np.argmax(ph_scores))
+    return per, phase, score
+
+
+def graphic_line_layer(frame, mask, band=90, min_line_frac=0.010):
+    """마스크 주변의 축정렬 격자/직선(가는 그래픽 선)을 찾아 마스크 안으로 연장.
+
+    반환 (line_mask u8 HxW, line_rgb 3-vec) 또는 (None, None).
+    생성모델 출력 위에 이 선 레이어를 재합성해 구조 연속성을 지킨다."""
+    mb = mask > 127
+    if not mb.any():
+        return None, None
+    h, w = frame.shape[:2]
+    ys, xs = np.nonzero(mb)
+    y0 = max(0, ys.min() - band); y1 = min(h, ys.max() + 1 + band)
+    x0 = max(0, xs.min() - band); x1 = min(w, xs.max() + 1 + band)
+    sub = frame[y0:y1, x0:x1]
+    smb = mb[y0:y1, x0:x1]
+    g = cv2.cvtColor(sub, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    # 가는 밝은/어두운 선 강조 (tophat + blackhat)
+    k = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    th = cv2.morphologyEx(g, cv2.MORPH_TOPHAT, k)
+    bh = cv2.morphologyEx(g, cv2.MORPH_BLACKHAT, k)
+    resp = np.maximum(th, bh)
+    ctx = (~smb)
+    rv = resp.copy(); rv[~ctx] = 0.0
+    thr = max(10.0, float(np.percentile(resp[ctx], 97)) * 0.6)
+    linepix = (rv > thr)
+    if linepix.sum() < ctx.sum() * min_line_frac:
+        return None, None
+    sh, sw = smb.shape
+    # 세로선: x-투영 / 가로선: y-투영 (문맥 화소만)
+    col = linepix.sum(axis=0).astype(np.float32) / np.maximum(1, ctx.sum(axis=0))
+    row = linepix.sum(axis=1).astype(np.float32) / np.maximum(1, ctx.sum(axis=1))
+    vres = _profile_period(col)
+    hres = _profile_period(row)
+    if vres is None and hres is None:
+        return None, None
+    lm = np.zeros((sh, sw), np.uint8)
+    tpx = 2
+    if vres:
+        per, ph, sc = vres
+        for x in range(ph, sw, per):
+            lm[:, max(0, x - tpx // 2):x + (tpx + 1) // 2] = 255
+    if hres:
+        per, ph, sc = hres
+        for y in range(ph, sh, per):
+            lm[max(0, y - tpx // 2):y + (tpx + 1) // 2, :] = 255
+    # 선 색: 문맥에서 lm∩linepix 화소의 중앙값
+    selc = (lm > 0) & ctx & linepix
+    if selc.sum() < 100:
+        return None, None
+    line_rgb = np.median(sub[selc].reshape(-1, 3), axis=0)
+    # 검증: 예측 선 위치가 실제 문맥 선과 일치하는가 (정밀도)
+    pred_ctx = (lm > 0) & ctx
+    prec = float(linepix[pred_ctx].mean()) if pred_ctx.any() else 0.0
+    if prec < 0.22:
+        return None, None
+    out_lm = np.zeros((h, w), np.uint8)
+    # 마스크 안쪽 선만 반환 (밖은 원본이 이미 정답)
+    lm_in = lm.copy(); lm_in[~smb] = 0
+    out_lm[y0:y1, x0:x1] = lm_in
+    return out_lm, line_rgb.astype(np.float32)
