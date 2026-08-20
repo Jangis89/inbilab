@@ -366,7 +366,7 @@ def make_restoration_goldens(tmp, master):
     run(["ffmpeg", "-v", "error", "-ss", "110", "-t", str(DUR), "-i", master,
          "-filter_complex",
          "[0:v]crop=1080:1080:0:300,fps=30[bg];"
-         "color=c=0x2A6BD4:s=420x36[bar];"
+         f"color=c=0x2A6BD4:s=420x36:d={DUR}[bar];"
          "[bg][bar]overlay=x=80+140*sin(t/2):y=760",
          "-an", "-c:v", "libx264", "-crf", "16", "-preset", "medium",
          clean35, "-y"])
