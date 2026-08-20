@@ -707,20 +707,16 @@ def detect_windowed_transient_overlays(samples, W, H, scan_step, fps,
                         if ix > 0 and iy > 0:
                             r.setdefault("excl_rects", []).append(
                                 [int(rx0c), int(ry0c), int(rx1c), int(ry1c)])
-                    # 카드 안 정적 글자 마스크는 카드 영역 extra로 흡수
-                    # (un-blend된 프레임 위에서 AI가 글자를 복원 — RC2와 동일 원리)
+                    # 카드 안 정적 영역은 제거만 한다 (extra 합집합 병합 금지 —
+                    # 시간축 합집합은 카드 내부 전체를 AI가 다시 그리게 만들어
+                    # 배경 뭉갬·환각을 유발, RC3 run 실측. 글자 커버는 물리
+                    # 글자마스크(α·C 하한) + stroke 폴백 + 키프레임 감지 3중이 담당)
                     for sr in list(prior_regions or []):
                         if not str(sr.get("kind", "")).startswith("static"):
-                            continue
-                        if sr.get("static_mask") is None:
                             continue
                         if sr["x"] >= rx0c - 8 and sr["y"] >= ry0c - 8 \
                                 and sr["x"] + sr["w"] <= rx1c + 8 \
                                 and sr["y"] + sr["h"] <= ry1c + 8:
-                            reg_c.setdefault("extra_masks", []).append(
-                                {"off": [int(sr["x"]), int(sr["y"]),
-                                         int(sr["w"]), int(sr["h"])],
-                                 "mask": sr["static_mask"]})
                             try:
                                 prior_regions.remove(sr)
                             except ValueError:
