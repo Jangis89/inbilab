@@ -189,7 +189,7 @@ def propagate_frame(frames, masks, ti, offsets=REF_OFFSETS,
 
 def restore_chunk_flow(frames, masks, chunk, ai_fallback=None, tier=None,
                        offsets=REF_OFFSETS, min_flow_cover=0.15,
-                       stats=None, bbox_margin=64):
+                       stats=None, bbox_margin=64, budget_s=None):
     """마스크 union bbox+margin으로 잘라 전파 후 되붙임 (속도 래퍼)."""
     s0, e0 = chunk["s"], min(chunk["e"], len(frames) - 1)
     h, w = frames[0].shape[:2]
@@ -224,7 +224,8 @@ def restore_chunk_flow(frames, masks, chunk, ai_fallback=None, tier=None,
             return [a[y0:y1, x0:x1] for a in arr]
         sub_out = _restore_chunk_flow_core(sub_f, sub_m, chunk,
                                            _sub_ai if ai_fallback else None,
-                                           tier, offsets, min_flow_cover, stats)
+                                           tier, offsets, min_flow_cover,
+                                           stats, budget_s)
         out = []
         for k in range(s0, e0 + 1):
             fr = frames[k].copy()
@@ -232,12 +233,12 @@ def restore_chunk_flow(frames, masks, chunk, ai_fallback=None, tier=None,
             out.append(fr)
         return out
     return _restore_chunk_flow_core(frames, masks, chunk, ai_fallback, tier,
-                                    offsets, min_flow_cover, stats)
+                                    offsets, min_flow_cover, stats, budget_s)
 
 
 def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
                              offsets=REF_OFFSETS, min_flow_cover=0.15,
-                             stats=None):
+                             stats=None, budget_s=None):
     """chunk 범위 [s..e]를 실화소 우선으로 복원.
 
     frames/masks: 세그먼트-로컬 전체 (참조 뱅크로 chunk 밖 프레임도 사용)
@@ -250,37 +251,6 @@ def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
     n = e - s + 1
     eng = _dis()
     total_need = 0
-
-    def _one_pass(fr_list, mk_list, cache, min_w=MIN_VALID_W):
-        outp = [None] * n
-        holep = [None] * n
-        holed = 0
-        for k in range(n):
-            ti = s + k
-            m = mk_list[ti] if ti < len(mk_list) else None
-            base = fr_list[ti].astype(np.float32)
-            if m is None or not m.any():
-                outp[k] = fr_list[ti].copy()
-                holep[k] = np.zeros(base.shape[:2], np.uint8)
-                continue
-            filled, wgt, hole = propagate_frame(fr_list, mk_list, ti,
-                                                offsets=offsets, engine=eng,
-                                                gray_cache=cache)
-            need = (m > 127)
-            # 유효 화소는 전량 교체 — 오염 원본과 혼합하면 잔상이 남는다
-            merged = base.copy()
-            valid = need & (wgt >= min_w)
-            merged[valid] = filled[valid]
-            merged[~need] = base[~need]
-            outp[k] = np.clip(merged, 0, 255).astype(np.uint8)
-            # hole은 수용 문턱과 반드시 일치시켜 재계산 (오버레이 잔존 방지)
-            holep[k] = (need & ~valid).astype(np.uint8) * 255
-            holed += int(holep[k].any() and (holep[k] > 0).sum() or 0)
-            if len(cache) > 96:
-                for kk in sorted(cache)[:32]:
-                    del cache[kk]
-        return outp, holep, holed
-
     for k in range(n):
         m0 = masks[s + k] if s + k < len(masks) else None
         if m0 is not None:
@@ -295,7 +265,7 @@ def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
         m = masks[ti] if ti < len(masks) else None
         if m is None or not m.any():
             continue
-        _, wgt, hole = propagate_frame(frames, masks, ti, offsets=offsets,
+        _, wgt, hole = propagate_frame(frames, masks, ti, offsets=(3, 10, 20),
                                        engine=eng, gray_cache=cache0)
         p_need += int((m > 127).sum())
         p_hole += int((hole > 0).sum())
@@ -320,26 +290,16 @@ def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
             if stats is not None and nline:
                 stats["line_frames"] = nline
             return arr
-    out, holes, total_holed = _one_pass(frames, masks, cache0)
-    # pass 2: 1차에서 채워진 실화소를 참조원으로 다시 전파 (시간축 체이닝)
-    if total_holed > 0 and total_holed < total_need:
-        fr2 = [f.copy() for f in frames]
-        mk2 = [None] * len(frames)
-        for k in range(n):
-            fr2[s + k] = out[k]
-            if holes[k] is not None and holes[k].any():
-                mk2[s + k] = holes[k]
-        # chunk 밖 프레임은 원 마스크 유지 (여전히 오염 가능)
-        for i2 in range(len(frames)):
-            if i2 < s or i2 > e:
-                mk2[i2] = masks[i2] if i2 < len(masks) else None
-        # 체이닝은 이중 warp 오차가 쌓이므로 더 엄격한 문턱으로만 수용
-        out2, holes2, holed2 = _one_pass(fr2, mk2, {}, min_w=MIN_VALID_W * 3.0)
-        for k in range(n):
-            if mk2[s + k] is not None and mk2[s + k].any():
-                out[k] = out2[k]
-                holes[k] = holes2[k]
-        total_holed = sum(int((h > 0).sum()) for h in holes if h is not None)
+    if budget_s is None:
+        budget_s = float(__import__("os").environ.get("WM_RC4_FLOW_BUDGET_S",
+                                                      "120"))
+    t_flow0 = _time.time()
+    out, holes, total_need2, total_holed, budget_hit = _chain_propagate(
+        frames, masks, s, e, offsets, eng, MIN_VALID_W,
+        budget_s=budget_s, t_start=t_flow0)
+    total_need = max(total_need, total_need2)
+    if stats is not None and budget_hit:
+        stats["flow_budget_hit"] = 1
     flow_cover = 1.0 - (total_holed / max(1, total_need))
     if stats is not None:
         stats["flow_cover"] = round(flow_cover, 4)
@@ -385,6 +345,170 @@ def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
                 if lm is not None and lm.any():
                     out[k][lm > 0] = rgb
     return out
+
+
+# ---------------- 체인-합성 전파 (성능 재설계 — run #147 900s 타임아웃 해소) ----------------
+# 원리: 인접 프레임 flow(fwd/bwd)를 프레임당 1회씩만 계산하고, 먼 참조는
+# flow 합성(F(t→t+k) = F(t→t+k-1) ∘ step)으로 얻는다. DIS 호출이 참조쌍마다
+# 2회 → 프레임당 2회로 줄어 7배 이상 빨라진다. 누적 오차는 링 광도 게이트와
+# 단계별 왕복오차 누적으로 방어한다.
+import time as _time
+
+
+def _compose_step(F, step_flow):
+    """F(ti→sj_prev)에 step(sj_prev→sj)을 합성."""
+    h, w = F.shape[:2]
+    gx, gy = np.meshgrid(np.arange(w, dtype=np.float32),
+                         np.arange(h, dtype=np.float32))
+    sx = np.clip(gx + F[..., 0], 0, w - 1)
+    sy = np.clip(gy + F[..., 1], 0, h - 1)
+    stepped = cv2.remap(step_flow, sx, sy, cv2.INTER_LINEAR,
+                        borderMode=cv2.BORDER_REPLICATE)
+    return F + stepped
+
+
+def _chain_propagate(frames, masks, s, e, offsets, eng, min_w,
+                     budget_s=None, t_start=None):
+    """[s..e] 프레임을 체인-합성 flow로 전파 복원.
+
+    반환 (out list, holes list, total_need, total_holed, budget_hit)"""
+    n_all = len(frames)
+    kmax = max(offsets)
+    lo = max(0, s - kmax)
+    hi = min(n_all - 1, e + kmax)
+    grays = {}
+    fwd = {}
+    bwd = {}
+    serr_f = {}
+    serr_b = {}
+
+    def g(i):
+        if i not in grays:
+            grays[i] = _neutral_gray(frames[i],
+                                     masks[i] if i < len(masks) else None)
+        return grays[i]
+
+    def boundary(i):
+        """경계 i: i↔i+1 flow 쌍 + 단계 왕복오차."""
+        if i in fwd:
+            return
+        f = _flow_pair(g(i), g(i + 1), eng)
+        b = _flow_pair(g(i + 1), g(i), eng)
+        mi = masks[i] if i < len(masks) else None
+        mi1 = masks[i + 1] if i + 1 < len(masks) else None
+        if mi is not None and mi.any():
+            f = _fill_flow(f, mi)
+        if mi1 is not None and mi1.any():
+            b = _fill_flow(b, mi1)
+        bw, _, _ = _warp_from(b, f)
+        serr_f[i] = np.hypot(f[..., 0] + bw[..., 0], f[..., 1] + bw[..., 1])
+        fw, _, _ = _warp_from(f, b)
+        serr_b[i] = np.hypot(b[..., 0] + fw[..., 0], b[..., 1] + fw[..., 1])
+        fwd[i] = f
+        bwd[i] = b
+
+    def evict(before):
+        for d in (grays, fwd, bwd, serr_f, serr_b):
+            for k2 in [k3 for k3 in d if k3 < before]:
+                del d[k2]
+
+    out = []
+    holes = []
+    total_need = 0
+    total_holed = 0
+    budget_hit = False
+    off_set = set(offsets)
+    for ti in range(s, e + 1):
+        m = masks[ti] if ti < len(masks) else None
+        base = frames[ti].astype(np.float32)
+        if m is None or not m.any():
+            out.append(frames[ti].copy())
+            holes.append(np.zeros(base.shape[:2], np.uint8))
+            continue
+        if budget_s is not None and t_start is not None \
+                and _time.time() - t_start > budget_s:
+            # 예산 초과 — 남은 프레임은 전부 hole (생성모델이 이어받음)
+            budget_hit = True
+            need0 = (m > 127)
+            total_need += int(need0.sum())
+            total_holed += int(need0.sum())
+            out.append(frames[ti].copy())
+            holes.append(need0.astype(np.uint8) * 255)
+            continue
+        evict(ti - kmax - 2)
+        need = m > 127
+        mb = need.astype(np.uint8)
+        ring = (cv2.dilate(mb, np.ones((17, 17), np.uint8)) - mb).astype(bool)
+        tgt_f = base
+        h, w = base.shape[:2]
+        acc = np.zeros((h, w, 3), np.float32)
+        wacc = np.zeros((h, w), np.float32)
+        for dirn in (1, -1):
+            F = None
+            E = None
+            for k in range(1, kmax + 1):
+                sj = ti + dirn * k
+                if sj < lo or sj > hi:
+                    break
+                bidx = ti + dirn * (k - 1) if dirn > 0 else sj
+                if bidx + 1 > hi or bidx < lo:
+                    break
+                boundary(bidx)
+                stepf = fwd[bidx] if dirn > 0 else bwd[bidx]
+                stepe = serr_f[bidx] if dirn > 0 else serr_b[bidx]
+                if F is None:
+                    F = stepf.copy()
+                    E = stepe.copy()
+                else:
+                    E = E + np.abs(cv2.remap(stepe, np.clip(
+                        np.meshgrid(np.arange(w, dtype=np.float32),
+                                    np.arange(h, dtype=np.float32))[0]
+                        + F[..., 0], 0, w - 1), np.clip(
+                        np.meshgrid(np.arange(w, dtype=np.float32),
+                                    np.arange(h, dtype=np.float32))[1]
+                        + F[..., 1], 0, h - 1), cv2.INTER_LINEAR,
+                        borderMode=cv2.BORDER_REPLICATE))
+                    F = _compose_step(F, stepf)
+                if k not in off_set:
+                    continue
+                if (wacc[need] >= min_w).mean() > 0.985:
+                    break
+                warped, mx, my = _warp_from(frames[sj].astype(np.float32), F)
+                conf = np.exp(-E / FB_MAX_ERR).astype(np.float32)
+                if ring.any():
+                    band_err = float(np.abs(warped - tgt_f)
+                                     .max(axis=2)[ring].mean())
+                    ring_gate = float(np.exp(-max(0.0, band_err - 5.0) / 8.0))
+                else:
+                    ring_gate = 1.0
+                if ring_gate < 0.2:
+                    continue
+                msj = masks[sj] if sj < len(masks) else None
+                if msj is not None and msj.any():
+                    src_m = _sample_mask(msj, mx, my)
+                    conf = conf * np.clip(1.0 - src_m.astype(np.float32)
+                                          / 255.0, 0.0, 1.0)
+                oob = ((mx < EDGE_MARGIN) | (mx > w - 1 - EDGE_MARGIN)
+                       | (my < EDGE_MARGIN) | (my > h - 1 - EDGE_MARGIN))
+                conf[oob] = 0.0
+                dist_w = 1.0 / (1.0 + 0.15 * k)
+                wgt = conf * (dist_w * ring_gate)
+                wgt[~need] = 0.0
+                acc += warped * wgt[..., None]
+                wacc += wgt
+        filled = np.zeros_like(acc)
+        nz = wacc > 1e-6
+        filled[nz] = acc[nz] / wacc[nz][..., None]
+        merged = base.copy()
+        valid = need & (wacc >= min_w)
+        merged[valid] = filled[valid]
+        merged[~need] = base[~need]
+        out.append(np.clip(merged, 0, 255).astype(np.uint8))
+        hole = (need & ~valid).astype(np.uint8) * 255
+        holes.append(hole)
+        total_need += int(need.sum())
+        total_holed += int((hole > 0).sum())
+    return out, holes, total_need, total_holed, budget_hit
 
 
 # ---------------- Phase C: Effect-Aware Locator ----------------

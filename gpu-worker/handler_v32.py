@@ -2206,14 +2206,21 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                     # RC4: 실화소 전파 우선 — 앞뒤 프레임의 진짜 화소로 먼저
                     # 채우고, 남는 hole만 생성모델. 정지배경 상시 오버레이는
                     # probe가 자동으로 기존 생성모델 경로로 우회한다.
+                    # 종류별 게이트: 한시(transient/card)는 이득이 커 낮은 문턱,
+                    # 상시(static)는 높은 문턱+짧은 예산 (fast 경로 속도 보호).
                     fstats = {}
+                    is_trans = kind.startswith("transient")
+                    mfc = 0.12 if is_trans else 0.30
+                    bud = 150.0 if is_trans else 75.0
 
                     def _ai_fb(fr2, mk2, tier2, ch2, _t2=t2):
                         return h29.restore_chunk(fr2, mk2, _t2, ch2)
 
                     arr = rc4.restore_chunk_flow(frames_local, masks, c,
                                                  ai_fallback=_ai_fb, tier=t2,
-                                                 stats=fstats)
+                                                 stats=fstats,
+                                                 min_flow_cover=mfc,
+                                                 budget_s=bud)
                     counters["flow_chunks"] = counters.get("flow_chunks", 0) + 1
                     if fstats.get("flow_bypass"):
                         counters["flow_bypass"] = counters.get("flow_bypass", 0) + 1
