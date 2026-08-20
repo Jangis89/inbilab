@@ -24,6 +24,8 @@ import requests
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import restore_rc4 as R
 
+_ORIG_FLOW_PAIR = R._flow_pair    # monkeypatch 재귀 방지 (원본 캡처)
+
 SB_URL = os.environ["SUPABASE_URL"].rstrip("/")
 SB_KEY = os.environ["SUPABASE_SERVICE_ROLE"]
 W = H = 480
@@ -115,10 +117,10 @@ def masks_from_diff(cl, ip):
 def make_engine(kind):
     if kind == "dis_half":
         eng = R._dis()
-        return lambda a, b: R._flow_pair(a, b, eng, half=True)
+        return lambda a, b: _ORIG_FLOW_PAIR(a, b, eng, half=True)
     if kind == "dis_full":
         eng = R._dis()
-        return lambda a, b: R._flow_pair(a, b, eng, half=False)
+        return lambda a, b: _ORIG_FLOW_PAIR(a, b, eng, half=False)
     if kind == "farneback":
         return lambda a, b: cv2.calcOpticalFlowFarneback(
             a, b, None, 0.5, 4, 21, 3, 5, 1.1, 0)
