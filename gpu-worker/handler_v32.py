@@ -2130,7 +2130,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                     x1b = min(ww_r, (bb[2] + 32 + 15) // 16 * 16)
                     y1b = min(hh_r, (bb[3] + 32 + 15) // 16 * 16)
                     afrac = (x1b - x0b) * (y1b - y0b) / float(ww_r * hh_r)
-                    if x1b - x0b >= 48 and y1b - y0b >= 48 and afrac <= 0.45:
+                    if x1b - x0b >= 48 and y1b - y0b >= 48 and afrac <= 0.70:
                         # 위험 판정: 마스크 주변 링 질감 (중간 프레임)
                         mid_l = min(len(masks) - 1, (c["s"] + c["e"]) // 2)
                         mm = (masks[mid_l] > 127).astype(np.uint8)
@@ -2138,12 +2138,16 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                         gmid = cv2.cvtColor(frames_local[mid_l], cv2.COLOR_RGB2GRAY).astype(np.float32)
                         lapm = np.abs(cv2.Laplacian(gmid, cv2.CV_32F))
                         risk = float(lapm[ring_r > 0].mean()) if ring_r.any() else 0.0
-                        if risk >= 3.0:
+                        sc_hq = 1.0 if afrac <= 0.40 else 0.75
+                        # 비용 상한: 예상 픽셀 비 ≤1.7×만 허용 (rc3-6 폭주 방지)
+                        cost_ratio = (afrac * sc_hq * sc_hq) / max(
+                            1e-6, (t2.get("scale", 0.5) ** 2))
+                        if risk >= 3.0 and cost_ratio <= 1.7:
                             sub_f = [f[y0b:y1b, x0b:x1b] for f in frames_local]
                             sub_m = [(m[y0b:y1b, x0b:x1b] if m is not None else None)
                                      for m in masks]
                             t3 = dict(t2)
-                            t3["scale"] = 1.0
+                            t3["scale"] = sc_hq
                             if afrac <= 0.30:
                                 t3["steps"] = max(int(t3.get("steps", 4)), 6)
                             ta = time.time()
