@@ -1571,6 +1571,7 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
     n = len(frames_local)
     kind = reg["kind"]
     _seg_masks_for_region._last_card_fix = None
+    _seg_masks_for_region._last_paste = None
     if kind.startswith("manual"):
         # 직접 지정: v29 로직 그대로 (전역 f0/f1을 로컬로 이동)
         reg_l = dict(reg)
@@ -1977,6 +1978,7 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                 excl = np.zeros((hh, ww), bool)
             excl[ey0:ey1, ex0:ex1] = True
     out = []
+    paste = []
     for i in range(n):
         u = None
         for j in range(max(0, i - ring), min(n - 1, i + ring) + 1):
@@ -1990,9 +1992,31 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
             # 전역 카드 영역: 존재 구간 밖은 zero mask (AI 비용·오처리 차단)
             if card_pres_loc is not None and not card_pres_loc[i]:
                 u = None
+        # RC3 Phase E: tight paste 마스크 — AI 입력은 ±ring 합집합(시간 안정)을
+        # 쓰되, 출력에 붙이는 범위는 '현재 프레임의 실제 글자 자리(+9px)'로
+        # 제한한다. 합집합째 붙이면 글자가 없던 픽셀까지 저해상 복원으로 덮여
+        # 얼룩 면적이 글자의 수 배가 된다 (UAT-01 M2 실측 — 비용 0 수정).
+        p_m = None
+        if u is not None:
+            near = None
+            for j in range(i, max(-1, i - ring - 1), -1):
+                if j < n and raw[j] is not None:
+                    near = j; break
+            if near is None:
+                for j in range(i + 1, min(n, i + ring + 1)):
+                    if raw[j] is not None:
+                        near = j; break
+            if near is not None:
+                p_m = np.minimum(cv2.dilate(raw[near], np.ones((9, 9), np.uint8)), u)
+                if extra is not None:
+                    p_m = np.maximum(p_m, np.minimum(extra, u))
+            else:
+                p_m = u
         out.append(u if u is not None else zeros)
+        paste.append(p_m if p_m is not None else zeros)
     if extra is not None:
         masked = max(masked, n)
+    _seg_masks_for_region._last_paste = paste
     return out, masked
 
 
@@ -2022,6 +2046,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                 "precise_keyframes": 0, "regions_active": 0}
     seg_rest = {}     # ri -> {global_i: 복원 crop}
     local_masks = {}  # ri -> 로컬 마스크 목록 (index = global_i - E0)
+    local_pastes = {}  # ri -> tight paste 마스크 (출력 합성용 — AI 입력과 분리)
     box_fix_by_region = {}  # ri -> {local_i: [(rect, gain, bias)]} (반투명 un-blend v2)
     card_fix_by_region = {}  # ri -> card_model (RC3 전역 카드 un-blend — 합성 시 적용)
     t_dec = t_mask = t_ai = 0.0
@@ -2051,6 +2076,9 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
         if cfx:
             card_fix_by_region[ri] = cfx
             counters["card_global"] = counters.get("card_global", 0) + 1
+        pl = getattr(_seg_masks_for_region, "_last_paste", None)
+        if pl is not None:
+            local_pastes[ri] = pl
         if masked == 0 or not any(m.any() for m in masks):
             del frames_local
             continue
@@ -2102,7 +2130,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                     x1b = min(ww_r, (bb[2] + 32 + 15) // 16 * 16)
                     y1b = min(hh_r, (bb[3] + 32 + 15) // 16 * 16)
                     afrac = (x1b - x0b) * (y1b - y0b) / float(ww_r * hh_r)
-                    if x1b - x0b >= 48 and y1b - y0b >= 48 and afrac <= 0.75:
+                    if x1b - x0b >= 48 and y1b - y0b >= 48 and afrac <= 0.45:
                         # 위험 판정: 마스크 주변 링 질감 (중간 프레임)
                         mid_l = min(len(masks) - 1, (c["s"] + c["e"]) // 2)
                         mm = (masks[mid_l] > 127).astype(np.uint8)
@@ -2115,8 +2143,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                             sub_m = [(m[y0b:y1b, x0b:x1b] if m is not None else None)
                                      for m in masks]
                             t3 = dict(t2)
-                            # 면적 구간별 상향: 작을수록 원해상도 (비용 통제)
-                            t3["scale"] = 1.0 if afrac <= 0.50 else 0.75
+                            t3["scale"] = 1.0
                             if afrac <= 0.30:
                                 t3["steps"] = max(int(t3.get("steps", 4)), 6)
                             ta = time.time()
@@ -2221,7 +2248,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
             reg = plan["regions"][ri]
             if "f0" in reg and not (int(reg["f0"]) <= i < int(reg["f1"])): continue
             if reg.get("ivals") and not any(int(a) <= i < int(b) for a, b in reg["ivals"]): continue
-            m = local_masks[ri][i - E0]
+            m = (local_pastes.get(ri) or local_masks[ri])[i - E0]
             a = cv2.GaussianBlur(m, (0, 0), 6 if reg["kind"].startswith("manual") else 2)\
                 .astype(np.float32)[..., None] / 255.0
             sub = frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]].astype(np.float32)
