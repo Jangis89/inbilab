@@ -1,0 +1,16 @@
+engine,case,psnr_fill_db,coverage,sec_per_frame_cpu
+dis_half,pan,30.91,0.149,0.38
+dis_full,pan,27.66,0.140,0.48
+farneback,pan,29.22,0.129,0.84
+raft_small,pan,37.68,0.151,7.88
+raft_large,pan,37.22,0.156,26.95
+dis_half,transient,26.35,0.023,0.30
+dis_full,transient,25.57,0.167,0.39
+farneback,transient,27.62,0.022,0.78
+raft_small,transient,26.37,0.018,8.35
+raft_large,transient,27.95,0.052,29.15
+dis_half,moving,24.47,0.018,0.37
+dis_full,moving,23.21,0.022,0.48
+farneback,moving,24.53,0.028,0.82
+raft_small,moving,21.57,0.021,7.89
+raft_large,moving,25.62,0.024,27.23
