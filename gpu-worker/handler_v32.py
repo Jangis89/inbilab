@@ -460,8 +460,8 @@ def _scene_text_veto(regions, items_t, samples, W, H):
         scene_n = 0; fixed_n = 0
         for i in range(1, n):
             g = (gdx[i], gdy[i]); gm = float(np.hypot(*g))
-            if gm <= 1.5:
-                continue                          # 배경이 안 움직인 표본은 정보 없음
+            if gm <= 1.5 or gm > 60.0:
+                continue    # 정지 표본은 정보 없음, 60px+는 장면전환 잡음 (오판 방지)
             cur = [c for c in cents[i] if rx0 <= c[0] <= rx1 and ry0 <= c[1] <= ry1]
             prev = cents[i - 1]
             if not cur or not prev:
@@ -482,7 +482,10 @@ def _scene_text_veto(regions, items_t, samples, W, H):
                 elif mag < max(3.0, 0.25 * gm):
                     fixed_n += 1
         tot = scene_n + fixed_n
-        if scene_n >= 8 and tot > 0 and scene_n / float(tot) >= 0.7:
+        # 증거량 게이트: 총 40쌍 미만이면 판정 보류(keep) — 빠른 컷 영상에서
+        # 얇은 표본(27쌍)으로 실제 자막 밴드를 오판한 실측(bench run111) 수정.
+        # 실물 골든은 88~309쌍으로 여유 통과.
+        if scene_n >= 8 and tot >= 40 and scene_n / float(tot) >= 0.7:
             dbg.append({"k": kind, "why": "VETO", "scene": scene_n, "fixed": fixed_n,
                         "move": round(move_total, 1)})
             continue                              # 장면 부착 텍스트 — 영역 제외
