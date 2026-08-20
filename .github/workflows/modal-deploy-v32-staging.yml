@@ -1,0 +1,235 @@
+# 인비랩 V32 경쟁속도 스테이징 — 배포·벤치마크·품질검증 (workflow_dispatch 전용)
+# 운영 배포·V31 workflow와 완전 분리. 운영 앱은 건드리지 않는다.
+name: V32 staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "deploy | bench | verify | clips | golden | goldenrun | queue | queuee2e | export | uat | preserve"
+        required: true
+        default: "deploy"
+      ref:
+        description: "체크아웃할 브랜치/커밋"
+        required: true
+        default: "perf/wm-v32-competitive-speed"
+      runs:
+        description: "bench 반복 횟수"
+        required: false
+        default: "3"
+      k:
+        description: "세그먼트 수 K"
+        required: false
+        default: "10"
+      warm:
+        description: "사전 예열 GPU 수"
+        required: false
+        default: "5"
+      key_step:
+        description: "정밀 감지 키프레임 간격 (1=완전정밀)"
+        required: false
+        default: "5"
+      label:
+        description: "bench 라벨"
+        required: false
+        default: "v32"
+      hedge:
+        description: "지연 hedge 초 (0=끔)"
+        required: false
+        default: "0"
+      jobs:
+        description: "queue 부하검사 동시 작업 수"
+        required: false
+        default: "3"
+      pids:
+        description: "UAT 원본 프로젝트 id (쉼표 구분)"
+        required: false
+        default: ""
+
+jobs:
+  v32:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        timeout-minutes: 12
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            (sudo timeout 200 apt-get update -qq -o Acquire::Retries=2 \
+             && sudo timeout 200 apt-get install -y -qq ffmpeg) || {
+              echo "apt 실패 — ffmpeg 정적 빌드(BtbN 공식) 폴백"
+              curl -sL --retry 3 -o /tmp/ff.tar.xz \
+                https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+              tar -xf /tmp/ff.tar.xz -C /tmp
+              sudo cp /tmp/ffmpeg-*/bin/ffmpeg /tmp/ffmpeg-*/bin/ffprobe /usr/local/bin/
+            }
+          fi
+          ffmpeg -version | head -1
+          pip install -q modal numpy==1.26.4 opencv-python-headless==4.10.0.84 requests
+      - name: Deploy V32 staging app
+        if: ${{ github.event.inputs.action == 'deploy' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          modal secret create v32-staging-s3 SUPABASE_S3_ACCESS_KEY_ID=PLACEHOLDER SUPABASE_S3_SECRET_ACCESS_KEY=PLACEHOLDER SUPABASE_S3_REGION=ap-northeast-2 2>/dev/null || true
+          modal deploy gpu-worker/modal_app_v32.py
+      - name: Benchmark
+        if: ${{ github.event.inputs.action == 'bench' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: |
+          python -u gpu-worker/scripts/benchmark_v32.py \
+            --runs "${{ github.event.inputs.runs }}" \
+            --k "${{ github.event.inputs.k }}" \
+            --warm "${{ github.event.inputs.warm }}" \
+            --key_step "${{ github.event.inputs.key_step }}" \
+            --hedge "${{ github.event.inputs.hedge }}" \
+            --label "${{ github.event.inputs.label }}"
+      - name: Queue load test
+        if: ${{ github.event.inputs.action == 'queue' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: |
+          python -u gpu-worker/scripts/queue_load_v32.py \
+            --jobs "${{ github.event.inputs.jobs }}" \
+            --k "${{ github.event.inputs.k }}" \
+            --warm "${{ github.event.inputs.warm }}" \
+            --key_step "${{ github.event.inputs.key_step }}" \
+            --label "${{ github.event.inputs.label }}"
+      - name: Upload queue artifacts
+        if: ${{ always() && github.event.inputs.action == 'queue' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: queue-v32-${{ github.run_id }}
+          path: |
+            QUEUE_LOAD_REPORT.json
+            QUEUE_LOAD_REPORT.md
+          if-no-files-found: ignore
+      - name: Export comparison clip
+        if: ${{ github.event.inputs.action == 'export' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: |
+          curl -s -H "apikey: $SUPABASE_SERVICE_ROLE" -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE" \
+            "$SUPABASE_URL/storage/v1/object/videos-clips/bench-assets/golden/g06_input.mp4" -o g06.mp4
+          ffmpeg -v error -i g06.mp4 -c:v libx264 -crf 26 -preset medium comp_clip.mp4 -y
+          ls -la g06.mp4 comp_clip.mp4
+      - name: Upload comparison clip
+        if: ${{ always() && github.event.inputs.action == 'export' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: comp-clip-${{ github.run_id }}
+          path: comp_clip.mp4
+          if-no-files-found: ignore
+      - name: Preserve assets
+        if: ${{ github.event.inputs.action == 'preserve' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          PRESERVE_SPEC: ${{ github.event.inputs.pids }}
+        run: python -u gpu-worker/scripts/preserve_assets_v32.py
+      - name: UAT run (deep audit 100%)
+        if: ${{ github.event.inputs.action == 'uat' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          UAT_SRC_PIDS: ${{ github.event.inputs.pids }}
+        run: |
+          python -u gpu-worker/scripts/uat_run_v32.py --label "${{ github.event.inputs.label }}"
+      - name: Upload UAT artifacts
+        if: ${{ always() && github.event.inputs.action == 'uat' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: uat-v32-${{ github.run_id }}
+          path: |
+            UAT_RUN_REPORT.json
+            UAT_RUN_REPORT.md
+          if-no-files-found: ignore
+      - name: Queue staging E2E
+        if: ${{ github.event.inputs.action == 'queuee2e' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: python -u gpu-worker/scripts/queue_staging_test_v32.py
+      - name: Upload queue E2E artifacts
+        if: ${{ always() && github.event.inputs.action == 'queuee2e' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: queue-e2e-${{ github.run_id }}
+          path: QUEUE_INTEGRATION_V32.json
+          if-no-files-found: ignore
+      - name: Make golden videos
+        if: ${{ github.event.inputs.action == 'golden' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: |
+          sudo timeout 240 apt-get install -y -qq fonts-nanum fonts-dejavu-core || true
+          python -u gpu-worker/scripts/make_golden_v32.py
+      - name: Run golden quality
+        if: ${{ github.event.inputs.action == 'goldenrun' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+        run: |
+          pip install -q lpips torch --index-url https://download.pytorch.org/whl/cpu || echo "lpips 설치 실패 — 지표 생략"
+          if [[ "${{ github.event.inputs.label }}" == *analyze* ]]; then export GOLDEN_SKIP_RUN=1; fi
+          python -u gpu-worker/scripts/golden_run_v32.py
+      - name: Upload golden artifacts
+        if: ${{ always() && (github.event.inputs.action == 'golden' || github.event.inputs.action == 'goldenrun') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-v32-${{ github.run_id }}
+          path: |
+            GOLDEN_MANIFEST.json
+            GOLDEN_QUALITY_REPORT.json
+            GOLDEN_QUALITY_REPORT.md
+            golden_review/
+          if-no-files-found: ignore
+      - name: Verify output quality
+        if: ${{ github.event.inputs.action == 'verify' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          V32_K: ${{ github.event.inputs.k }}
+        run: python -u gpu-worker/scripts/verify_v32.py
+      - name: Make review clips
+        if: ${{ github.event.inputs.action == 'clips' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          V32_K: ${{ github.event.inputs.k }}
+        run: python -u gpu-worker/scripts/make_clips_v32.py
+      - name: Upload clips
+        if: ${{ github.event.inputs.action == 'clips' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: clips-v32-${{ github.run_id }}
+          path: clips/
+      - name: Upload bench artifacts
+        if: ${{ always() && github.event.inputs.action == 'bench' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-v32-${{ github.run_id }}
+          path: BENCHMARK_V32.json
+          if-no-files-found: ignore
