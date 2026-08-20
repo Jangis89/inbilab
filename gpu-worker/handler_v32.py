@@ -2102,7 +2102,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                     x1b = min(ww_r, (bb[2] + 32 + 15) // 16 * 16)
                     y1b = min(hh_r, (bb[3] + 32 + 15) // 16 * 16)
                     afrac = (x1b - x0b) * (y1b - y0b) / float(ww_r * hh_r)
-                    if x1b - x0b >= 48 and y1b - y0b >= 48 and afrac <= 0.55:
+                    if x1b - x0b >= 48 and y1b - y0b >= 48 and afrac <= 0.75:
                         # 위험 판정: 마스크 주변 링 질감 (중간 프레임)
                         mid_l = min(len(masks) - 1, (c["s"] + c["e"]) // 2)
                         mm = (masks[mid_l] > 127).astype(np.uint8)
@@ -2115,7 +2115,8 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                             sub_m = [(m[y0b:y1b, x0b:x1b] if m is not None else None)
                                      for m in masks]
                             t3 = dict(t2)
-                            t3["scale"] = 1.0
+                            # 면적 구간별 상향: 작을수록 원해상도 (비용 통제)
+                            t3["scale"] = 1.0 if afrac <= 0.50 else 0.75
                             if afrac <= 0.30:
                                 t3["steps"] = max(int(t3.get("steps", 4)), 6)
                             ta = time.time()
