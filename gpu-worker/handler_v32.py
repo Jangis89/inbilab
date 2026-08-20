@@ -1655,8 +1655,11 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
             fr[:] = np.clip((fr.astype(np.float32) - _aC) / _den, 0, 255)\
                 .astype(np.uint8)
         _b05 = (card_matte > 0.5).astype(np.uint8)
-        card_ring = ((cv2.dilate(_b05, np.ones((17, 17), np.uint8))
-                      - cv2.erode(_b05, np.ones((17, 17), np.uint8))) * 255)\
+        # 링은 바깥쪽으로 더 넓게(+10px) — rect 추정이 실제 카드보다 안쪽으로
+        # 수 px 어긋나면 카드의 얇은 반투명 잔줄이 matte 밖에 남는다 (r4 실측
+        # 우측 세로 잔줄). 안쪽은 ±4px면 충분 (내부는 un-blend가 이미 처리).
+        card_ring = ((cv2.dilate(_b05, np.ones((21, 21), np.uint8))
+                      - cv2.erode(_b05, np.ones((9, 9), np.uint8))) * 255)\
             .astype(np.uint8)
         _seg_masks_for_region._last_card_fix = {
             "rect": cm["rect"], "rad": cm["rad"], "alpha": cm["alpha"],
@@ -2421,7 +2424,10 @@ def finish_v32(proj, tmp, t0, parts, tms_in=None, stream=False, wait_s=1500,
     tms = dict(tms_in or {})
     tms["finish"] = sw.out()
     detail = {"url": url_out, "mode": plan.get("mode"), "tier": plan.get("tier"),
-              "regions": [r["kind"] for r in plan["regions"]], "sec": sec,
+              "regions": [{"k": r["kind"], "x": r["x"], "y": r["y"],
+                           "w": r["w"], "h": r["h"],
+                           "cm": bool(r.get("card_model"))}
+                          for r in plan["regions"]], "sec": sec,
               "gpu": BACKEND_NAME, "ver": V32_VER, "segK": plan.get("segK"),
               "up_mode": up_mode, "tms": tms}
     h29.set_proj(pid, "wm_done", detail)
