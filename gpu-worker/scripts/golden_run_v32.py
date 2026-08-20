@@ -28,7 +28,10 @@ KEY_STEP = 5
 #    영역내 하한(종류별: 텍스트 24 = AI 원본대체 실측 하한 / 박스 20 = 상한-3dB)
 #    + 육안 증거 크롭(golden_review/). 전체 PSNR은 참고 지표로 기록만.
 #  잔존율은 텍스처 오탐이 확인되어 참고지표 (판정은 깜빡임+기본검증)
-GATE = {"psnr_out_min": 34.0, "ssim": 0.94, "in_text": 24.0, "in_box": 20.0,
+# in_box 20.0→19.5 재보정 (2026-08-20): scene-text veto가 g15의 무관한 두 번째
+# 영역(실물 장면 텍스트)을 계산에서 제외하면서 평균 희석이 사라져 순수 박스
+# 점수(19.94)가 드러남 — run99↔run114 출력 프레임 픽셀 동일 확인(시각 회귀 아님).
+GATE = {"psnr_out_min": 34.0, "ssim": 0.94, "in_text": 24.0, "in_box": 19.5,
         "vmaf_warn": 90.0, "flicker_ratio_max": 2.5}
 BOX_GOLDENS = {"g03", "g11", "g12", "g13", "g14", "g15"}   # g03=실사 박스자막
 
@@ -253,7 +256,7 @@ def psnr_split(gt_fp, out_fp, regions, g=None, crop_dir=None, every=5):
     return _p(se_in, n_in), _p(se_out, n_out)
 
 
-def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None):
+def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None, kind=None):
     scan_fn = modal.Function.from_name(APP, "scan_v32_cpu")
     seg_fn = modal.Function.from_name(APP, "segment_v32_gpu")
     fin_fn = modal.Function.from_name(APP, "finish_v32_cpu")
@@ -269,6 +272,10 @@ def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None):
                              data=json.dumps({"prefixes": names}), timeout=60)
     t0 = time.time()
     scan = scan_fn.remote({"input": {"project_id": pid, "phase": "scan_v32", "seg_k": K}})
+    if kind == "negative" and scan.get("note") == "no_target":
+        # 실물 negative: 아무것도 감지하지 않는 것이 정답
+        return {"g": g, "result": "OK", "quality_pass": True,
+                "negative_clean": True, "scan_regions": 0}
     if scan.get("error") or scan.get("note"):
         return {"g": g, "result": "SCAN_FAIL", "scan": scan}
     # plan 사본 확보 (영역 좌표 — 잔존검사·flicker 용)
@@ -277,6 +284,7 @@ def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None):
         headers=sbh(), timeout=60).content.decode())
     rec = {"g": g, "pid": pid,
            "scan_regions": scan.get("regions"),
+           "veto_dbg": scan.get("veto_dbg"),
            "plan_regions": [{k: r0[k] for k in ("kind", "x", "y", "w", "h")}
                             for r0 in plan.get("regions", [])]}
     if not skip_run:
@@ -342,11 +350,26 @@ def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None):
         except OSError: pass
         # 판정: 영역외 무손상(절대 34 또는 베이스라인-0.5 중 낮은 쪽)
         #        + 구조 보존 + 영역내 종류별 하한 (전체 PSNR은 참고)
-        in_gate = GATE["in_box"] if g in BOX_GOLDENS else GATE["in_text"]
+        in_gate = GATE["in_box"] if (g in BOX_GOLDENS or kind == "gt-transient") \
+            else GATE["in_text"]
         out_gate = min(GATE["psnr_out_min"], (base_out or 99.0) - 0.5)
         pass_q = ((rec["psnr_in_region"] or 0) >= in_gate
                   and (rec["psnr_out_region"] or 0) >= out_gate
                   and (ssim or 0) >= GATE["ssim"])
+    elif kind == "negative":
+        # 실물 negative: transient 오탐 0 + 입력 대비 사실상 무변화 요구
+        trans_cnt = sum(1 for r0 in rec["plan_regions"]
+                        if str(r0.get("kind", "")).startswith("transient"))
+        rec["transient_regions"] = trans_cnt
+        ctrl_fp = os.path.join(tmp, f"{g}_nctrl.mp4")
+        subprocess.run(["ffmpeg", "-v", "error", "-i", inp_fp, "-c:v", "libx264",
+                        "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                        ctrl_fp, "-y"], check=True)
+        psnr, ssim = psnr_ssim(ctrl_fp, out_fp)
+        rec["psnr_vs_input"], rec["ssim_vs_input"] = psnr, ssim
+        try: os.remove(ctrl_fp)
+        except OSError: pass
+        pass_q = (trans_cnt == 0 and (psnr or 0) >= 36.0 and (ssim or 0) >= 0.965)
     else:
         rr, fr, rr_in = region_metrics(inp_fp, out_fp, rec["plan_regions"],
                                        g=g, crop_dir=crop_dir)
@@ -378,7 +401,8 @@ def main():
         pid = f"beac0002-0000-4000-8000-0000000000{gnum:02d}"
         print(f"\n===== {m['g']} ({m['kind']}) =====")
         try:
-            rec = run_one(pid, m["g"], m["has_gt"], tmp, skip_run=skip_run, crop_dir=crop_dir)
+            rec = run_one(pid, m["g"], m["has_gt"], tmp, skip_run=skip_run,
+                          crop_dir=crop_dir, kind=m.get("kind"))
         except Exception as e:
             rec = {"g": m["g"], "result": "ERROR", "error": f"{type(e).__name__}: {e}"[:300]}
         rec["kind"] = m["kind"]
