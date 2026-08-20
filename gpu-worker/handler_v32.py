@@ -674,8 +674,61 @@ def detect_windowed_transient_overlays(samples, W, H, scan_step, fps,
         pad_f = int(round(0.5 * fps))
         ivals = [[max(0, iv[0] * scan_step - pad_f), iv[1] * scan_step + pad_f]
                  for iv in ivs]
+        if len(rect_votes) >= 2:
+            # ---- RC3 Phase D: 전역 카드 모델 우선 ----
+            # RC2는 un-blend를 vote±10초 창에만 적용 → 상시 카드의 대부분
+            # 구간이 미처리(M3, UAT-02 실측). 전역 모델은 전체 시간축 통계로
+            # α·C·기하를 한 번에 추정하고 존재 타임라인 전 구간을 커버한다.
+            cm = None
+            try:
+                votes_v = [[v[0] + px0, v[1] + py0, v[2] + px0, v[3] + py0]
+                           for v in rect_votes]
+                cm = _estimate_card_model(samples, votes_v, pres, cuts,
+                                          scan_step, fps, W, H)
+            except Exception:
+                cm = None
+            if cm is not None:
+                rx0c, ry0c, rx1c, ry1c = cm["rect"]
+                ax0 = max(0, rx0c - 32); ay0 = max(0, ry0c - 32)
+                aw = min(W, rx1c + 32) - ax0; ah = min(H, ry1c + 32) - ay0
+                aw = max(48, aw // 16 * 16); ah = max(48, ah // 16 * 16)
+                ax0 = max(0, min(ax0, W - aw)); ay0 = max(0, min(ay0, H - ah))
+                if total_px + aw * ah <= int(W * H * 0.14):
+                    total_px += aw * ah
+                    reg_c = {"x": int(ax0), "y": int(ay0), "w": int(aw), "h": int(ah),
+                             "kind": "transient_box" + str(len(regs)),
+                             "ivals": cm["ivals"], "conf": "high",
+                             "src": "card_global", "card_model": cm}
+                    # 겹치는 기존 영역은 카드 rect를 건드리지 않게 제외 (이중 처리
+                    # 방지 — 밴드가 카드-존재 원본 기반 저해상 복원을 덧칠하는 회귀 차단)
+                    for r in (prior_regions or []):
+                        ix = max(0, min(rx1c, r["x"] + r["w"]) - max(rx0c, r["x"]))
+                        iy = max(0, min(ry1c, r["y"] + r["h"]) - max(ry0c, r["y"]))
+                        if ix > 0 and iy > 0:
+                            r.setdefault("excl_rects", []).append(
+                                [int(rx0c), int(ry0c), int(rx1c), int(ry1c)])
+                    # 카드 안 정적 글자 마스크는 카드 영역 extra로 흡수
+                    # (un-blend된 프레임 위에서 AI가 글자를 복원 — RC2와 동일 원리)
+                    for sr in list(prior_regions or []):
+                        if not str(sr.get("kind", "")).startswith("static"):
+                            continue
+                        if sr.get("static_mask") is None:
+                            continue
+                        if sr["x"] >= rx0c - 8 and sr["y"] >= ry0c - 8 \
+                                and sr["x"] + sr["w"] <= rx1c + 8 \
+                                and sr["y"] + sr["h"] <= ry1c + 8:
+                            reg_c.setdefault("extra_masks", []).append(
+                                {"off": [int(sr["x"]), int(sr["y"]),
+                                         int(sr["w"]), int(sr["h"])],
+                                 "mask": sr["static_mask"]})
+                            try:
+                                prior_regions.remove(sr)
+                            except ValueError:
+                                pass
+                    regs.append(reg_c)
+                    continue
         if len(rect_votes) >= 2 and cov > 0.95 and len(cuts) < 3:
-            continue    # 상시 카드인데 장면전환도 거의 없음 — 실물 오인 위험, 정적 몫
+            continue    # 상시 카드인데 전역 모델도 실패 — 실물 오인 위험, 정적 몫
         if len(rect_votes) >= 2:
             # Type A — 반투명 카드. 장시간 분산비로 (α, 카드색) 추정:
             # 카드 안 밝기 분산은 배경 분산의 (1-α)² 배 — 175초 표본이면 안정
@@ -884,6 +937,307 @@ def _ring_variance_blend(samples, sel, rx0, ry0, rx1, ry1, W, H, min_sel=20):
         return None
     return round(float(s), 4), [round(float(tc), 2) for tc in t]
 
+
+def _card_matte(ww, hh, rect, rad, feather=0.8, ss=4):
+    """rounded-rect 카드 coverage matte (0..1, feathered AA edge).
+    RC3 Phase D: 카드 몸체·둥근 모서리·anti-aliased edge를 단일 matte로 표현."""
+    x0, y0, x1, y1 = [int(round(v)) for v in rect]
+    x0 = max(0, min(x0, ww - 2)); y0 = max(0, min(y0, hh - 2))
+    x1 = max(x0 + 2, min(x1, ww)); y1 = max(y0 + 2, min(y1, hh))
+    r = int(round(max(2, min(rad, (x1 - x0) // 2 - 1, (y1 - y0) // 2 - 1))))
+    m = np.zeros((hh * ss, ww * ss), np.float32)
+    X0, Y0, X1, Y1, R = x0 * ss, y0 * ss, x1 * ss, y1 * ss, r * ss
+    cv2.rectangle(m, (X0 + R, Y0), (X1 - R, Y1), 1, -1)
+    cv2.rectangle(m, (X0, Y0 + R), (X1, Y1 - R), 1, -1)
+    for cx, cy in ((X0 + R, Y0 + R), (X1 - R, Y0 + R), (X0 + R, Y1 - R), (X1 - R, Y1 - R)):
+        cv2.circle(m, (int(cx), int(cy)), R, 1, -1)
+    m = cv2.resize(m, (ww, hh), interpolation=cv2.INTER_AREA)
+    if feather > 0:
+        m = cv2.GaussianBlur(m, (0, 0), feather)
+    return m
+
+
+def _estimate_card_model(samples, votes_v, pres, cuts, scan_step, fps, W, H):
+    """전역 카드 모델 추정 (RC3 Phase D — RC2 M3 coverage 실패의 수정).
+    상시/장기 존재하는 반투명 카드를 영상 전체 시간축 통계로 한 번에 모델링:
+      1) 존재 샘플 중앙값 → 카드 테두리만 선명 → 엣지별 1-D ridge로 rect 정밀화
+         (글자 획은 카드 패딩(≥18px) 안쪽이라 ±14px 탐색창에 들어오지 않음)
+      2) α: 시간축 분산비 — 카드 안 밝기 변동은 배경의 (1-α)배
+         (UAT-02 실측: 17개 장면 분산비 중앙값 0.511 → α=0.49, 물리 검증)
+         실물(불투명) 물체는 비율≈1 → α≈0 → 기각 (오탐 물리 가드)
+      3) C: 경계 인접 픽셀쌍 (in-(1-α)out)/α 강건 중앙값 (실측 C≈254 흰색)
+      4) 모서리반경·미세정렬: un-blend 후 테두리 에너지 최소화 (로컬 검증:
+         UAT-02 175s 전수 경계 에너지 95→21.8, 원본 25.4 미만)
+      5) 존재 판별: un-blend가 테두리 에너지를 낮추면 존재, 높이면 부재
+         → 전 샘플 presence 타임라인 → ivals (RC2 vote±10초 창 한계 제거)
+    α 추정과 rect가 상호의존 → 크루드 α → rect(1-D) → α 재추정 → C → 미세정렬
+    순서로 반복 수렴시킨다. 실패 시 None → 기존 RC2 경로로 폴백."""
+    n = len(samples)
+    vx0 = min(v[0] for v in votes_v); vy0 = min(v[1] for v in votes_v)
+    vx1 = max(v[2] for v in votes_v); vy1 = max(v[3] for v in votes_v)
+    if vx1 - vx0 < 100 or vy1 - vy0 < 40:
+        return None
+    cx0 = max(0, vx0 - 48); cy0 = max(0, vy0 - 48)
+    cx1 = min(W, vx1 + 48); cy1 = min(H, vy1 + 48)
+    cw, ch = cx1 - cx0, cy1 - cy0
+    psel = [i for i in range(n) if pres[i]]
+    if len(psel) < 8:
+        return None
+    rc = [vx0 - cx0, vy0 - cy0, vx1 - cx0, vy1 - cy0]
+    rd = 24
+
+    # ---- 1) 존재 샘플 중앙값 → 엣지별 1-D ridge 정밀화 ----
+    sub = psel[:: max(1, len(psel) // 48)][:48]
+    med = np.median(np.stack([samples[i][cy0:cy1, cx0:cx1].astype(np.float32)
+                              for i in sub]), axis=0)
+    mg = med.mean(axis=2).astype(np.float32)
+    sgy = cv2.Sobel(mg, cv2.CV_32F, 0, 1)
+    sgx = cv2.Sobel(mg, cv2.CV_32F, 1, 0)
+    bx0, by0, bx1, by1 = rc
+    xm0 = bx0 + int(0.3 * (bx1 - bx0)); xm1 = bx0 + int(0.7 * (bx1 - bx0))
+
+    def _ridge(prof, lo, hi):
+        lo = max(1, lo); hi = min(len(prof) - 2, hi)
+        if hi <= lo:
+            return None
+        return lo + int(np.argmax(prof[lo:hi]))
+
+    # 카드 내부는 항상 배경보다 밝다(C≥bg) → 경계는 '안쪽으로 밝아지는' 부호
+    # 고정 스텝. 부호를 강제하면 글자 획(어두워지는 경계)이 배제된다.
+    ty = _ridge(np.clip(sgy, 0, None)[:, xm0:xm1].mean(axis=1), by0 - 14, by0 + 14)
+    byy = _ridge(np.clip(-sgy, 0, None)[:, xm0:xm1].mean(axis=1), by1 - 14, by1 + 14)
+    # 좌/우 프로파일은 글자를 피해 상/하 패딩 행에서만 평균
+    rows = list(range(max(0, by0 + 6), min(ch, by0 + 26))) +            list(range(max(0, by1 - 26), min(ch, by1 - 6)))
+    rows = [r for r in rows if 0 <= r < ch]
+    lx = _ridge(np.clip(sgx, 0, None)[rows, :].mean(axis=0), bx0 - 14, bx0 + 14)
+    rx = _ridge(np.clip(-sgx, 0, None)[rows, :].mean(axis=0), bx1 - 14, bx1 + 14)
+    if None in (ty, byy, lx, rx) or rx - lx < 80 or byy - ty < 36:
+        return None
+    rc = [int(lx), int(ty), int(rx), int(byy)]
+    bx0, by0, bx1, by1 = rc
+
+    # ---- 2) α: 시간축 분산비 (컷 사이 run별, 경계 인접 얇은 스트립) ----
+    def _alpha_est(rc_a):
+        ax0, ay0, ax1, ay1 = rc_a
+        runs = []; cur = []
+        for i in psel:
+            if cur and (i - cur[-1] > 3
+                        or any(c in cuts for c in range(cur[-1] + 1, i + 1))):
+                runs.append(cur); cur = []
+            cur.append(i)
+        if cur:
+            runs.append(cur)
+        ratios = []
+        for run in runs:
+            if len(run) < 4:
+                continue
+            st = np.stack([samples[i][cy0:cy1, cx0:cx1].mean(axis=2)
+                           for i in run]).astype(np.float32)
+            sd = st.std(axis=0)
+            ins, outs = [], []
+            if ax1 - rd > ax0 + rd:
+                if ay0 + 18 < ay1:
+                    ins.append(sd[ay0 + 6:ay0 + 18, ax0 + rd:ax1 - rd].ravel())
+                if ay1 - 18 > ay0:
+                    ins.append(sd[ay1 - 18:ay1 - 6, ax0 + rd:ax1 - rd].ravel())
+                if ay0 - 30 >= 0:
+                    outs.append(sd[ay0 - 30:ay0 - 10, ax0 + rd:ax1 - rd].ravel())
+                if ay1 + 30 <= ch:
+                    outs.append(sd[ay1 + 10:ay1 + 30, ax0 + rd:ax1 - rd].ravel())
+            if ay1 - rd > ay0 + rd:
+                if ax0 + 18 < ax1:
+                    ins.append(sd[ay0 + rd:ay1 - rd, ax0 + 6:ax0 + 18].ravel())
+                if ax1 - 18 > ax0:
+                    ins.append(sd[ay0 + rd:ay1 - rd, ax1 - 18:ax1 - 6].ravel())
+                if ax0 - 30 >= 0:
+                    outs.append(sd[ay0 + rd:ay1 - rd, ax0 - 30:ax0 - 10].ravel())
+                if ax1 + 30 <= cw:
+                    outs.append(sd[ay0 + rd:ay1 - rd, ax1 + 10:ax1 + 30].ravel())
+            ins = [v for v in ins if v.size]; outs = [v for v in outs if v.size]
+            if not ins or not outs:
+                continue
+            si = float(np.median(np.concatenate(ins)))
+            so = float(np.median(np.concatenate(outs)))
+            if so < 2.5:
+                continue                  # 배경이 안 움직이는 run — 정보 없음
+            ratios.append(si / so)
+        return ratios
+
+    ratios = _alpha_est(rc)
+    if len(ratios) < 2:
+        return None
+    alpha = 1.0 - float(np.median(ratios))
+    if not (0.30 <= alpha <= 0.72):
+        return None                       # 실물(≈0)·불투명(≈1) 기각 — AI 경로 몫
+
+    # ---- 3) C: 경계 인접쌍 강건 중앙값 (채널별) ----
+    def _C_est(rc_c):
+        qx0, qy0, qx1, qy1 = rc_c
+        vals = [[], [], []]
+        for i in psel[:: max(1, len(psel) // 40)]:
+            f = samples[i][cy0:cy1, cx0:cx1].astype(np.float32)
+            pairs = []
+            if qy0 - 9 >= 0 and qx1 - rd > qx0 + rd:
+                pairs.append((f[qy0 + 6, qx0 + rd:qx1 - rd],
+                              f[qy0 - 9, qx0 + rd:qx1 - rd]))
+            if qy1 + 9 <= ch - 1 and qx1 - rd > qx0 + rd:
+                pairs.append((f[qy1 - 6, qx0 + rd:qx1 - rd],
+                              f[qy1 + 9, qx0 + rd:qx1 - rd]))
+            if qx0 - 9 >= 0 and qy1 - rd > qy0 + rd:
+                pairs.append((f[qy0 + rd:qy1 - rd, qx0 + 6],
+                              f[qy0 + rd:qy1 - rd, qx0 - 9]))
+            if qx1 + 9 <= cw - 1 and qy1 - rd > qy0 + rd:
+                pairs.append((f[qy0 + rd:qy1 - rd, qx1 - 6],
+                              f[qy0 + rd:qy1 - rd, qx1 + 9]))
+            for pin, pout in pairs:
+                c = (pin - (1.0 - alpha) * pout) / max(alpha, 1e-3)
+                for chn in range(3):
+                    vals[chn].append(c[:, chn] if c.ndim == 2 else c)
+        if not vals[0]:
+            return None
+        return [float(np.median(np.concatenate([v.ravel() for v in vals[chn]])))
+                for chn in range(3)]
+
+    C = _C_est(rc)
+    if C is None or not all(-20.0 <= c <= 300.0 for c in C):
+        return None
+
+    # ---- 4) 모서리반경 + 미세정렬: un-blend 후 테두리 에너지 최소화 ----
+    spread = psel[:: max(1, len(psel) // 7)][:7]
+    crops7 = [samples[i][cy0:cy1, cx0:cx1].astype(np.float32) for i in spread]
+    Cv = np.array(C, np.float32)
+
+    def _ub_cost(rc2, rd2):
+        if rc2[2] - rc2[0] < 60 or rc2[3] - rc2[1] < 30:
+            return 1e9
+        if rc2[0] < 0 or rc2[1] < 0 or rc2[2] > cw or rc2[3] > ch:
+            return 1e9
+        mt = _card_matte(cw, ch, rc2, rd2, ss=2)
+        aC2 = (mt * alpha)[..., None] * Cv[None, None, :]
+        dn2 = np.maximum(1.0 - (mt * alpha)[..., None], 0.05)
+        qx0, qy0, qx1, qy1 = rc2
+        tot = 0.0
+        for cr in crops7:
+            ub = np.clip((cr - aC2) / dn2, 0, 255)
+            g = ub.mean(axis=2).astype(np.float32)
+            gx = cv2.Sobel(g, cv2.CV_32F, 1, 0); gy = cv2.Sobel(g, cv2.CV_32F, 0, 1)
+            m2 = np.sqrt(gx * gx + gy * gy)
+            s = 0.0; cnt = 0
+            for yy in (qy0, qy1):
+                if 6 <= yy < ch - 6 and qx1 - rd2 > qx0 + rd2:
+                    s += float(m2[yy - 6:yy + 7, qx0 + rd2:qx1 - rd2].mean()); cnt += 1
+            for xx in (qx0, qx1):
+                if 6 <= xx < cw - 6 and qy1 - rd2 > qy0 + rd2:
+                    s += float(m2[qy0 + rd2:qy1 - rd2, xx - 6:xx + 7].mean()); cnt += 1
+            tot += s / max(1, cnt)
+        return tot / max(1, len(crops7))
+
+    best = _ub_cost(rc, rd)
+    for r3 in (12, 16, 20, 24, 28, 34, 40, 48):
+        v2 = _ub_cost(rc, r3)
+        if v2 < best:
+            best = v2; rd = r3
+    for _sweep in range(3):
+        moved = False
+        for idx in range(4):
+            for d in (-10, -8, -6, -4, -3, -2, -1, 1, 2, 3, 4, 6, 8, 10):
+                r2 = rc[:]; r2[idx] += d
+                v2 = _ub_cost(r2, rd)
+                if v2 < best:
+                    best = v2; rc = r2; moved = True
+        for r3 in (max(10, rd - 4), rd - 2, rd + 2, rd + 4):
+            v2 = _ub_cost(rc, r3)
+            if v2 < best:
+                best = v2; rd = r3; moved = True
+        if not moved:
+            break
+    bx0, by0, bx1, by1 = rc
+    # α·C 재추정 (정밀 rect 기준) — 크루드 rect 오염 제거
+    ratios2 = _alpha_est(rc)
+    if len(ratios2) >= 2:
+        a2 = 1.0 - float(np.median(ratios2))
+        if 0.30 <= a2 <= 0.72:
+            alpha = a2
+    C2 = _C_est(rc)
+    if C2 is not None and all(-20.0 <= c <= 300.0 for c in C2):
+        C = C2
+        Cv = np.array(C, np.float32)
+
+    # ---- 5) 존재 판별: un-blend 후 테두리 에너지 하강 여부 (전 샘플) ----
+    matte = _card_matte(cw, ch, rc, rd)
+    aC = (matte * alpha)[..., None] * Cv[None, None, :]
+    den = np.maximum(1.0 - (matte * alpha)[..., None], 0.05)
+
+    def _bE(img):
+        g = img.mean(axis=2).astype(np.float32) if img.ndim == 3 else img
+        gx = cv2.Sobel(g, cv2.CV_32F, 1, 0); gy = cv2.Sobel(g, cv2.CV_32F, 0, 1)
+        m2 = np.sqrt(gx * gx + gy * gy)
+        s = 0.0; cnt = 0
+        for yy in (by0, by1):
+            if 1 <= yy < ch - 1 and bx1 - rd > bx0 + rd:
+                s += float(m2[yy - 1:yy + 2, bx0 + rd:bx1 - rd].mean()); cnt += 1
+        for xx in (bx0, bx1):
+            if 1 <= xx < cw - 1 and by1 - rd > by0 + rd:
+                s += float(m2[by0 + rd:by1 - rd, xx - 1:xx + 2].mean()); cnt += 1
+        return s / max(1, cnt)
+
+    score = np.zeros(n, np.float32)
+    for i in range(n):
+        crop = samples[i][cy0:cy1, cx0:cx1].astype(np.float32)
+        ub = np.clip((crop - aC) / den, 0, 255)
+        score[i] = _bE(crop) - _bE(ub)     # 카드 있으면 +, 없으면 -
+    sm = np.copy(score)
+    for i in range(1, n - 1):
+        sm[i] = np.median(score[i - 1:i + 2])
+    # 임계는 존재 샘플의 실측 분포에 상대화 (해상도 무관):
+    ref = float(np.median(sm[psel]))
+    if ref < 1.0:
+        return None                       # un-blend가 테두리를 못 지움 — 모델 불신
+    on_th = 0.35 * ref; off_th = 0.15 * ref
+    spf = scan_step / float(fps)
+    ivs = []; on = False; s0 = 0; low = 0
+    for i in range(n):
+        if not on:
+            if sm[i] >= on_th:
+                on = True; s0 = i; low = 0
+        else:
+            if sm[i] < off_th:
+                low += 1
+                if low >= 2:
+                    ivs.append([s0, i - low + 1]); on = False
+            else:
+                low = 0
+    if on:
+        ivs.append([s0, n])
+    gap_s = max(1, int(round(1.5 / spf))); min_s = max(2, int(round(1.0 / spf)))
+    m2v = []
+    for iv in ivs:
+        if m2v and iv[0] - m2v[-1][1] <= gap_s:
+            m2v[-1][1] = iv[1]
+        else:
+            m2v.append(list(iv))
+    ivs = [iv for iv in m2v if iv[1] - iv[0] >= min_s]
+    # 상시 카드의 저대비 장면 구멍 메움: 커버리지 85%+면 ≤8초 내부 공백은
+    # hysteresis 미달일 뿐 카드가 꺼진 게 아니다 (t17~23 밝은 배경 실측)
+    if ivs and sum(b - a for a, b in ivs) >= 0.85 * n:
+        gap8 = max(1, int(round(8.0 / spf)))
+        filled = [list(ivs[0])]
+        for iv in ivs[1:]:
+            if iv[0] - filled[-1][1] <= gap8:
+                filled[-1][1] = iv[1]
+            else:
+                filled.append(list(iv))
+        ivs = filled
+    if not ivs or sum(b - a for a, b in ivs) < max(2, int(0.5 * len(psel))):
+        return None                       # 존재 판별이 감지 히트와 크게 어긋남 — 불신
+    pad_f = int(round(0.5 * fps))
+    ivals = [[max(0, iv[0] * scan_step - pad_f), iv[1] * scan_step + pad_f]
+             for iv in ivs]
+    return {"rect": [int(rc[0] + cx0), int(rc[1] + cy0),
+                     int(rc[2] + cx0), int(rc[3] + cy0)],
+            "rad": int(rd), "alpha": round(float(alpha), 4),
+            "C": [round(c, 2) for c in C], "ivals": ivals,
+            "runs": len(ratios), "border_gain": round(ref, 2)}
 
 # ---------------- 단계: scan (가벼운 계획 — 영역·구간만, 마스크 없음) ----------------
 def scan_v32(proj, tmp, scan_step=12, seg_k=10):
@@ -1220,6 +1574,7 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
     반환: (masks 목록(u8), 글자 있는 키프레임 수)"""
     n = len(frames_local)
     kind = reg["kind"]
+    _seg_masks_for_region._last_card_fix = None
     if kind.startswith("manual"):
         # 직접 지정: v29 로직 그대로 (전역 f0/f1을 로컬로 이동)
         reg_l = dict(reg)
@@ -1261,6 +1616,55 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                     out.append(zeros)
             return out, cnt
         return [m] * n, n
+    # ---- RC3 Phase D: 전역 카드 un-blend 선적용 (글자 감지 전) ----
+    # 카드 몸체를 먼저 물리 복원(un-blend)하면 글자 감지가 '실제 배경 위 글자'를
+    # 보게 되어 정확해지고, AI는 카드가 사라진 문맥에서 글자만 복원한다
+    # (카드 문맥 잔존 시 카드를 되그리는 환각 — run94 실측 — 원천 차단).
+    cm = reg.get("card_model")
+    card_pres_loc = None; card_matte = None; card_ring = None
+    hh_c, ww_c = frames_local[0].shape[:2]
+    if cm:
+        rlx0 = cm["rect"][0] - reg["x"]; rly0 = cm["rect"][1] - reg["y"]
+        rlx1 = cm["rect"][2] - reg["x"]; rly1 = cm["rect"][3] - reg["y"]
+        card_matte = _card_matte(ww_c, hh_c, [rlx0, rly0, rlx1, rly1], cm["rad"])
+        _aC = (card_matte * cm["alpha"])[..., None] \
+            * np.array(cm["C"], np.float32)[None, None, :]
+        _den = np.maximum(1.0 - (card_matte * cm["alpha"])[..., None], 0.05)
+        card_pres_loc = np.zeros(n, bool)
+        for a_iv, b_iv in cm["ivals"]:
+            la = max(0, int(a_iv) - e0_global); lb = min(n, int(b_iv) - e0_global)
+            if lb > la:
+                card_pres_loc[la:lb] = True
+        # 물리 기반 글자 검출: 카드 몸체 픽셀은 α·C(≈127)보다 어두울 수 없다
+        # (obs = α·C + (1-α)·bg ≥ α·C). 그보다 어두우면 불투명 글자 획 —
+        # 배경 밝기와 무관하게 잡힌다 (어두운 배경 t100 스트로크 실패 보완).
+        _ks_c = max(1, int(key_step))
+        _inner_m = (card_matte > 0.75)
+        _gth = float(cm["alpha"]) * float(min(cm["C"])) - 18.0
+        card_phys = {}
+        for i in range(n):
+            if not card_pres_loc[i]:
+                continue
+            fr = frames_local[i]
+            if i % _ks_c == 0 and _gth > 25.0:
+                gsrc = fr.mean(axis=2)
+                ph = ((gsrc < _gth) & _inner_m).astype(np.uint8)
+                if ph.any():
+                    ph = cv2.morphologyEx(ph, cv2.MORPH_CLOSE,
+                                          np.ones((5, 5), np.uint8))
+                    card_phys[i] = (cv2.dilate(
+                        ph, np.ones((4, 4), np.uint8)) * 255).astype(np.uint8)
+            if not fr.flags.writeable:
+                fr = fr.copy(); frames_local[i] = fr
+            fr[:] = np.clip((fr.astype(np.float32) - _aC) / _den, 0, 255)\
+                .astype(np.uint8)
+        _b05 = (card_matte > 0.5).astype(np.uint8)
+        card_ring = ((cv2.dilate(_b05, np.ones((13, 13), np.uint8))
+                      - cv2.erode(_b05, np.ones((13, 13), np.uint8))) * 255)\
+            .astype(np.uint8)
+        _seg_masks_for_region._last_card_fix = {
+            "rect": cm["rect"], "rad": cm["rad"], "alpha": cm["alpha"],
+            "C": cm["C"], "ivals": cm["ivals"]}
     # 자막/라벨 밴드: 키프레임 정밀 감지 (공유메모리 풀 — v31이 h29._par_sweep에 이식)
     ks_i = max(1, int(key_step))
     keys = list(range(0, n, ks_i))
@@ -1353,6 +1757,28 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
         if keep:
             raw[i] = h29.rasterize(keep, ww, hh)
             masked += 1
+    # ---- RC3 Phase D: 카드 글자 stroke 폴백 + 테두리 링 마스크 ----
+    # un-blend 뒤에도 남는 것은 (1)불투명 글자 획 (2)matte로 못 잡는 테두리 선.
+    # 글자 감지가 놓친 획을 국소 중앙값 대비로 보강하고, 링(±4px)은 AI가
+    # un-blend된 배경 위에서 재봉합한다 (halo 방지 — RC2 t120 모서리 흔적 수정).
+    if cm is not None and card_pres_loc is not None:
+        inner_c = (card_matte > 0.6)
+        for i in keys:
+            if not card_pres_loc[i]:
+                continue
+            g8 = cv2.cvtColor(frames_local[i], cv2.COLOR_RGB2GRAY)
+            med8 = cv2.medianBlur(g8, 31).astype(np.float32)
+            dev = np.abs(med8 - g8.astype(np.float32))
+            stroke = ((dev > 26) & inner_c).astype(np.uint8)
+            stroke = cv2.morphologyEx(stroke, cv2.MORPH_CLOSE,
+                                      np.ones((5, 5), np.uint8))
+            stroke = (cv2.dilate(stroke, np.ones((4, 4), np.uint8)) * 255)\
+                .astype(np.uint8)
+            add = np.maximum(stroke, card_ring)
+            if i in card_phys:
+                add = np.maximum(add, card_phys[i])
+            raw[i] = add if raw[i] is None else np.maximum(raw[i], add)
+        masked = sum(1 for i in keys if raw[i] is not None and raw[i].any())
     # 박스형 자막 (Phase B v9):
     #  - 반투명 박스(α≤0.75): 그룹 시간축 집계로 (α, 박스색) 정밀 추정 후 역블렌딩.
     #    (전체폭 밴드 AI 복원은 뭉개짐 — run5 증거. 코덱 정보소실로 PSNR 상한
@@ -1487,6 +1913,15 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
         extra[sy0:sy1, sx0:sx1] = np.maximum(
             extra[sy0:sy1, sx0:sx1],
             em[sy0 - ly:sy1 - ly, sx0 - lx:sx1 - lx])
+    # RC3: 다른 영역(전역 카드)이 전담하는 구역은 이 영역 마스크에서 제외
+    excl = None
+    for er in (reg.get("excl_rects") or []):
+        ex0 = max(0, int(er[0]) - reg["x"]); ey0 = max(0, int(er[1]) - reg["y"])
+        ex1 = min(ww, int(er[2]) - reg["x"]); ey1 = min(hh, int(er[3]) - reg["y"])
+        if ex1 > ex0 and ey1 > ey0:
+            if excl is None:
+                excl = np.zeros((hh, ww), bool)
+            excl[ey0:ey1, ex0:ex1] = True
     out = []
     for i in range(n):
         u = None
@@ -1495,6 +1930,12 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                 u = raw[j].copy() if u is None else (u | raw[j])
         if extra is not None:
             u = extra.copy() if u is None else (u | extra)
+        if u is not None:
+            if excl is not None:
+                u[excl] = 0
+            # 전역 카드 영역: 존재 구간 밖은 zero mask (AI 비용·오처리 차단)
+            if card_pres_loc is not None and not card_pres_loc[i]:
+                u = None
         out.append(u if u is not None else zeros)
     if extra is not None:
         masked = max(masked, n)
@@ -1528,6 +1969,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
     seg_rest = {}     # ri -> {global_i: 복원 crop}
     local_masks = {}  # ri -> 로컬 마스크 목록 (index = global_i - E0)
     box_fix_by_region = {}  # ri -> {local_i: [(rect, gain, bias)]} (반투명 un-blend v2)
+    card_fix_by_region = {}  # ri -> card_model (RC3 전역 카드 un-blend — 합성 시 적용)
     t_dec = t_mask = t_ai = 0.0
     nl = E1 - E0
     for ri, reg in enumerate(plan["regions"]):
@@ -1551,6 +1993,10 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
         bf = getattr(_seg_masks_for_region, "_last_box_fixes", None) or {}
         if bf:
             box_fix_by_region[ri] = bf
+        cfx = getattr(_seg_masks_for_region, "_last_card_fix", None)
+        if cfx:
+            card_fix_by_region[ri] = cfx
+            counters["card_global"] = counters.get("card_global", 0) + 1
         if masked == 0 or not any(m.any() for m in masks):
             del frames_local
             continue
@@ -1594,8 +2040,29 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                             "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
                             "-pix_fmt", "yuv420p", outp, "-y"], stdin=subprocess.PIPE)
     i = F0
+    _card_cache = {}
     for fr in v31.stream_frames_range(work, W, H, F0, F1, fps):
         frame = fr.copy()
+        # RC3: 전역 카드 un-blend — 존재 구간의 모든 출력 프레임에 물리 복원 적용
+        # (AI paste 이전. AI crop은 세그에서 같은 un-blend가 선적용된 문맥으로 계산됨)
+        for ri, cfx in card_fix_by_region.items():
+            if not any(int(a) <= i < int(b) for a, b in cfx["ivals"]):
+                continue
+            reg = plan["regions"][ri]
+            if ri not in _card_cache:
+                mlx0 = cfx["rect"][0] - reg["x"]; mly0 = cfx["rect"][1] - reg["y"]
+                mlx1 = cfx["rect"][2] - reg["x"]; mly1 = cfx["rect"][3] - reg["y"]
+                mt = _card_matte(reg["w"], reg["h"], [mlx0, mly0, mlx1, mly1],
+                                 cfx["rad"])
+                _card_cache[ri] = (
+                    (mt * cfx["alpha"])[..., None]
+                    * np.array(cfx["C"], np.float32)[None, None, :],
+                    np.maximum(1.0 - (mt * cfx["alpha"])[..., None], 0.05))
+            aC_c, den_c = _card_cache[ri]
+            sub = frame[reg["y"]:reg["y"] + reg["h"],
+                        reg["x"]:reg["x"] + reg["w"]].astype(np.float32)
+            frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]] = \
+                np.clip((sub - aC_c) / den_c, 0, 255).astype(np.uint8)
         # 반투명 박스 un-blend v2 (AI 결과 덮기 전에 배경 역블렌딩)
         for ri, fixes in box_fix_by_region.items():
             fl = fixes.get(i - E0)
