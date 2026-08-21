@@ -131,6 +131,23 @@ def _read_video(path, nmax):
     return frames, fps
 
 
+def _muse(masks):
+    """MUSE mask 전처리 A/B (명세 P4): 첫 프레임 anchor, 이후 4-frame 그룹
+    temporal OR — VAE 시간축 압축단위(4)와 정렬. window 밖 union 없음."""
+    out = [m.copy() for m in masks]
+    n = len(masks)
+    i = 1
+    while i < n:
+        grp = masks[i:i + 4]
+        u = grp[0].copy()
+        for m in grp[1:]:
+            u = np.maximum(u, m)
+        for j in range(i, min(i + 4, n)):
+            out[j] = u
+        i += 4
+    return out
+
+
 def _prep(frames, masks, video_length, size_hw, dilation):
     """predict_SVOR.process_video와 동일한 전처리 (frames/masks는 np RGB/GRAY)."""
     import scipy.ndimage
@@ -251,6 +268,8 @@ def handle(ev: dict) -> dict:
         frames, fps = _read_video(vp, nmax)
         masks_rgb, _ = _read_video(mp, nmax)
         masks = [cv2.cvtColor(m, cv2.COLOR_RGB2GRAY) for m in masks_rgb]
+        if int(ev.get("muse", 0)):
+            masks = _muse(masks)
         pipe, load_s = _load_pipeline(ev.get("lora", "stage12"))
         out, met = _run_pipe(pipe, frames, masks, ev)
         local = "/tmp/out.mp4"
@@ -260,4 +279,175 @@ def handle(ev: dict) -> dict:
         torch.cuda.empty_cache()
         return {"ok": True, "op": op, "gpu": gpu, "load_s": round(load_s, 1),
                 "out": ev["out"], "bytes": n, "fps": fps, **met}
+    if op == "flowbench":
+        return _flowbench(ev, gpu)
     return {"ok": False, "error": f"unknown op {op}"}
+
+
+# ---------------- GPU flow 벤치 (명세 P5) ----------------
+def _flow_dis_half(g1, g2, _st=[None]):
+    if _st[0] is None:
+        d = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_MEDIUM)
+        _st[0] = d
+    h, w = g1.shape
+    s1 = cv2.resize(g1, (w // 2, h // 2))
+    s2 = cv2.resize(g2, (w // 2, h // 2))
+    f = _st[0].calc(s1, s2, None)
+    f = cv2.resize(f, (w, h), interpolation=cv2.INTER_LINEAR) * 2.0
+    return f
+
+
+_TVRAFT = {}
+
+
+def _flow_tvraft(im1, im2, small=True):
+    """torchvision RAFT (small/large). im: BGR uint8 → flow HxWx2 (px)."""
+    import torch
+    import torch.nn.functional as Fn
+    key = "s" if small else "l"
+    if key not in _TVRAFT:
+        from torchvision.models.optical_flow import (
+            raft_small, Raft_Small_Weights, raft_large, Raft_Large_Weights)
+        if small:
+            m = raft_small(weights=Raft_Small_Weights.DEFAULT)
+        else:
+            m = raft_large(weights=Raft_Large_Weights.DEFAULT)
+        _TVRAFT[key] = m.eval().cuda()
+    m = _TVRAFT[key]
+    h, w = im1.shape[:2]
+    h8, w8 = (h + 7) // 8 * 8, (w + 7) // 8 * 8
+
+    def prep(im):
+        t = torch.from_numpy(im[:, :, ::-1].copy()).permute(2, 0, 1)[None] \
+            .float().cuda() / 127.5 - 1.0
+        return Fn.pad(t, (0, w8 - w, 0, h8 - h))
+    with torch.no_grad():
+        fl = m(prep(im1), prep(im2))[-1][0, :, :h, :w]
+    return fl.permute(1, 2, 0).cpu().numpy()
+
+
+_SEARAFT = {}
+
+
+def _flow_searaft(im1, im2):
+    """SEA-RAFT (HF: MemorySlices/Tartan-C-T-TSKH-spring540x960-M)."""
+    import sys
+    import torch
+    import torch.nn.functional as Fn
+    if "m" not in _SEARAFT:
+        for p in ("/app/searaft/core", "/app/searaft"):
+            if p not in sys.path:
+                sys.path.insert(0, p)
+        import json as _json
+        from argparse import Namespace
+        from raft import RAFT
+        cfgp = "/app/searaft/config/eval/spring-M.json"
+        args = Namespace(**_json.load(open(cfgp)))
+        m = RAFT.from_pretrained(
+            "MemorySlices/Tartan-C-T-TSKH-spring540x960-M", args=args)
+        _SEARAFT["m"] = m.eval().cuda()
+        _SEARAFT["args"] = args
+    m = _SEARAFT["m"]
+    h, w = im1.shape[:2]
+    h8, w8 = (h + 7) // 8 * 8, (w + 7) // 8 * 8
+
+    def prep(im):
+        t = torch.from_numpy(im[:, :, ::-1].copy()).permute(2, 0, 1)[None] \
+            .float().cuda()
+        return Fn.pad(t, (0, w8 - w, 0, h8 - h))
+    with torch.no_grad():
+        out = m(prep(im1), prep(im2), iters=_SEARAFT["args"].iters,
+                test_mode=True)
+        fl = out["flow"][-1] if isinstance(out, dict) else out[-1]
+    return fl[0, :, :h, :w].permute(1, 2, 0).cpu().numpy()
+
+
+def _flowbench(ev, gpu):
+    """ROI 팩에 대해 flow 후보별 품질·속도 측정 (명세 5.4).
+
+    지표: fwd-bwd round-trip 오차, mask 내 valid coverage(왕복<1.5px &
+    참조화소가 mask 밖), ring 광도오차(warp 정합성 ghost proxy),
+    runtime/pair, VRAM. offsets (3,10,20).
+    """
+    import torch
+    vp, mp = "/tmp/fb_in.mp4", "/tmp/fb_mask.mp4"
+    _download(ev["video"], vp)
+    _download(ev["mask"], mp)
+    nmax = int(ev.get("frames", 81))
+    frames, fps = _read_video(vp, nmax)
+    frames = [cv2.cvtColor(f, cv2.COLOR_RGB2BGR) for f in frames]  # BGR 작업
+    masks_rgb, _ = _read_video(mp, nmax)
+    masks = [cv2.cvtColor(m, cv2.COLOR_RGB2GRAY) for m in masks_rgb]
+    grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames]
+    engines = ev.get("engines", ["dis_half", "raft_small", "raft_large",
+                                 "sea_raft"])
+    offsets = ev.get("offsets", [3, 10, 20])
+    ts = list(range(0, len(frames), int(ev.get("step", 6))))
+    H, W = frames[0].shape[:2]
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    res = {}
+    for eng in engines:
+        try:
+            torch.cuda.reset_peak_memory_stats()
+            errs, covs, ghosts, times = [], [], [], []
+            npairs = 0
+            for t in ts:
+                m = masks[t] > 127
+                if not m.any():
+                    continue
+                for k in offsets:
+                    r = t + k if t + k < len(frames) else t - k
+                    if r < 0 or r == t:
+                        continue
+                    t0 = time.time()
+                    if eng == "dis_half":
+                        fw = _flow_dis_half(grays[t], grays[r])
+                        bw = _flow_dis_half(grays[r], grays[t])
+                    elif eng == "raft_small":
+                        fw = _flow_tvraft(frames[t], frames[r], True)
+                        bw = _flow_tvraft(frames[r], frames[t], True)
+                    elif eng == "raft_large":
+                        fw = _flow_tvraft(frames[t], frames[r], False)
+                        bw = _flow_tvraft(frames[r], frames[t], False)
+                    elif eng == "sea_raft":
+                        fw = _flow_searaft(frames[t], frames[r])
+                        bw = _flow_searaft(frames[r], frames[t])
+                    else:
+                        raise ValueError(eng)
+                    dt = (time.time() - t0) / 2.0
+                    times.append(dt)
+                    npairs += 1
+                    # round-trip: p + fw(p) + bw(p+fw(p)) ≈ p
+                    mx = xx + fw[..., 0]
+                    my = yy + fw[..., 1]
+                    bwx = cv2.remap(bw[..., 0], mx, my, cv2.INTER_LINEAR)
+                    bwy = cv2.remap(bw[..., 1], mx, my, cv2.INTER_LINEAR)
+                    rt = np.sqrt((fw[..., 0] + bwx) ** 2
+                                 + (fw[..., 1] + bwy) ** 2)
+                    errs.append(float(np.median(rt[m])))
+                    # 참조 mask를 fw로 샘플: 참조화소가 mask 밖이어야 실화소
+                    rm = (masks[r] > 127).astype(np.float32)
+                    rm_s = cv2.remap(rm, mx, my, cv2.INTER_LINEAR)
+                    valid = (rt < 1.5) & (rm_s < 0.25)
+                    covs.append(float(valid[m].mean()))
+                    # ghost proxy: mask 밖 ring에서 warp된 참조 vs 실제
+                    warped = cv2.remap(frames[r], mx, my, cv2.INTER_LINEAR)
+                    ring = cv2.dilate(m.astype(np.uint8),
+                                      np.ones((25, 25), np.uint8)).astype(bool) & (~m)
+                    okr = ring & (rt < 1.5)
+                    if okr.any():
+                        ghosts.append(float(np.abs(
+                            warped.astype(np.float32)
+                            - frames[t].astype(np.float32))[okr].mean()))
+            res[eng] = {
+                "pairs": npairs,
+                "rt_err_med_px": round(float(np.median(errs)), 3) if errs else None,
+                "real_pixel_coverage": round(float(np.mean(covs)), 4) if covs else None,
+                "residual_hole_ratio": round(1.0 - float(np.mean(covs)), 4) if covs else None,
+                "ghost_photo_err": round(float(np.mean(ghosts)), 2) if ghosts else None,
+                "s_per_flow": round(float(np.mean(times)), 3) if times else None,
+                "vram_gb": round(torch.cuda.max_memory_allocated() / (1 << 30), 2)}
+        except Exception as e:  # noqa: BLE001 — 엔진별 실패 격리
+            res[eng] = {"error": f"{type(e).__name__}: {e}"}
+    return {"ok": True, "op": "flowbench", "gpu": gpu, "roi": ev.get("roi"),
+            "frames": len(frames), "size": [H, W], "results": res}

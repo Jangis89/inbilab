@@ -33,11 +33,17 @@ gpu_image = (
         "imageio[ffmpeg]", "decord", "scikit-image", "sentencepiece",
         "huggingface_hub", "requests", "ftfy",
     )
+    .pip_install("easydict")
     .run_commands(
         f"git clone https://github.com/xiaomi-research/SVOR /app/svor && "
-        f"cd /app/svor && git checkout {SVOR_COMMIT}"
+        f"cd /app/svor && git checkout {SVOR_COMMIT}",
+        # P5 flow 벤치: SEA-RAFT 공식 코드 (BSD-3) — SBOM 고정 commit
+        "git clone https://github.com/princeton-vl/SEA-RAFT /app/searaft && "
+        "cd /app/searaft && "
+        "git checkout 9137517ba24e628442aec097d3afe71d03503b75",
     )
-    .env({"PYTHONUNBUFFERED": "1", "HF_HUB_ENABLE_HF_TRANSFER": "0"})
+    .env({"PYTHONUNBUFFERED": "1", "HF_HUB_ENABLE_HF_TRANSFER": "0",
+          "TORCH_HOME": "/vol/torchhub"})
 )
 gpu_image = gpu_image.add_local_file(
     os.path.join(HERE, "svor_worker.py"), "/app/svor_worker.py")
