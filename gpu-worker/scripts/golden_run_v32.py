@@ -474,8 +474,10 @@ def main():
                         f"wmtmp-v32/{pid}/rc4dbg_{pnum}.json",
                         headers=sbh(), timeout=20)
                     if rr.ok:
-                        print(f"[RC4DBG] {m['g']} part={pnum} "
-                              + rr.content.decode()[:1800])
+                        _dtxt = rr.content.decode()
+                        for _ci in range(0, min(len(_dtxt), 12000), 1500):
+                            print(f"[RC4DBG] {m['g']} part={pnum} "
+                                  f"seg{_ci // 1500} " + _dtxt[_ci:_ci + 1500])
             except Exception:
                 pass
         rec["kind"] = m["kind"]
