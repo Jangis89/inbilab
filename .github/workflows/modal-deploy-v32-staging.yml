@@ -281,3 +281,12 @@ jobs:
           SVOR_OP="${{ github.event.inputs.action }}"
           export SVOR_OP="${SVOR_OP#svor}"
           python -u gpu-worker/scripts/svor_run.py
+      - name: Tournament ROI extract
+        if: ${{ github.event.inputs.action == 'roiextract' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          TOURN_SPEC: ${{ github.event.inputs.pids }}
+        run: python -u gpu-worker/scripts/tournament_extract_v32.py
