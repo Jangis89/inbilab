@@ -1574,6 +1574,110 @@ def _estimate_blend_group(frames, rects, gkeys, raw, hh, ww):
     return s, t_vec
 
 
+def _var_ratio_blend(frames, rects_by_key, gkeys, hh, ww):
+    """RC4 Phase F 카드 하이브리드: 밝은 반투명 카드용 분산비 (s,t) 추정.
+
+    원리: obs = s·bg + t. 카드 안 화소의 '시간축 분산'은 s²·var(bg)이고
+    링(카드 밖) 분산은 var(bg) 근사 → s = sqrt(var_in/var_out).
+    배경이 움직여야만(var_out 충분) 신뢰 가능 — 아니면 None (기존 AI 경로).
+    """
+    gk = [i for i in sorted(gkeys) if i in rects_by_key]
+    if len(gk) < 4:
+        return None
+    x0 = max(0, min(rects_by_key[i][0] for i in gk))
+    y0 = max(0, min(rects_by_key[i][1] for i in gk))
+    x1 = min(ww, max(rects_by_key[i][2] for i in gk))
+    y1 = min(hh, max(rects_by_key[i][3] for i in gk))
+    if x1 - x0 < 40 or y1 - y0 < 24:
+        return None
+    m = 18
+    ry0 = max(0, y0 - m); ry1 = min(hh, y1 + m)
+    rx0 = max(0, x0 - m); rx1 = min(ww, x1 + m)
+    fstack = np.stack([frames[i].astype(np.float32)[ry0:ry1, rx0:rx1]
+                       for i in gk])
+    var_t = fstack.var(axis=0).mean(axis=2)
+    mean_t = fstack.mean(axis=0)
+    ih, iw = var_t.shape
+    inner = np.zeros((ih, iw), bool)
+    inner[(y0 - ry0) + 6:(y1 - ry0) - 6, (x0 - rx0) + 6:(x1 - rx0) - 6] = True
+    ringm = np.ones((ih, iw), bool)
+    ringm[(y0 - ry0):(y1 - ry0), (x0 - rx0):(x1 - rx0)] = False
+    if int(inner.sum()) < 500 or int(ringm.sum()) < 500:
+        return None
+    # 센서/코덱 노이즈 바닥 추정(저분산 화소 10퍼센타일) 후 차감 — 노이즈가
+    # 분산비를 위로 왜곡하는 것을 막는다
+    noise = min(float(np.percentile(var_t[ringm], 10)), 10.0)
+    v_in = max(0.0, float(np.median(var_t[inner])) - noise)
+    v_out = max(0.0, float(np.median(var_t[ringm])) - noise)
+    if v_out < 100.0 or v_in < 0.5:
+        return None                      # 배경 움직임 부족 — 분산비 신뢰 불가
+    s = float(np.sqrt(v_in / v_out))
+    if not (0.12 <= s <= 0.85):
+        return None
+    mean_in = mean_t[inner].reshape(-1, 3).mean(axis=0)
+    mean_out = mean_t[ringm].reshape(-1, 3).mean(axis=0)
+    t_vec = mean_in - s * mean_out
+    card_c = t_vec / max(0.05, 1.0 - s)   # 카드 자체 색 — 물리 범위 검증
+    if np.any(card_c < -20) or np.any(card_c > 275):
+        return None
+    return s, np.clip(t_vec, 0, 255).astype(np.float32)
+
+
+def _validate_unblend(frames, rects_by_key, gkeys, est, hh, ww):
+    """RC4 Phase F: (s,t) un-blend 후보의 실측 채택 게이트.
+
+    키프레임 최대 8장에 후보를 실제 적용해 (1) 경계 밝기 연속성이 원본 대비
+    절반 이하로 좁혀지고 (2) 내부 질감 경사도가 바깥과 동급(0.35~2.8×)인지
+    검사. 70%+ 키 통과 시에만 채택 — 잘못된 gain의 과증폭/어두운 잔상 차단.
+    """
+    s, t_vec = est
+    g2 = 1.0 / max(0.05, float(s))
+    ok = tot = 0
+    for i in list(sorted(gkeys))[:8]:
+        r = rects_by_key.get(i)
+        if r is None:
+            continue
+        x0, y0, x1, y1 = [int(v) for v in r]
+        x0 = max(0, x0); y0 = max(0, y0)
+        x1 = min(ww, x1); y1 = min(hh, y1)
+        if x1 - x0 < 30 or y1 - y0 < 20:
+            continue
+        f = frames[i].astype(np.float32)
+        b = 12
+        inner = f[y0 + 4:y1 - 4, x0 + 4:x1 - 4]
+        if inner.size == 0:
+            continue
+        unb = np.clip((inner - t_vec[None, None, :]) * g2, 0, 255)
+        oy0 = max(0, y0 - b); oy1 = min(hh, y1 + b)
+        ox0 = max(0, x0 - b); ox1 = min(ww, x1 + b)
+        parts = []
+        if y0 - oy0 > 2:
+            parts.append(f[oy0:y0, ox0:ox1].reshape(-1, 3))
+        if oy1 - y1 > 2:
+            parts.append(f[y1:oy1, ox0:ox1].reshape(-1, 3))
+        if x0 - ox0 > 2:
+            parts.append(f[y0:y1, ox0:x0].reshape(-1, 3))
+        if ox1 - x1 > 2:
+            parts.append(f[y0:y1, x1:ox1].reshape(-1, 3))
+        if not parts:
+            continue
+        om = np.concatenate(parts, 0).mean(axis=0)
+        d_src = float(np.abs(inner.reshape(-1, 3).mean(axis=0) - om).mean())
+        d_unb = float(np.abs(unb.reshape(-1, 3).mean(axis=0) - om).mean())
+        gy_in = cv2.cvtColor(unb.astype(np.uint8), cv2.COLOR_RGB2GRAY)
+        gi = np.abs(cv2.Laplacian(gy_in.astype(np.float32), cv2.CV_32F))
+        strip = (f[oy0:y0, ox0:ox1] if y0 - oy0 > 4 else f[y1:oy1, ox0:ox1])
+        if strip.size == 0:
+            continue
+        gy_out = cv2.cvtColor(strip.astype(np.uint8), cv2.COLOR_RGB2GRAY)
+        go = np.abs(cv2.Laplacian(gy_out.astype(np.float32), cv2.CV_32F))
+        gr = float(np.median(gi)) / max(0.5, float(np.median(go)))
+        tot += 1
+        if d_unb < max(3.0, 0.55 * d_src) and 0.35 <= gr <= 2.8:
+            ok += 1
+    return tot >= 3 and ok >= 0.7 * tot
+
+
 def stable_boxes(rects_by_key, min_support=2):
     """키프레임별 박스 rect의 시간축 안정성: IoU>0.5 그룹(합집합 rect), 지지 키 반환."""
     def iou(a, b):
@@ -1915,7 +2019,15 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                 s_chk, t_chk = est
                 bright = float(np.mean(t_chk)) / max(0.05, 1.0 - float(s_chk))
                 if bright > 150.0:
-                    est = None
+                    # RC4 Phase F: 무조건 기각(run91) → 실측 검증 통과 시 채택.
+                    # g27 실측: 밝은 카드가 일괄 기각돼 AI 뭉갬(18.7dB)으로
+                    # 떨어졌다 — 올바른 추정까지 버리는 과잉 방어였다.
+                    if _validate_unblend(frames_local, rects_by_key, gkeys,
+                                         est, hh, ww):
+                        box_stats["box_bright_ok"] = box_stats.get(
+                            "box_bright_ok", 0) + 1
+                    else:
+                        est = None
             # 2차: scan이 장시간 분산비로 추정한 카드 (α, 색) — 그룹 추정 실패 시만
             if (est is None or est[0] < 0.25) and reg.get("card_blends"):
                 gx0, gy0, gx1, gy1 = grect
@@ -1941,6 +2053,31 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                                 ring_m[iy0:iy1, ix0:ix1] = 0
                             raw[i2] = np.maximum(raw[i2], ring_m)
                         break
+            # RC4 Phase F 카드 하이브리드: 그룹/스캔 추정이 모두 실패한 밝은
+            # 반투명 카드 — 분산비 추정으로 un-blend 구제 (배경이 움직일 때만).
+            # g27 실측: 흰 카드가 bright-veto→box_ai로 떨어져 내부 전체가
+            # AI 뭉갬(18.7dB). un-blend는 카드 뒤 실배경을 물리적으로 복원한다.
+            if ((est is None or est[0] < 0.25)
+                    and not reg.get("force_ai")
+                    and os.environ.get("WM_RC4_VARBLEND", "1") != "0"):
+                vr = _var_ratio_blend(frames_local, rects_by_key, gkeys, hh, ww)
+                if vr is not None and _validate_unblend(
+                        frames_local, rects_by_key, gkeys, vr, hh, ww):
+                    est = vr
+                    box_stats["box_var_blend"] = box_stats.get(
+                        "box_var_blend", 0) + 1
+                    # 카드 테두리/모서리는 내부보다 불투명 → 링(±10px)은 AI 복원
+                    for i2 in gkeys:
+                        r2b = rects_by_key[i2]
+                        ox0 = max(0, r2b[0] - 10); oy0 = max(0, r2b[1] - 10)
+                        ox1 = min(ww, r2b[2] + 10); oy1 = min(hh, r2b[3] + 10)
+                        ring_m = np.zeros((hh, ww), np.uint8)
+                        ring_m[oy0:oy1, ox0:ox1] = 255
+                        ix0 = min(ww, r2b[0] + 10); iy0 = min(hh, r2b[1] + 10)
+                        ix1 = max(0, r2b[2] - 10); iy1 = max(0, r2b[3] - 10)
+                        if ix1 > ix0 and iy1 > iy0:
+                            ring_m[iy0:iy1, ix0:ix1] = 0
+                        raw[i2] = np.maximum(raw[i2], ring_m)
             if est is None or est[0] < 0.25:
                 # 불투명(또는 추정 실패): AI 복원 경로
                 box_stats["box_ai"] += 1
@@ -1979,7 +2116,12 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                 frames_local[i] = fr
             for (x0, y0, x1, y1), gain, bias in fixes:
                 sub = fr[y0:y1, x0:x1].astype(np.float32) * gain + bias
-                fr[y0:y1, x0:x1] = np.clip(sub, 0, 255).astype(np.uint8)
+                sub_u8 = np.clip(sub, 0, 255).astype(np.uint8)
+                if float(np.mean(gain)) > 3.0 and sub_u8.shape[0] > 8 \
+                        and sub_u8.shape[1] > 8:
+                    # 강한 un-blend(×3+)는 양자화 노이즈도 증폭 — 경량 억제
+                    sub_u8 = cv2.bilateralFilter(sub_u8, 5, 30, 7)
+                fr[y0:y1, x0:x1] = sub_u8
     # RC4 Phase C: effect-aware Locator — 키프레임 마스크를 부수효과(외곽선·
     # 그림자·halo·색번짐)까지 확장. 과확장 가드: effect 면적이 core의 2.5×를
     # 넘으면 소확장(5px)으로 폴백 (질감 배경에서 TELEA 추정 오탐 방지).
@@ -2495,6 +2637,9 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                 if open_b: gy1 = min(H, reg["y"] + reg["h"] + 16)
                 sub = frame[gy0:gy1, gx0:gx1].astype(np.float32) * gain + bias
                 fixed = np.clip(sub, 0, 255).astype(np.uint8)
+                if float(np.mean(gain)) > 3.0 and fixed.shape[0] > 8 \
+                        and fixed.shape[1] > 8:
+                    fixed = cv2.bilateralFilter(fixed, 5, 30, 7)
                 fh, fw = fixed.shape[:2]
                 if fh > 20 and fw > 20:
                     a = np.ones((fh, fw), np.float32)
