@@ -290,3 +290,10 @@ jobs:
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
           TOURN_SPEC: ${{ github.event.inputs.pids }}
         run: python -u gpu-worker/scripts/tournament_extract_v32.py
+      - name: Tournament contact sheets
+        if: ${{ github.event.inputs.action == 'tourncontact' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          CONTACT_SPEC: ${{ github.event.inputs.pids }}
+        run: python -u gpu-worker/scripts/tournament_contact_v32.py
