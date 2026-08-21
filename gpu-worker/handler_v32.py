@@ -2428,6 +2428,9 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
         counters["precise_keyframes"] += masked
         bs = getattr(_seg_masks_for_region, "_last_box_stats", None)
         if bs:
+            _dbg({"ev": "boxstat", "reg": ri,
+                  **{k: v for k, v in bs.items()}})
+        if bs:
             counters["box_keys"] = counters.get("box_keys", 0) + bs["box_keys"]
             counters["box_low_conf"] = counters.get("box_low_conf", 0) + bs["box_low_conf"]
             counters["box_conf_max"] = max(counters.get("box_conf_max", 0.0),
