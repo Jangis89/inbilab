@@ -2115,20 +2115,19 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
         # 절단 대응 — 행 원점은 메인 스레드에 있다)
         try:
             main_id = _th.main_thread().ident
+            my_id = _th.get_ident()
             frms = _sys._current_frames()
             mstk = []
             if main_id in frms:
                 mstk = [ln.strip().replace("\n", " | ") for ln in
-                        traceback.format_stack(frms[main_id])[-12:]]
+                        traceback.format_stack(frms[main_id])[-6:]]
             others = {}
             for _tid, _frm in frms.items():
-                if _tid == main_id:
+                if _tid == main_id or _tid == my_id:
                     continue
-                es = traceback.extract_stack(_frm)
-                if es:
-                    t0 = es[-1]
-                    others[str(_tid)] = (t0.filename.split("/")[-1]
-                                         + f":{t0.lineno}:{t0.name}")
+                es = traceback.extract_stack(_frm)[-10:]
+                others[str(_tid)] = [f.filename.split("/")[-1]
+                                     + f":{f.lineno}:{f.name}" for f in es]
             mem = {}
             for pth, k2 in (("/sys/fs/cgroup/memory.current", "cur"),
                             ("/sys/fs/cgroup/memory.max", "max"),
@@ -2300,12 +2299,29 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                     bud = 150.0 if is_trans else 75.0
 
                     def _ai_fb(fr2, mk2, tier2, ch2, _t2=t2, _ri=ri, _c=c):
+                        # RC4-8: h29.restore_chunk는 chunk 범위 마스크가 전부
+                        # ndarray여야 함(np.stack) — rc4 hole/bypass 경로는 None
+                        # 을 남길 수 있어 여기서 정화한다 (잠재 결함 수정).
+                        _z = None
+                        mk2b = list(mk2)
+                        for _k in range(len(mk2b)):
+                            if mk2b[_k] is None:
+                                if _z is None:
+                                    _z = np.zeros(fr2[0].shape[:2], np.uint8)
+                                mk2b[_k] = _z
                         _dbg({"ev": "ai_enter", "reg": _ri,
                               "c": [int(_c['s']), int(_c['e'])],
                               "shape": list(fr2[0].shape),
                               "nf": len(fr2),
                               "nm": sum(1 for m3 in mk2 if m3 is not None)})
-                        r2 = h29.restore_chunk(fr2, mk2, _t2, ch2)
+                        try:
+                            r2 = h29.restore_chunk(fr2, mk2b, _t2, ch2)
+                        except BaseException as _e:
+                            # SystemExit/취소 주입 포함 — 스레드 소멸 원인 기록
+                            _dbg({"ev": "ai_exc", "reg": _ri,
+                                  "err": repr(_e)[:300],
+                                  "tb": traceback.format_exc()[-1200:]})
+                            raise
                         _dbg({"ev": "ai_exit", "reg": _ri})
                         return r2
 
