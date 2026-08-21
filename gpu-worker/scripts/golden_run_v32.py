@@ -452,6 +452,10 @@ def main():
     os.makedirs(crop_dir, exist_ok=True)
     if skip_run:
         print("[golden] 분석 전용 모드 — GPU 재실행 없이 기존 출력물 검사")
+    only = os.environ.get("GOLDEN_ONLY", "").strip()
+    if only:
+        manifest = [m for m in manifest if m["g"] in only.split(",")]
+        print(f"[golden] GOLDEN_ONLY={only} — {len(manifest)}개만 실행")
     recs = []
     for i, m in enumerate(manifest):
         gnum = int(m["g"][1:])
