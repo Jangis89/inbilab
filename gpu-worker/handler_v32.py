@@ -1343,6 +1343,23 @@ def detect_translucent_cards(samples, W, H, prior_regions=None):
             cl = None
         if not cl:
             continue
+        # 스캔 수준 (s,t) 추정 — 파트별 그룹 추정이 갈릴 때(g26 실측: 파트마다
+        # un-blend/AI 혼재 → 카드 유령+시간축 불일치) 세그가 일관되게 쓰는 힌트
+        noise_s = float(np.percentile(std, 10))
+        s_est = float(np.sqrt(
+            max(1e-4, std_in ** 2 - noise_s ** 2)
+            / max(1.0, std_ring ** 2 - noise_s ** 2)))
+        cbs = []
+        if 0.2 <= s_est <= 0.85:
+            mean_in = med[in_sl].reshape(-1, 3).mean(axis=0).astype(np.float32)
+            mean_rg = med[ry0:ry1, rx0:rx1][ring].reshape(-1, 3).mean(
+                axis=0).astype(np.float32)
+            t_vec = mean_in - s_est * mean_rg
+            card_c = t_vec / max(0.05, 1.0 - s_est)
+            if not (np.any(card_c < -20) or np.any(card_c > 275)):
+                cbs = [{"rect": [int(x), int(y), int(x + w2), int(y + h2)],
+                        "s": round(s_est, 3),
+                        "t": [float(v) for v in np.clip(t_vec, 0, 255)]}]
         pad = 24
         nx = max(0, x - pad); ny = max(0, y - pad)
         nx1 = min(W, x + w2 + pad); ny1 = min(H, y + h2 + pad)
@@ -1353,8 +1370,11 @@ def detect_translucent_cards(samples, W, H, prior_regions=None):
             nx = W - nw
         if ny + nh > H:
             ny = H - nh
-        out.append({"kind": f"static_card{len(out)}", "x": int(nx),
-                    "y": int(ny), "w": int(nw), "h": int(nh)})
+        reg_out = {"kind": f"static_card{len(out)}", "x": int(nx),
+                   "y": int(ny), "w": int(nw), "h": int(nh)}
+        if cbs:
+            reg_out["card_blends"] = cbs
+        out.append(reg_out)
         if len(out) >= 2:
             break
     return out
