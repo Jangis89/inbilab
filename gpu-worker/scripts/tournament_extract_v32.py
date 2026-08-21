@@ -100,7 +100,7 @@ def main():
         # plan에서 fps/W/H 회수
         tmpd = tempfile.mkdtemp(prefix="tourn-")
         planp = os.path.join(tmpd, "plan.json")
-        if not dl("wmtmp-v32", f"{pid}/plan.json", planp):
+        if not dl("videos-clips", f"wmtmp-v32/{pid}/plan.json", planp):
             print(f"[TOURN] plan.json missing pid={pid}")
             fail += len(items)
             continue
@@ -133,17 +133,17 @@ def main():
         segvid = {}
         for k in sorted(need):
             mz = os.path.join(tmpd, f"roimask_{k}.npz")
-            if dl("wmtmp-v32", f"{pid}/roimask_{k}.npz", mz):
+            if dl("videos-clips", f"wmtmp-v32/{pid}/roimask_{k}.npz", mz):
                 z = np.load(mz)
                 F0k, F1k, Hk, Wk = [int(x) for x in z["meta"]]
                 for j in range(F1k - F0k):
                     masks[F0k + j] = z[f"m{j}"]
             sv = os.path.join(tmpd, f"seg_{k}.mp4")
-            if dl("wmtmp-v32", f"{pid}/seg_{k}.mp4", sv):
+            if dl("videos-clips", f"wmtmp-v32/{pid}/seg_{k}.mp4", sv):
                 segvid[k] = sv
         # work(CFR) 우선, 없으면 원본 소스
         workp = os.path.join(tmpd, "work.mp4")
-        if not dl("wmtmp-v32", f"{pid}/work.mp4", workp):
+        if not dl("videos-clips", f"wmtmp-v32/{pid}/work.mp4", workp):
             proj = requests.get(
                 f"{SB_URL}/rest/v1/sc_projects?id=eq.{pid}&select=source_path",
                 headers=hdr()).json()
@@ -183,10 +183,23 @@ def main():
             pipe.wait()
             # candidate A = 현 파이프라인 seg 출력에서 같은 창
             candA = os.path.join(outdir, "cand_A.mp4")
-            segsrcs = [segvid[k] for k, (a, b) in enumerate(segments)
-                       if k in segvid and f0 < b and f1 > a]
             candA_ok = False
-            if segsrcs:
+            spans_all = [(k, a, b) for k, (a, b) in enumerate(segments)
+                         if f0 < b and f1 > a]
+            if all(k in segvid for k, _a, _b in spans_all) and spans_all:
+                if len(spans_all) > 1:
+                    # 창이 여러 part에 걸침 — part 파일을 이어붙인 뒤 상대 창 절단
+                    lst = os.path.join(outdir, "concat.txt")
+                    open(lst, "w").write("".join(
+                        f"file '{segvid[k]}'\n" for k, _a, _b in spans_all))
+                    joined = os.path.join(outdir, "joined.mp4")
+                    subprocess.run(["ffmpeg", "-v", "error", "-f", "concat",
+                                    "-safe", "0", "-i", lst, "-c", "copy",
+                                    joined, "-y"], check=True)
+                    base0 = spans_all[0][1]
+                    cut(joined, f0 - base0, f1 - base0, fps, candA)
+                    candA_ok = True
+            if not candA_ok and spans_all:
                 # part별 seg는 [F0,F1) 프레임만 담고 있음 — 창이 한 part에
                 # 들어가면 그 파일에서 상대 창으로 잘라냄 (여러 part에 걸치면
                 # concat 필요 — v1은 단일 part 창만 지원, 걸침은 기록만)
@@ -198,7 +211,7 @@ def main():
                     candA_ok = True
             meta = {"pid": pid, "roi": roi, "f0": f0, "f1": f1, "fps": fps,
                     "W": W, "H": H, "mask_missing_frames": miss,
-                    "candA_single_part": candA_ok,
+                    "candA_ok": candA_ok,
                     "input_sha256": sha(inp), "mask_sha256": sha(mk)}
             if candA_ok:
                 meta["cand_A_sha256"] = sha(candA)
