@@ -42,12 +42,12 @@ def main():
             print(f"[SVOR][{tag}]", json.dumps(out)[:4000])
             if not out.get("ok"):
                 fail += 1
-    elif op == "roi":
+    elif op in ("roi", "flowbench"):
         spec = json.loads(os.environ.get("SVOR_SPEC", "[]"))
         for i, item in enumerate(spec):
             fname = "svor_h200" if item.get("gpu") == "h200" else "svor_h100"
             fn = modal.Function.from_name(APP, fname)
-            ev = {"op": "roi", **item}
+            ev = {"op": op, **item}
             try:
                 out = fn.remote(ev)
             except Exception as e:  # noqa: BLE001
