@@ -1345,7 +1345,8 @@ def detect_translucent_cards(samples, W, H, prior_regions=None):
             continue
         # 스캔 수준 (s,t) 추정 — 파트별 그룹 추정이 갈릴 때(g26 실측: 파트마다
         # un-blend/AI 혼재 → 카드 유령+시간축 불일치) 세그가 일관되게 쓰는 힌트
-        noise_s = float(np.percentile(std, 10))
+        noise_s = min(float(np.percentile(
+            std[ry0:ry1, rx0:rx1][ring], 10)), 3.0)
         s_est = float(np.sqrt(
             max(1e-4, std_in ** 2 - noise_s ** 2)
             / max(1.0, std_ring ** 2 - noise_s ** 2)))
