@@ -4,6 +4,11 @@
 TOURN_MET_SPEC (JSON):
   [{"roi":"g26","golden":"g26","cands":["cand_A","cand_C_w0","cand_E_w0"]}]
 
+공정 비교(후속 명세 Phase 2): 모든 후보를 **동일 창(기본 첫 81프레임)** 으로
+정렬해 측정한다 (window 항목으로 조정 가능). mask 밖 변형은 core(경계+4px
+밖)와 feather ring(경계 0~4px)을 분리 기록한다. TOURN_LPIPS=1이면 LPIPS
+(AlexNet, 4프레임 간격 서브샘플)도 계산한다.
+
 생성 지표 (후보별):
   frames, psnr_in(마스크 안), psnr_out(마스크 밖), ssim_in,
   sharp_ratio(마스크 안 라플라시안 P50 / GT), flicker(시간축 차분, GT 대비 비율),
@@ -90,8 +95,30 @@ def lap_p50(img, sel):
     return float(np.percentile(L[sel], 50)) if sel.any() else float("nan")
 
 
+_LPIPS = [None]
+
+
+def lpips_pair(a, b):
+    """LPIPS(AlexNet). torch 미설치/실패 시 None."""
+    try:
+        if _LPIPS[0] is None:
+            import torch
+            import lpips as _lp
+            _LPIPS[0] = (_lp.LPIPS(net="alex"), torch)
+        model, torch = _LPIPS[0]
+        ta = torch.from_numpy(a[:, :, ::-1].copy()).permute(2, 0, 1)[None] \
+            .float() / 127.5 - 1.0
+        tb = torch.from_numpy(b[:, :, ::-1].copy()).permute(2, 0, 1)[None] \
+            .float() / 127.5 - 1.0
+        with torch.no_grad():
+            return float(model(ta, tb).item())
+    except Exception:
+        return None
+
+
 def main():
     spec = json.loads(os.environ.get("TOURN_MET_SPEC", "[]"))
+    use_lpips = os.environ.get("TOURN_LPIPS", "0") == "1"
     if not spec:
         print("[MET] empty spec")
         sys.exit(1)
@@ -132,11 +159,13 @@ def main():
                 print(f"[MET] {roi}/{cand} 없음 — 건너뜀")
                 continue
             CD = read_frames(cp)
-            n = min(len(IN), len(MK), len(CD), len(GT) if GT else 10 ** 9)
+            win = int(item.get("window", 81))
+            n = min(len(IN), len(MK), len(CD), len(GT) if GT else 10 ** 9, win)
             if n == 0:
                 continue
             comp = cand != "cand_A"    # 생성형은 Preserver 합성 후 측정
-            pin, pout, sin_, shr, flk, omx = [], [], [], [], [], []
+            pin, pout, sin_, shr, flk = [], [], [], [], []
+            omx_core, omx_ring, lpv = [], [], []
             prev_c = prev_g = None
             for i in range(n):
                 a = IN[i]
@@ -162,9 +191,21 @@ def main():
                         sc, sg = lap_p50(c, m), lap_p50(ref, m)
                         if sg > 1e-3:
                             shr.append(sc / sg)
-                omx.append(float(np.abs(
-                    c.astype(np.int16) - a.astype(np.int16))[outm].max())
-                    if outm.any() else 0.0)
+                    if use_lpips and i % 4 == 0 and m.any():
+                        ys, xs = np.nonzero(m)
+                        y0b, y1b = max(0, ys.min() - 16), min(m.shape[0], ys.max() + 17)
+                        x0b, x1b = max(0, xs.min() - 16), min(m.shape[1], xs.max() + 17)
+                        v = lpips_pair(c[y0b:y1b, x0b:x1b], ref[y0b:y1b, x0b:x1b])
+                        if v is not None:
+                            lpv.append(v)
+                # mask 밖 변형: feather ring(경계 0~4px)과 core(4px 밖) 분리
+                mu8 = m.astype(np.uint8)
+                dil = cv2.dilate(mu8, np.ones((9, 9), np.uint8)).astype(bool)
+                ring = dil & (~m)
+                core = ~dil
+                dabs = np.abs(c.astype(np.int16) - a.astype(np.int16))
+                omx_core.append(float(dabs[core].max()) if core.any() else 0.0)
+                omx_ring.append(float(dabs[ring].max()) if ring.any() else 0.0)
                 if prev_c is not None and m.any():
                     dc = float(np.abs(c.astype(np.float32)
                                       - prev_c.astype(np.float32))[m].mean())
@@ -179,9 +220,11 @@ def main():
                    "psnr_in": round(float(np.nanmean(pin)), 2) if pin else "",
                    "psnr_out": round(float(np.nanmean(pout)), 2) if pout else "",
                    "ssim_in": round(float(np.nanmean(sin_)), 4) if sin_ else "",
+                   "lpips_in": round(float(np.nanmean(lpv)), 4) if lpv else "",
                    "sharp_ratio": round(float(np.nanmean(shr)), 3) if shr else "",
                    "flicker_ratio": round(float(np.nanmean(flk)), 3) if flk else "",
-                   "out_maxdiff": round(float(np.max(omx)), 1) if omx else ""}
+                   "out_core_maxdiff": round(float(np.max(omx_core)), 1) if omx_core else "",
+                   "out_ring_maxdiff": round(float(np.max(omx_ring)), 1) if omx_ring else ""}
             rows.append(row)
             print("[MET] " + json.dumps(row, ensure_ascii=False))
     if rows:
