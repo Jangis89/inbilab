@@ -466,6 +466,18 @@ def main():
                           crop_dir=crop_dir, kind=m.get("kind"))
         except Exception as e:
             rec = {"g": m["g"], "result": "ERROR", "error": f"{type(e).__name__}: {e}"[:300]}
+            # RC4 디버그: 타임아웃 세그가 남긴 rc4dbg_*.json 회수
+            try:
+                for pnum in range(0, 12):
+                    rr = requests.get(
+                        f"{SB_URL}/storage/v1/object/videos-clips/"
+                        f"wmtmp-v32/{pid}/rc4dbg_{pnum}.json",
+                        headers=sbh(), timeout=20)
+                    if rr.ok:
+                        print(f"[RC4DBG] {m['g']} part={pnum} "
+                              + rr.content.decode()[:1800])
+            except Exception:
+                pass
         rec["kind"] = m["kind"]
         recs.append(rec)
         print("[GOLDEN]", json.dumps({k: v for k, v in rec.items()
