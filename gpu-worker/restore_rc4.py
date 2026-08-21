@@ -190,7 +190,7 @@ def propagate_frame(frames, masks, ti, offsets=REF_OFFSETS,
 def restore_chunk_flow(frames, masks, chunk, ai_fallback=None, tier=None,
                        offsets=REF_OFFSETS, min_flow_cover=0.15,
                        stats=None, bbox_margin=64, budget_s=None,
-                       deadline=None):
+                       deadline=None, progress=None):
     """마스크 union bbox+margin으로 잘라 전파 후 되붙임 (속도 래퍼)."""
     if deadline is not None and _time.time() > deadline:
         # 세그먼트 공유 flow 예산 소진 — 기존 생성모델 경로로 즉시 우회
@@ -232,7 +232,7 @@ def restore_chunk_flow(frames, masks, chunk, ai_fallback=None, tier=None,
         sub_out = _restore_chunk_flow_core(sub_f, sub_m, chunk,
                                            _sub_ai if ai_fallback else None,
                                            tier, offsets, min_flow_cover,
-                                           stats, budget_s, deadline)
+                                           stats, budget_s, deadline, progress)
         out = []
         for k in range(s0, e0 + 1):
             fr = frames[k].copy()
@@ -241,12 +241,13 @@ def restore_chunk_flow(frames, masks, chunk, ai_fallback=None, tier=None,
         return out
     return _restore_chunk_flow_core(frames, masks, chunk, ai_fallback, tier,
                                     offsets, min_flow_cover, stats, budget_s,
-                                    deadline)
+                                    deadline, progress)
 
 
 def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
                              offsets=REF_OFFSETS, min_flow_cover=0.15,
-                             stats=None, budget_s=None, deadline=None):
+                             stats=None, budget_s=None, deadline=None,
+                             progress=None):
     """chunk 범위 [s..e]를 실화소 우선으로 복원.
 
     frames/masks: 세그먼트-로컬 전체 (참조 뱅크로 chunk 밖 프레임도 사용)
@@ -269,6 +270,8 @@ def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
     probe_idx = sorted({min(e, max(s, i2)) for i2 in probe_idx})
     p_need = p_hole = 0
     cache0 = {}
+    if progress:
+        progress({"ph": "probe_start", "n": n})
     for ti in probe_idx:
         m = masks[ti] if ti < len(masks) else None
         if m is None or not m.any():
@@ -277,12 +280,18 @@ def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
                                        engine=eng, gray_cache=cache0)
         p_need += int((m > 127).sum())
         p_hole += int((hole > 0).sum())
+    if progress:
+        progress({"ph": "probe_done", "cover": round(1.0 - p_hole / max(1, p_need), 3) if p_need else None})
     if p_need > 0 and (1.0 - p_hole / p_need) < min_flow_cover:
         if stats is not None:
             stats["flow_bypass"] = 1
             stats["probe_cover"] = round(1.0 - p_hole / p_need, 4)
         if ai_fallback is not None:
+            if progress:
+                progress({"ph": "bypass_ai_start"})
             arr = ai_fallback(frames, masks, tier, chunk)
+            if progress:
+                progress({"ph": "bypass_ai_done"})
             # Phase F: 격자/직선 구조는 생성 결과 위에 선 레이어 재합성
             nline = 0
             for k in range(n):
@@ -304,9 +313,11 @@ def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
     t_flow0 = _time.time()
     if deadline is not None:
         budget_s = min(budget_s, max(1.0, deadline - t_flow0))
+    if progress:
+        progress({"ph": "chain_start"})
     out, holes, total_need2, total_holed, budget_hit = _chain_propagate(
         frames, masks, s, e, offsets, eng, MIN_VALID_W,
-        budget_s=budget_s, t_start=t_flow0)
+        budget_s=budget_s, t_start=t_flow0, progress=progress)
     total_need = max(total_need, total_need2)
     if stats is not None and budget_hit:
         stats["flow_budget_hit"] = 1
@@ -327,7 +338,13 @@ def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
             base_frames = [f.copy() for f in frames]
             for k in range(n):
                 base_frames[s + k] = out[k]
+            if progress:
+                progress({"ph": "hole_ai_start",
+                          "hole_frames": int(sum(1 for hh in hmasks
+                                                 if hh is not None))})
             arr = ai_fallback(base_frames, hmasks, tier, chunk)
+            if progress:
+                progress({"ph": "hole_ai_done"})
             for k in range(n):
                 hm = hmasks[s + k]
                 if hm is None or not hm.any():
@@ -378,7 +395,7 @@ def _compose_step(F, step_flow):
 
 
 def _chain_propagate(frames, masks, s, e, offsets, eng, min_w,
-                     budget_s=None, t_start=None):
+                     budget_s=None, t_start=None, progress=None):
     """[s..e] 프레임을 체인-합성 flow로 전파 복원.
 
     반환 (out list, holes list, total_need, total_holed, budget_hit)"""
@@ -429,6 +446,8 @@ def _chain_propagate(frames, masks, s, e, offsets, eng, min_w,
     budget_hit = False
     off_set = set(offsets)
     for ti in range(s, e + 1):
+        if progress and (ti - s) % 25 == 0:
+            progress({"ph": "chain_fr", "ti": int(ti)})
         m = masks[ti] if ti < len(masks) else None
         base = frames[ti].astype(np.float32)
         if m is None or not m.any():

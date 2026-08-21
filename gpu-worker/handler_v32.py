@@ -2228,7 +2228,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                 _dbg({"ev": "chunk_start", "reg": ri,
                       "c": [int(c['s']), int(c['e'])]})
                 use_flow = (not kind.startswith("manual")
-                            and os.environ.get("WM_RC4_FLOW", "0") != "0")
+                            and os.environ.get("WM_RC4_FLOW", "1") != "0")
                 if use_flow:
                     # RC4: 실화소 전파 우선 — 앞뒤 프레임의 진짜 화소로 먼저
                     # 채우고, 남는 hole만 생성모델. 정지배경 상시 오버레이는
@@ -2243,12 +2243,17 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                     def _ai_fb(fr2, mk2, tier2, ch2, _t2=t2):
                         return h29.restore_chunk(fr2, mk2, _t2, ch2)
 
+                    def _prog(ev, _ri=ri, _c=c):
+                        _dbg({"ev": "flow", "reg": _ri,
+                              "c": [int(_c['s']), int(_c['e'])], **ev})
+
                     arr = rc4.restore_chunk_flow(frames_local, masks, c,
                                                  ai_fallback=_ai_fb, tier=t2,
                                                  stats=fstats,
                                                  min_flow_cover=mfc,
                                                  budget_s=bud,
-                                                 deadline=flow_deadline)
+                                                 deadline=flow_deadline,
+                                                 progress=_prog)
                     counters["flow_chunks"] = counters.get("flow_chunks", 0) + 1
                     if fstats.get("flow_skipped_deadline"):
                         counters["flow_deadline_skip"] = counters.get(
