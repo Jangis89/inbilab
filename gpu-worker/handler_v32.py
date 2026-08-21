@@ -1271,6 +1271,95 @@ def _estimate_card_model(samples, votes_v, pres, cuts, scan_step, fps, W, H):
             "runs": len(ratios), "border_gain": round(ref, 2)}
 
 # ---------------- 단계: scan (가벼운 계획 — 영역·구간만, 마스크 없음) ----------------
+def detect_translucent_cards(samples, W, H, prior_regions=None):
+    """RC4 Phase C Locator: 중앙부 반투명 카드(밝은 사각 오버레이) 검출.
+
+    g26/UAT-02 계열 — 기존 자막밴드·정적로고 검출이 놓치는 '화면 중앙의
+    밝은 반투명 카드'를 3중 증거로만 제안한다 (실물 오삭제 방지 최우선):
+      (1) 시간축 분산 감쇠: 카드가 배경 분산을 s²배로 누른다
+      (2) 국소 밝기 상승: 흰/밝은 카드가 주변보다 밝다
+      (3) 내부 글자 존재: 시간축 중앙값 프레임에서 글자 클러스터 확인
+    """
+    if os.environ.get("WM_RC4_CARD_SCAN", "1") == "0" or len(samples) < 8:
+        return []
+    st = np.stack(samples[:60])
+    med = np.median(st, axis=0).astype(np.uint8)
+    std = st.astype(np.float32).std(axis=0).mean(axis=2)
+    gray = cv2.cvtColor(med, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    g_med_std = float(np.median(std))
+    if g_med_std < 6.0:
+        return []          # 배경이 거의 정지 — 분산 감쇠 증거를 쓸 수 없음
+    cand = (std < 0.6 * g_med_std).astype(np.uint8)
+    cand = cv2.morphologyEx(cand, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
+    cand = cv2.morphologyEx(cand, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+    out = []
+    ncomp, lab, stats, _ = cv2.connectedComponentsWithStats(cand, 8)
+    order = sorted(range(1, ncomp),
+                   key=lambda ci: -int(stats[ci, cv2.CC_STAT_AREA]))
+    for ci in order:
+        x = int(stats[ci, cv2.CC_STAT_LEFT]); y = int(stats[ci, cv2.CC_STAT_TOP])
+        w2 = int(stats[ci, cv2.CC_STAT_WIDTH]); h2 = int(stats[ci, cv2.CC_STAT_HEIGHT])
+        area = int(stats[ci, cv2.CC_STAT_AREA])
+        if area < 0.01 * W * H or area > 0.35 * W * H:
+            continue
+        if area / float(max(1, w2 * h2)) < 0.72:      # 직사각형성
+            continue
+        ar = w2 / float(max(1, h2))
+        if not (0.2 <= ar <= 8.0):
+            continue
+        skip = False
+        for r0 in (prior_regions or []):
+            ox = max(0, min(x + w2, r0["x"] + r0["w"]) - max(x, r0["x"]))
+            oy = max(0, min(y + h2, r0["y"] + r0["h"]) - max(y, r0["y"]))
+            if ox * oy > 0.5 * area:
+                skip = True
+                break
+        if skip:
+            continue
+        # 링(둘레 20px) 대비 검증: 카드는 밝고(≥+10), 분산은 눌려 있어야(≤1/1.4)
+        b2 = 20
+        ry0 = max(0, y - b2); ry1 = min(H, y + h2 + b2)
+        rx0 = max(0, x - b2); rx1 = min(W, x + w2 + b2)
+        ring = np.ones((ry1 - ry0, rx1 - rx0), bool)
+        ring[(y - ry0):(y - ry0) + h2, (x - rx0):(x - rx0) + w2] = False
+        if int(ring.sum()) < 400:
+            continue
+        in_sl = (slice(y, y + h2), slice(x, x + w2))
+        if float(gray[in_sl].mean()) < float(gray[ry0:ry1, rx0:rx1][ring].mean()) + 10:
+            continue
+        std_in = float(np.median(std[in_sl]))
+        std_ring = float(np.median(std[ry0:ry1, rx0:rx1][ring]))
+        if std_ring < 1.4 * std_in:
+            continue
+        # 반투명 증거: 내부에 배경 분산의 흔적(s>~0.1)이 남아 있어야 한다.
+        # 완전 불투명(내부 분산=노이즈뿐)은 실물 간판일 수 있어 제안하지 않는다
+        # (오삭제 방지 — 불투명 오버레이는 기존 검출기/수동 지정 소관).
+        if std_in < max(2.0, 0.12 * std_ring):
+            continue
+        crop = med[y:y + h2, x:x + w2]
+        try:
+            cl = h29.glyph_clusters(crop)
+        except Exception:
+            cl = None
+        if not cl:
+            continue
+        pad = 24
+        nx = max(0, x - pad); ny = max(0, y - pad)
+        nx1 = min(W, x + w2 + pad); ny1 = min(H, y + h2 + pad)
+        nw = (nx1 - nx) // 16 * 16; nh = (ny1 - ny) // 16 * 16
+        if nw < 64 or nh < 48:
+            continue
+        if nx + nw > W:
+            nx = W - nw
+        if ny + nh > H:
+            ny = H - nh
+        out.append({"kind": f"static_card{len(out)}", "x": int(nx),
+                    "y": int(ny), "w": int(nw), "h": int(nh)})
+        if len(out) >= 2:
+            break
+    return out
+
+
 def scan_v32(proj, tmp, scan_step=12, seg_k=10):
     pid = proj["id"]
     sw = SW()
@@ -1308,6 +1397,11 @@ def scan_v32(proj, tmp, scan_step=12, seg_k=10):
             regions.extend(detect_windowed_transient_overlays(
                 samples, W, H, scan_step, info["fps"], prior_regions=regions,
                 items_t=getattr(detect_sub_bands_shm, "_last_items_t", None)))
+        except Exception:
+            pass
+        # RC4 Phase C: 중앙 반투명 카드 (veto 이후 추가 — 텍스트밴드 veto와 무관)
+        try:
+            regions.extend(detect_translucent_cards(samples, W, H, regions))
         except Exception:
             pass
         del samples
