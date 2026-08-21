@@ -2111,17 +2111,41 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
     _seg_done = _th.Event()
 
     def _stall_dump(tag):
+        # 메인 스레드 전체 스택 + 나머지 스레드는 top frame만 (1800자 로그
+        # 절단 대응 — 행 원점은 메인 스레드에 있다)
         try:
-            stk = {}
-            for _tid, _frm in _sys._current_frames().items():
-                stk[str(_tid)] = [ln.strip() for ln in
-                                  traceback.format_stack(_frm)[-8:]]
-            _dbg({"ev": "stall", "tag": tag, "stacks": stk})
+            main_id = _th.main_thread().ident
+            frms = _sys._current_frames()
+            mstk = []
+            if main_id in frms:
+                mstk = [ln.strip().replace("\n", " | ") for ln in
+                        traceback.format_stack(frms[main_id])[-12:]]
+            others = {}
+            for _tid, _frm in frms.items():
+                if _tid == main_id:
+                    continue
+                es = traceback.extract_stack(_frm)
+                if es:
+                    t0 = es[-1]
+                    others[str(_tid)] = (t0.filename.split("/")[-1]
+                                         + f":{t0.lineno}:{t0.name}")
+            mem = {}
+            for pth, k2 in (("/sys/fs/cgroup/memory.current", "cur"),
+                            ("/sys/fs/cgroup/memory.max", "max"),
+                            ("/sys/fs/cgroup/memory/memory.usage_in_bytes", "cur1"),
+                            ("/sys/fs/cgroup/memory/memory.limit_in_bytes", "max1")):
+                try:
+                    with open(pth) as f3:
+                        mem[k2] = f3.read().strip()[:20]
+                except Exception:
+                    pass
+            _dbg({"ev": "stall", "tag": tag, "main": mstk, "others": others,
+                  "mem": mem})
         except Exception:
             pass
 
     def _watchdog():
-        for _d, _tag in ((240, "t240"), (240, "t480")):
+        for _d, _tag in ((180, "t180"), (240, "t420")):
             if _seg_done.wait(_d):
                 return
             _stall_dump(_tag)
