@@ -148,11 +148,12 @@ def main():
                 f"{SB_URL}/rest/v1/sc_projects?id=eq.{pid}&select=source_path",
                 headers=hdr()).json()
             spath = proj[0]["source_path"]
-            b, p = spath.split("/", 1) if not spath.startswith("videos-source") \
-                else ("videos-source", spath.split("/", 1)[1])
-            if "/" in spath and spath.split("/")[0] in ("videos-source",
-                                                        "videos-clips"):
+            # source_path는 videos-source 버킷 내 경로 (버킷 접두사가 붙은
+            # 형태면 분리). 예: "golden/g26.mp4", "{uid}/{file}.mp4"
+            if spath.split("/")[0] in ("videos-source", "videos-clips"):
                 b, p = spath.split("/", 1)
+            else:
+                b, p = "videos-source", spath
             if not dl(b, p, workp):
                 print(f"[TOURN] source download 실패 pid={pid} {spath}")
                 fail += len(items)
