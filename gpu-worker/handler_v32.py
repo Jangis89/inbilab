@@ -2079,6 +2079,9 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
 
     counters = {"intermediate_ai_mp4_count": 0, "key_step": int(key_step),
                 "precise_keyframes": 0, "regions_active": 0}
+    # RC4: 세그먼트 전체가 공유하는 flow 예산 (영역×chunk 누적 폭주 방지 — g02 900s 교훈)
+    flow_deadline = time.time() + float(os.environ.get("WM_RC4_FLOW_SEG_BUDGET",
+                                                       "90"))
     seg_rest = {}     # ri -> {global_i: 복원 crop}
     local_masks = {}  # ri -> 로컬 마스크 목록 (index = global_i - E0)
     local_pastes = {}  # ri -> tight paste 마스크 (출력 합성용 — AI 입력과 분리)
@@ -2220,8 +2223,15 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                                                  ai_fallback=_ai_fb, tier=t2,
                                                  stats=fstats,
                                                  min_flow_cover=mfc,
-                                                 budget_s=bud)
+                                                 budget_s=bud,
+                                                 deadline=flow_deadline)
                     counters["flow_chunks"] = counters.get("flow_chunks", 0) + 1
+                    if fstats.get("flow_skipped_deadline"):
+                        counters["flow_deadline_skip"] = counters.get(
+                            "flow_deadline_skip", 0) + 1
+                    if fstats.get("flow_budget_hit"):
+                        counters["flow_budget_hit"] = counters.get(
+                            "flow_budget_hit", 0) + 1
                     if fstats.get("flow_bypass"):
                         counters["flow_bypass"] = counters.get("flow_bypass", 0) + 1
                     elif "flow_cover" in fstats:

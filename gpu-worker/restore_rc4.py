@@ -189,8 +189,15 @@ def propagate_frame(frames, masks, ti, offsets=REF_OFFSETS,
 
 def restore_chunk_flow(frames, masks, chunk, ai_fallback=None, tier=None,
                        offsets=REF_OFFSETS, min_flow_cover=0.15,
-                       stats=None, bbox_margin=64, budget_s=None):
+                       stats=None, bbox_margin=64, budget_s=None,
+                       deadline=None):
     """마스크 union bbox+margin으로 잘라 전파 후 되붙임 (속도 래퍼)."""
+    if deadline is not None and _time.time() > deadline:
+        # 세그먼트 공유 flow 예산 소진 — 기존 생성모델 경로로 즉시 우회
+        if stats is not None:
+            stats["flow_skipped_deadline"] = 1
+        if ai_fallback is not None:
+            return ai_fallback(frames, masks, tier, chunk)
     s0, e0 = chunk["s"], min(chunk["e"], len(frames) - 1)
     h, w = frames[0].shape[:2]
     bb = None
@@ -225,7 +232,7 @@ def restore_chunk_flow(frames, masks, chunk, ai_fallback=None, tier=None,
         sub_out = _restore_chunk_flow_core(sub_f, sub_m, chunk,
                                            _sub_ai if ai_fallback else None,
                                            tier, offsets, min_flow_cover,
-                                           stats, budget_s)
+                                           stats, budget_s, deadline)
         out = []
         for k in range(s0, e0 + 1):
             fr = frames[k].copy()
@@ -233,12 +240,13 @@ def restore_chunk_flow(frames, masks, chunk, ai_fallback=None, tier=None,
             out.append(fr)
         return out
     return _restore_chunk_flow_core(frames, masks, chunk, ai_fallback, tier,
-                                    offsets, min_flow_cover, stats, budget_s)
+                                    offsets, min_flow_cover, stats, budget_s,
+                                    deadline)
 
 
 def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
                              offsets=REF_OFFSETS, min_flow_cover=0.15,
-                             stats=None, budget_s=None):
+                             stats=None, budget_s=None, deadline=None):
     """chunk 범위 [s..e]를 실화소 우선으로 복원.
 
     frames/masks: 세그먼트-로컬 전체 (참조 뱅크로 chunk 밖 프레임도 사용)
@@ -294,6 +302,8 @@ def _restore_chunk_flow_core(frames, masks, chunk, ai_fallback=None, tier=None,
         budget_s = float(__import__("os").environ.get("WM_RC4_FLOW_BUDGET_S",
                                                       "120"))
     t_flow0 = _time.time()
+    if deadline is not None:
+        budget_s = min(budget_s, max(1.0, deadline - t_flow0))
     out, holes, total_need2, total_holed, budget_hit = _chain_propagate(
         frames, masks, s, e, offsets, eng, MIN_VALID_W,
         budget_s=budget_s, t_start=t_flow0)
