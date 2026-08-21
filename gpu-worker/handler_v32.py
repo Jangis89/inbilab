@@ -2100,6 +2100,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
     nl = E1 - E0
     for ri, reg in enumerate(plan["regions"]):
         td = time.time()
+        _dbg({"ev": "reg_start", "reg": ri, "kind": str(reg.get("kind", ""))})
         frames_local = v31.read_crop_range(work, reg["x"], reg["y"], reg["w"], reg["h"],
                                            E0, E1, fps)
         t_dec += time.time() - td
@@ -2224,8 +2225,10 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                 ta = time.time()
                 t_chunk0 = time.time()
                 kind = str(reg.get("kind", ""))
+                _dbg({"ev": "chunk_start", "reg": ri,
+                      "c": [int(c['s']), int(c['e'])]})
                 use_flow = (not kind.startswith("manual")
-                            and os.environ.get("WM_RC4_FLOW", "1") != "0")
+                            and os.environ.get("WM_RC4_FLOW", "0") != "0")
                 if use_flow:
                     # RC4: 실화소 전파 우선 — 앞뒤 프레임의 진짜 화소로 먼저
                     # 채우고, 남는 hole만 생성모델. 정지배경 상시 오버레이는
