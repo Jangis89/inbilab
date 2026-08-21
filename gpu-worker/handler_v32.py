@@ -1738,6 +1738,61 @@ def _var_ratio_blend(frames, rects_by_key, gkeys, hh, ww):
     return s, np.clip(t_vec, 0, 255).astype(np.float32)
 
 
+def _refine_blend_local(frames, rects_by_key, gkeys, est, hh, ww, raw=None):
+    """RC4 Phase F: (s,t) 후보를 이 파트 실측으로 미세보정.
+
+    s는 내부/링 경사도비(글자 화소 제외)로 prior의 0.7~1.4배 안에서 재추정,
+    t는 '경계 평균 일치'(mean_in - s·mean_ring)의 키 중앙값으로 재계산.
+    g26 실측: 스캔 전역 (s,t)만 쓰면 잔여 베일(절반만 벗겨짐)이 남는다.
+    """
+    s0 = float(est[0])
+    mins, mrings = [], []
+    for i in list(sorted(gkeys))[:8]:
+        r = rects_by_key.get(i)
+        if r is None:
+            continue
+        x0, y0, x1, y1 = [int(v) for v in r]
+        x0 = max(0, x0); y0 = max(0, y0)
+        x1 = min(ww, x1); y1 = min(hh, y1)
+        if x1 - x0 < 30 or y1 - y0 < 20:
+            continue
+        f = frames[i].astype(np.float32)
+        inner = f[y0 + 6:y1 - 6, x0 + 6:x1 - 6]
+        if inner.size == 0:
+            continue
+        gm = None
+        if raw is not None and i < len(raw) and raw[i] is not None:
+            gm = (raw[i][y0 + 6:y1 - 6, x0 + 6:x1 - 6] > 127)
+        valid = (~gm) if gm is not None else np.ones(inner.shape[:2], bool)
+        if int(valid.sum()) < 400:
+            continue
+        b = 14
+        oy0 = max(0, y0 - b); oy1 = min(hh, y1 + b)
+        ox0 = max(0, x0 - b); ox1 = min(ww, x1 + b)
+        parts = []
+        if y0 - oy0 > 2:
+            parts.append(f[oy0:y0, ox0:ox1].reshape(-1, 3))
+        if oy1 - y1 > 2:
+            parts.append(f[y1:oy1, ox0:ox1].reshape(-1, 3))
+        if x0 - ox0 > 2:
+            parts.append(f[y0:y1, ox0:x0].reshape(-1, 3))
+        if ox1 - x1 > 2:
+            parts.append(f[y0:y1, x1:ox1].reshape(-1, 3))
+        if not parts:
+            continue
+        om = np.concatenate(parts, 0)
+        mins.append(inner.reshape(-1, 3)[valid.reshape(-1)].mean(axis=0))
+        mrings.append(om.mean(axis=0))
+    if not mins:
+        return est
+    # s는 prior(분산비 기반) 유지 — 경사도 재추정은 노이즈 편향으로 폐기.
+    # t만 파트 실측 경계 일치로 재계산 (장면 전환별 배경 밝기 차이 흡수).
+    s1 = s0
+    t1 = np.median(np.stack([mi - s1 * mr
+                             for mi, mr in zip(mins, mrings)]), axis=0)
+    return s1, np.clip(t1, 0, 255).astype(np.float32)
+
+
 def _validate_unblend(frames, rects_by_key, gkeys, est, hh, ww):
     """RC4 Phase F: (s,t) un-blend 후보의 실측 채택 게이트.
 
@@ -2153,6 +2208,9 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                     size_ok = (0.5 * cw <= gw2 <= 2.0 * cw and 0.5 * ch <= gh2 <= 2.0 * ch)
                     if size_ok and 0.2 <= float(cb["s"]) <= 0.85:
                         est = (float(cb["s"]), np.array(cb["t"], np.float32))
+                        # RC4 Phase F: 전역 힌트를 파트 실측으로 미세보정
+                        est = _refine_blend_local(frames_local, rects_by_key,
+                                                  gkeys, est, hh, ww, raw)
                         box_stats["box_scan_blend"] = box_stats.get("box_scan_blend", 0) + 1
                         # 카드 테두리는 내부보다 불투명해 un-blend 후 halo가 남는다
                         # → 테두리 링(±10px)을 AI 마스크에 추가 (un-blend된 배경 위 복원)
@@ -2178,7 +2236,8 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
                 vr = _var_ratio_blend(frames_local, rects_by_key, gkeys, hh, ww)
                 if vr is not None and _validate_unblend(
                         frames_local, rects_by_key, gkeys, vr, hh, ww):
-                    est = vr
+                    est = _refine_blend_local(frames_local, rects_by_key,
+                                              gkeys, vr, hh, ww, raw)
                     box_stats["box_var_blend"] = box_stats.get(
                         "box_var_blend", 0) + 1
                     # 카드 테두리/모서리는 내부보다 불투명 → 링(±10px)은 AI 복원
