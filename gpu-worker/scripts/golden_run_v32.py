@@ -481,6 +481,9 @@ def main():
             except Exception:
                 pass
         rec["kind"] = m["kind"]
+        srec = rec.get("scan") or {}
+        if isinstance(srec, dict) and (srec.get("error") or srec.get("note")):
+            rec["scan_err"] = str(srec.get("error") or srec.get("note"))[:300]
         recs.append(rec)
         print("[GOLDEN]", json.dumps({k: v for k, v in rec.items()
                                       if k not in ("segments", "finish", "scan")},
