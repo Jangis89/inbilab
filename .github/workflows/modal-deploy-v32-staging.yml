@@ -305,7 +305,7 @@ jobs:
           TOURN_MET_SPEC: ${{ github.event.inputs.pids }}
           TOURN_LPIPS: "1"
         run: |
-          pip install -q lpips torch --index-url https://download.pytorch.org/whl/cpu || echo "lpips 설치 실패 — 지표 생략"
+          pip install -q torch --index-url https://download.pytorch.org/whl/cpu && pip install -q lpips || echo "lpips 설치 실패 — 지표 생략"
           python -u gpu-worker/scripts/tournament_metrics_v32.py
       - name: Upload tournament metrics
         if: ${{ always() && github.event.inputs.action == 'tournmetrics' }}
