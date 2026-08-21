@@ -2393,7 +2393,8 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
 
 
 # ---------------- 단계: segment (GPU) — 로컬 마스크 + AI 복원 + 합성 + 인코딩 ----------------
-def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF, mask_export=False):
+def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF, mask_export=False,
+                residual_export=False):
     t_enter = time.time()
     pid = proj["id"]
     sw = SW()
@@ -2563,7 +2564,8 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF, mask_export=False):
             # 복원→확대 붙임이 얼룩(M5)의 주원인. 마스크 bbox만 원해상도로
             # 잘라 복원하면 비용은 비슷하고 뭉갬이 사라진다. 질감이 낮은
             # 배경(위험 낮음)은 기존 fast 경로 유지 (모든 영상 HQ 강제 금지).
-            if t2.get("scale", 1.0) < 0.9 and not str(reg.get("kind", "")).startswith("manual"):
+            if t2.get("scale", 1.0) < 0.9 and not residual_export \
+                    and not str(reg.get("kind", "")).startswith("manual"):
                 bb = None
                 for li in range(c["s"], min(c["e"] + 1, len(masks))):
                     m0 = masks[li]
@@ -2669,8 +2671,72 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF, mask_export=False):
                         _dbg({"ev": "flow", "reg": _ri,
                               "c": [int(_c['s']), int(_c['e'])], **ev})
 
+                    def _ai_export(fr2, mk2, tier2, ch2, _ri=ri, _c=c,
+                                   _reg=reg):
+                        # RC4-20 (후보 D/F): 생성모델 대신 residual 재료를
+                        # 저장하고 cv2.inpaint 자리채움만 반환. 오프라인에서
+                        # SVOR/VACE가 이 재료(crop 프레임+hole mask)만 복원해
+                        # 되붙인다 — 명세 6.3 "residual bbox+context만 제공".
+                        s3 = ch2["s"]; e3 = min(ch2["e"], len(fr2) - 1)
+                        idxs = [k3 for k3 in range(len(mk2))
+                                if mk2[k3] is not None and (mk2[k3] > 127).any()]
+                        if idxs:
+                            bb3 = None
+                            for k3 in idxs:
+                                ys3, xs3 = np.nonzero(mk2[k3] > 127)
+                                b4 = [int(xs3.min()), int(ys3.min()),
+                                      int(xs3.max()) + 1, int(ys3.max()) + 1]
+                                bb3 = b4 if bb3 is None else [
+                                    min(bb3[0], b4[0]), min(bb3[1], b4[1]),
+                                    max(bb3[2], b4[2]), max(bb3[3], b4[3])]
+                            hh4, ww4 = fr2[0].shape[:2]
+                            MG = 96
+                            x0c = max(0, bb3[0] - MG); y0c = max(0, bb3[1] - MG)
+                            x1c = min(ww4, bb3[2] + MG); y1c = min(hh4, bb3[3] + MG)
+                            import io as _io
+                            kwz = {}
+                            for j3, k3 in enumerate(range(s3, e3 + 1)):
+                                okp, bufp = cv2.imencode(
+                                    ".png", fr2[k3][y0c:y1c, x0c:x1c][:, :, ::-1])
+                                kwz[f"f{j3}"] = np.frombuffer(bufp.tobytes(),
+                                                              np.uint8)
+                                m4 = mk2[k3]
+                                mm4 = ((m4[y0c:y1c, x0c:x1c] > 127)
+                                       if m4 is not None
+                                       else np.zeros((y1c - y0c, x1c - x0c),
+                                                     bool))
+                                kwz[f"m{j3}"] = np.packbits(mm4)
+                            meta3 = json.dumps({
+                                "part": int(part), "reg": int(_ri),
+                                "cs": int(s3), "ce": int(e3), "E0": int(E0),
+                                "crop": [int(x0c), int(y0c), int(x1c), int(y1c)],
+                                "reg_xy": [int(_reg["x"]), int(_reg["y"])],
+                                "shape": [int(y1c - y0c), int(x1c - x0c)]})
+                            b5 = _io.BytesIO()
+                            np.savez_compressed(
+                                b5, meta=np.frombuffer(meta3.encode(), np.uint8),
+                                **kwz)
+                            tmp_upload(pid, f"resid_{part}_{_ri}_{int(s3)}.npz",
+                                       b5.getvalue())
+                            _dbg({"ev": "resid_export", "reg": _ri,
+                                  "c": [int(s3), int(e3)],
+                                  "crop": [int(x0c), int(y0c), int(x1c), int(y1c)],
+                                  "nf": int(e3 - s3 + 1)})
+                        out3 = []
+                        for k3 in range(s3, e3 + 1):
+                            f5 = fr2[k3].copy()
+                            m5 = mk2[k3]
+                            if m5 is not None and (m5 > 127).any():
+                                f5 = cv2.inpaint(f5, (m5 > 127).astype(np.uint8),
+                                                 5, cv2.INPAINT_TELEA)
+                            out3.append(f5)
+                        return out3
+
                     arr = rc4.restore_chunk_flow(frames_local, masks, c,
-                                                 ai_fallback=_ai_fb, tier=t2,
+                                                 ai_fallback=(_ai_export
+                                                              if residual_export
+                                                              else _ai_fb),
+                                                 tier=t2,
                                                  stats=fstats,
                                                  min_flow_cover=mfc,
                                                  budget_s=bud,
@@ -3188,7 +3254,8 @@ def handler_v32(event):
         if phase == "segment_v32":
             return segment_v32(proj, tmp, part,
                                key_step=int(inp.get("key_step") or KEY_STEP_DEF),
-                               mask_export=bool(inp.get("mask_export")))
+                               mask_export=bool(inp.get("mask_export")),
+                               residual_export=bool(inp.get("residual_export")))
         if phase == "finish_v32":
             return finish_v32(proj, tmp, t0, int(inp.get("parts") or 0), inp.get("tms"),
                               stream=bool(inp.get("stream")), wait_s=int(inp.get("wait_s") or 1500),
