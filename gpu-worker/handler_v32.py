@@ -2082,6 +2082,15 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
     # RC4: 세그먼트 전체가 공유하는 flow 예산 (영역×chunk 누적 폭주 방지 — g02 900s 교훈)
     flow_deadline = time.time() + float(os.environ.get("WM_RC4_FLOW_SEG_BUDGET",
                                                        "90"))
+    _dbg_ev = []
+
+    def _dbg(ev):
+        _dbg_ev.append({**ev, "at": round(time.time() - t_enter, 1)})
+        try:
+            tmp_upload(pid, f"rc4dbg_{part}.json",
+                       json.dumps(_dbg_ev).encode(), "application/json")
+        except Exception:
+            pass
     seg_rest = {}     # ri -> {global_i: 복원 crop}
     local_masks = {}  # ri -> 로컬 마스크 목록 (index = global_i - E0)
     local_pastes = {}  # ri -> tight paste 마스크 (출력 합성용 — AI 입력과 분리)
@@ -2097,6 +2106,9 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
         tm = time.time()
         masks, masked = _seg_masks_for_region(frames_local, reg, key_step, E0)
         t_mask += time.time() - tm
+        _dbg({"ev": "mask", "reg": ri, "kind": str(reg.get("kind", "")),
+              "dec_s": round(t_dec, 1), "mask_s": round(time.time() - tm, 1),
+              "masked": masked})
         counters["precise_keyframes"] += masked
         bs = getattr(_seg_masks_for_region, "_last_box_stats", None)
         if bs:
@@ -2205,6 +2217,9 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                                   f"t={time.time() - ta:.1f}s "
                                   f"elapsed={time.time() - t_enter:.0f}s",
                                   flush=True)
+                            _dbg({"ev": "crop_hq", "reg": ri,
+                                  "c": [int(c['s']), int(c['e'])],
+                                  "t_s": round(time.time() - ta, 1)})
             if arr is None:
                 ta = time.time()
                 t_chunk0 = time.time()
@@ -2253,6 +2268,10 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                       f"c=({c['s']},{c['e']}) t={time.time() - t_chunk0:.1f}s "
                       f"fstats={fstats if use_flow else None} "
                       f"elapsed={time.time() - t_enter:.0f}s", flush=True)
+                _dbg({"ev": "chunk", "reg": ri, "kind": kind,
+                      "c": [int(c['s']), int(c['e'])],
+                      "t_s": round(time.time() - t_chunk0, 1),
+                      "fstats": fstats if use_flow else None})
             a = max(c["s"] + E0, F0); b = min(c["e"] + E0, F1 - 1)
             for gi in range(a, b + 1):
                 rest[gi] = arr[gi - E0 - c["s"]]
