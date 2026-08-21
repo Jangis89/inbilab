@@ -2200,8 +2200,14 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                                 full[y0b:y1b, x0b:x1b] = arr_s[k2]
                                 arr.append(full)
                             counters["crop_hq"] = counters.get("crop_hq", 0) + 1
+                            print(f"[RC4CHUNK] part={part} reg={ri} crop_hq "
+                                  f"c=({c['s']},{c['e']}) "
+                                  f"t={time.time() - ta:.1f}s "
+                                  f"elapsed={time.time() - t_enter:.0f}s",
+                                  flush=True)
             if arr is None:
                 ta = time.time()
+                t_chunk0 = time.time()
                 kind = str(reg.get("kind", ""))
                 use_flow = (not kind.startswith("manual")
                             and os.environ.get("WM_RC4_FLOW", "1") != "0")
@@ -2243,6 +2249,10 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                 else:
                     arr = h29.restore_chunk(frames_local, masks, t2, c)
                 t_ai += time.time() - ta
+                print(f"[RC4CHUNK] part={part} reg={ri} kind={kind} "
+                      f"c=({c['s']},{c['e']}) t={time.time() - t_chunk0:.1f}s "
+                      f"fstats={fstats if use_flow else None} "
+                      f"elapsed={time.time() - t_enter:.0f}s", flush=True)
             a = max(c["s"] + E0, F0); b = min(c["e"] + E0, F1 - 1)
             for gi in range(a, b + 1):
                 rest[gi] = arr[gi - E0 - c["s"]]
