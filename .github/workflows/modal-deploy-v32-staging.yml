@@ -224,6 +224,7 @@ jobs:
         run: |
           pip install -q lpips torch --index-url https://download.pytorch.org/whl/cpu || echo "lpips 설치 실패 — 지표 생략"
           if [[ "${{ github.event.inputs.label }}" == *analyze* ]]; then export GOLDEN_SKIP_RUN=1; fi
+          if [[ "${{ github.event.inputs.label }}" == only:* ]]; then export GOLDEN_ONLY="${{ github.event.inputs.label }}"; export GOLDEN_ONLY="${GOLDEN_ONLY#only:}"; fi
           python -u gpu-worker/scripts/golden_run_v32.py
       - name: Upload golden artifacts
         if: ${{ always() && (github.event.inputs.action == 'golden' || github.event.inputs.action == 'goldenrun') }}
