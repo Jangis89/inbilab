@@ -1980,6 +1980,27 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
             for (x0, y0, x1, y1), gain, bias in fixes:
                 sub = fr[y0:y1, x0:x1].astype(np.float32) * gain + bias
                 fr[y0:y1, x0:x1] = np.clip(sub, 0, 255).astype(np.uint8)
+    # RC4 Phase C: effect-aware Locator — 키프레임 마스크를 부수효과(외곽선·
+    # 그림자·halo·색번짐)까지 확장. 과확장 가드: effect 면적이 core의 2.5×를
+    # 넘으면 소확장(5px)으로 폴백 (질감 배경에서 TELEA 추정 오탐 방지).
+    if (os.environ.get("WM_RC4_EFFECT", "1") != "0"
+            and not str(reg.get("kind", "")).startswith("manual")):
+        n_eff = 0
+        for i in range(n):
+            if raw[i] is None or not raw[i].any():
+                continue
+            core_px = int((raw[i] > 127).sum())
+            try:
+                eff = rc4.associated_effect_mask(frames_local[i], raw[i])
+            except Exception:
+                continue
+            eb = (eff > 40).astype(np.uint8) * 255
+            if int((eb > 0).sum()) <= 2.5 * max(1, core_px):
+                raw[i] = np.maximum(raw[i], eb)
+                n_eff += 1
+            else:
+                raw[i] = cv2.dilate(raw[i], np.ones((5, 5), np.uint8))
+        box_stats["effect_keys"] = n_eff
     _seg_masks_for_region._last_box_stats = box_stats
     _seg_masks_for_region._last_box_fixes = box_fixes
     # ±(6 + ceil((key_step-1)/2)) union — 키 간격의 절반만 넓혀 커버리지 보존 + 과도한 번짐 방지
@@ -2382,9 +2403,31 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                             "-pix_fmt", "yuv420p", outp, "-y"], stdin=subprocess.PIPE)
     i = F0
     _card_cache = {}
+    _use_preserve = os.environ.get("WM_RC4_PRESERVE", "1") != "0"
     for fr in v31.stream_frames_range(work, W, H, F0, F1, fps):
         frame = fr.copy()
         _card_skip = set()
+        # RC4 Phase C Preserver: 이번 프레임에서 '수정이 허용된 영역'의 합집합.
+        # 마지막에 이 영역 밖은 원본 화소로 강제 복귀 (카드 밖 불투명화·색
+        # 오염류 회귀를 구조적으로 차단).
+        allowed = None
+
+        def _allow_rect(y0a, y1a, x0a, x1a):
+            nonlocal allowed
+            if allowed is None:
+                allowed = np.zeros((H, W), np.uint8)
+            allowed[max(0, y0a):min(H, y1a), max(0, x0a):min(W, x1a)] = 255
+
+        def _allow_mask(y0a, x0a, m_u8):
+            nonlocal allowed
+            if allowed is None:
+                allowed = np.zeros((H, W), np.uint8)
+            hh2, ww2 = m_u8.shape
+            y1a = min(H, y0a + hh2); x1a = min(W, x0a + ww2)
+            if y1a <= y0a or x1a <= x0a:
+                return
+            allowed[y0a:y1a, x0a:x1a] = np.maximum(
+                allowed[y0a:y1a, x0a:x1a], m_u8[:y1a - y0a, :x1a - x0a])
         # RC3: 전역 카드 un-blend — 존재 구간의 모든 출력 프레임에 물리 복원 적용
         # (AI paste 이전. AI crop은 세그에서 같은 un-blend가 선적용된 문맥으로 계산됨)
         for ri, cfx in card_fix_by_region.items():
@@ -2404,8 +2447,10 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                     (mt * cfx["alpha"])[..., None]
                     * np.array(cfx["C"], np.float32)[None, None, :],
                     np.maximum(1.0 - (mt * cfx["alpha"])[..., None], 0.05),
-                    inner_b, outer_b)
-            aC_c, den_c, inner_b, outer_b = _card_cache[ri]
+                    inner_b, outer_b,
+                    cv2.dilate(((mt * cfx["alpha"]) > 0.01).astype(np.uint8)
+                               * 255, np.ones((9, 9), np.uint8)))
+            aC_c, den_c, inner_b, outer_b, am_u8 = _card_cache[ri]
             sub = frame[reg["y"]:reg["y"] + reg["h"],
                         reg["x"]:reg["x"] + reg["w"]].astype(np.float32)
             unb = np.clip((sub - aC_c) / den_c, 0, 255)
@@ -2425,6 +2470,8 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
             if ok_unb:
                 frame[reg["y"]:reg["y"] + reg["h"],
                       reg["x"]:reg["x"] + reg["w"]] = unb.astype(np.uint8)
+                if _use_preserve:
+                    _allow_mask(reg["y"], reg["x"], am_u8)
         # 반투명 박스 un-blend v2 (AI 결과 덮기 전에 배경 역블렌딩)
         for ri, fixes in box_fix_by_region.items():
             fl = fixes.get(i - E0)
@@ -2464,6 +2511,8 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                     ).astype(np.uint8)
                 else:
                     frame[gy0:gy1, gx0:gx1] = fixed
+                if _use_preserve:
+                    _allow_rect(gy0, gy1, gx0, gx1)
         for ri, rest in seg_rest.items():
             if i not in rest: continue
             if ri in _card_skip: continue   # 카드 부재 판정 프레임은 paste도 생략
@@ -2485,6 +2534,13 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                     rr = rr + np.clip(dcol, -15, 15)[None, None, :]
             frame[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]] = \
                 np.clip(sub * (1 - a) + rr * a, 0, 255).astype(np.uint8)
+            if _use_preserve:
+                _allow_mask(reg["y"], reg["x"],
+                            (a[..., 0] > 0.003).astype(np.uint8) * 255)
+        # RC4 Phase C Preserver: 허용 영역 밖은 원본 강제 복귀
+        if _use_preserve and allowed is not None:
+            frame = rc4.preserve_outside(fr, frame, allowed, soft=2.0)
+            counters["preserve_frames"] = counters.get("preserve_frames", 0) + 1
         enc.stdin.write(frame.tobytes())
         i += 1
     enc.stdin.close(); enc.wait()
