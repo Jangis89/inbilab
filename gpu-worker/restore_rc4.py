@@ -13,6 +13,15 @@ handler_v32.segment_v32 에서 chunk 단위로 호출된다.
 import numpy as np
 import cv2
 
+# OpenCV 내부 스레드풀 비활성 — DIS가 생성한 TBB/OpenMP 풀이 같은 프로세스의
+# torch(OpenMP)·fork 풀과 충돌해 h29 생성모델 호출이 행에 빠지는 문제 완화
+# (g02 900s 행 실측: probe 직후 bypass_ai_start에서 무응답).
+cv2.setNumThreads(0)
+try:
+    cv2.ocl.setUseOpenCL(False)
+except Exception:
+    pass
+
 # ---------------- 파라미터 (명세 E) ----------------
 REF_OFFSETS = (1, 2, 3, 5, 8, 12, 20, 40)   # 참조 프레임 거리 (양방향)
 FB_MAX_ERR = 5.0                   # fwd-bwd 왕복 오차 상한 (px) — 이보다 크면 무효
