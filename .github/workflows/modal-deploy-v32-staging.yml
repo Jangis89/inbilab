@@ -314,3 +314,12 @@ jobs:
           name: tourn-metrics-${{ github.run_id }}
           path: TOURNAMENT_METRICS.csv
           if-no-files-found: ignore
+      - name: Tournament hybrid D/F
+        if: ${{ github.event.inputs.action == 'hybrid' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          HYBRID_SPEC: ${{ github.event.inputs.pids }}
+        run: python -u gpu-worker/scripts/tournament_hybrid_v32.py
