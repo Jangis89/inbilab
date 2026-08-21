@@ -45,22 +45,47 @@ def hdr(extra=None):
     return h
 
 
+def split_bucket(p):
+    """'bucket:path' → (bucket, path); 접두사 없으면 기본 BUCKET."""
+    if ":" in p.split("/", 1)[0]:
+        b, rest = p.split(":", 1)
+        return b, rest
+    return BUCKET, p
+
+
 def copy_obj(src, dst):
+    sb, sp = split_bucket(src)
+    db, dp = split_bucket(dst)
+    body = {"bucketId": sb, "sourceKey": sp, "destinationKey": dp}
+    if db != sb:
+        body["destinationBucket"] = db
     r = requests.post(f"{SB_URL}/storage/v1/object/copy",
                       headers=hdr({"Content-Type": "application/json"}),
-                      data=json.dumps({"bucketId": BUCKET, "sourceKey": src,
-                                       "destinationKey": dst}), timeout=120)
+                      data=json.dumps(body), timeout=120)
     if r.status_code == 400 and "already exists" in r.text.lower():
         return "exists"
     if not r.ok:
-        return f"HTTP {r.status_code}: {r.text[:200]}"
+        # 교차 버킷 미지원 등 — 다운로드→업로드 폴백 (service role)
+        with requests.get(f"{SB_URL}/storage/v1/object/{sb}/{sp}",
+                          headers=hdr(), stream=True, timeout=1800) as g:
+            if not g.ok:
+                return f"HTTP {r.status_code}/{g.status_code}: {r.text[:120]}"
+            data = g.content
+        u = requests.post(f"{SB_URL}/storage/v1/object/{db}/{dp}",
+                          headers=hdr({"Content-Type": "video/mp4",
+                                       "x-upsert": "true"}),
+                          data=data, timeout=1800)
+        if not u.ok:
+            return f"fallback HTTP {u.status_code}: {u.text[:120]}"
+        return "copied-fallback"
     return "copied"
 
 
 def hash_obj(path):
+    b, p = split_bucket(path)
     h = hashlib.sha256()
     n = 0
-    with requests.get(f"{SB_URL}/storage/v1/object/{BUCKET}/{path}",
+    with requests.get(f"{SB_URL}/storage/v1/object/{b}/{p}",
                       headers=hdr(), stream=True, timeout=600) as r:
         if not r.ok:
             return None, f"HTTP {r.status_code}"
