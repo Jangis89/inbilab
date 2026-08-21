@@ -256,6 +256,30 @@ def psnr_split(gt_fp, out_fp, regions, g=None, crop_dir=None, every=5):
     return _p(se_in, n_in), _p(se_out, n_out)
 
 
+def _dump_rc4dbg(g, pid, keep=None):
+    """스토리지 rc4dbg 채널 회수. keep=None이면 전체, 아니면 해당 ev만."""
+    try:
+        for pnum in range(0, 12):
+            rr = requests.get(
+                f"{SB_URL}/storage/v1/object/videos-clips/"
+                f"wmtmp-v32/{pid}/rc4dbg_{pnum}.json",
+                headers=sbh(), timeout=20)
+            if not rr.ok:
+                continue
+            txt = rr.content.decode()
+            if keep is not None:
+                try:
+                    ev = [e for e in json.loads(txt) if e.get("ev") in keep]
+                    txt = json.dumps(ev, ensure_ascii=False)
+                except Exception:
+                    txt = txt[:1500]
+            for ci in range(0, min(len(txt), 12000), 1500):
+                print(f"[RC4DBG] {g} part={pnum} seg{ci // 1500} "
+                      + txt[ci:ci + 1500])
+    except Exception:
+        pass
+
+
 def run_one(pid, g, has_gt, tmp, skip_run=False, crop_dir=None, kind=None):
     scan_fn = modal.Function.from_name(APP, "scan_v32_cpu")
     seg_fn = modal.Function.from_name(APP, "segment_v32_gpu")
@@ -466,20 +490,11 @@ def main():
                           crop_dir=crop_dir, kind=m.get("kind"))
         except Exception as e:
             rec = {"g": m["g"], "result": "ERROR", "error": f"{type(e).__name__}: {e}"[:300]}
-            # RC4 디버그: 타임아웃 세그가 남긴 rc4dbg_*.json 회수
-            try:
-                for pnum in range(0, 12):
-                    rr = requests.get(
-                        f"{SB_URL}/storage/v1/object/videos-clips/"
-                        f"wmtmp-v32/{pid}/rc4dbg_{pnum}.json",
-                        headers=sbh(), timeout=20)
-                    if rr.ok:
-                        _dtxt = rr.content.decode()
-                        for _ci in range(0, min(len(_dtxt), 12000), 1500):
-                            print(f"[RC4DBG] {m['g']} part={pnum} "
-                                  f"seg{_ci // 1500} " + _dtxt[_ci:_ci + 1500])
-            except Exception:
-                pass
+            _dump_rc4dbg(m["g"], pid, keep=None)
+        if rec.get("result") not in ("OK", "ERROR"):
+            # 품질/스캔 실패 진단: box 판정·마스크 통계만 압축 회수
+            _dump_rc4dbg(m["g"], pid,
+                         keep=("mask", "boxstat", "ai_exc", "stall"))
         rec["kind"] = m["kind"]
         srec = rec.get("scan") or {}
         if isinstance(srec, dict) and (srec.get("error") or srec.get("note")):
