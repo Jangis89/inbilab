@@ -2393,7 +2393,7 @@ def _seg_masks_for_region(frames_local, reg, key_step, e0_global):
 
 
 # ---------------- 단계: segment (GPU) — 로컬 마스크 + AI 복원 + 합성 + 인코딩 ----------------
-def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
+def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF, mask_export=False):
     t_enter = time.time()
     pid = proj["id"]
     sw = SW()
@@ -2723,6 +2723,9 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
     i = F0
     _card_cache = {}
     _use_preserve = os.environ.get("WM_RC4_PRESERVE", "1") != "0"
+    # G3 토너먼트: '수정 허용 영역'(allowed) = 파이프라인이 실제로 손댄 effect
+    # mask를 프레임 단위로 동결 내보내기 (플래그 없으면 완전 무동작)
+    _mx_packs = [] if mask_export else None
     for fr in v31.stream_frames_range(work, W, H, F0, F1, fps):
         frame = fr.copy()
         _card_skip = set()
@@ -2863,6 +2866,10 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
         if _use_preserve and allowed is not None:
             frame = rc4.preserve_outside(fr, frame, allowed, soft=2.0)
             counters["preserve_frames"] = counters.get("preserve_frames", 0) + 1
+        if _mx_packs is not None:
+            _mx_packs.append(np.packbits(
+                (allowed > 0) if allowed is not None
+                else np.zeros((H, W), bool)))
         enc.stdin.write(frame.tobytes())
         i += 1
     enc.stdin.close(); enc.wait()
@@ -2873,6 +2880,17 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
         tmp_upload(pid, f"seg_{part}.mp4", f.read(), "video/mp4")
     os.remove(outp)
     sw.mark("up")
+    if _mx_packs is not None:
+        try:
+            import io as _io
+            _b = _io.BytesIO()
+            np.savez_compressed(
+                _b, meta=np.array([F0, F1, H, W], np.int64),
+                **{f"m{k}": p for k, p in enumerate(_mx_packs)})
+            tmp_upload(pid, f"roimask_{part}.npz", _b.getvalue())
+            _dbg({"ev": "mask_export", "frames": len(_mx_packs)})
+        except Exception:
+            traceback.print_exc()
     _seg_done.set()
     try:
         h29.set_proj(pid, "wm_running", f"[v32] 구간 {part + 1}/{K} 복원·합성 완료")
@@ -3169,7 +3187,8 @@ def handler_v32(event):
                             seg_k=int(inp.get("seg_k") or 10))
         if phase == "segment_v32":
             return segment_v32(proj, tmp, part,
-                               key_step=int(inp.get("key_step") or KEY_STEP_DEF))
+                               key_step=int(inp.get("key_step") or KEY_STEP_DEF),
+                               mask_export=bool(inp.get("mask_export")))
         if phase == "finish_v32":
             return finish_v32(proj, tmp, t0, int(inp.get("parts") or 0), inp.get("tms"),
                               stream=bool(inp.get("stream")), wait_s=int(inp.get("wait_s") or 1500),
