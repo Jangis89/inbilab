@@ -303,7 +303,10 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
           TOURN_MET_SPEC: ${{ github.event.inputs.pids }}
-        run: python -u gpu-worker/scripts/tournament_metrics_v32.py
+          TOURN_LPIPS: "1"
+        run: |
+          pip install -q lpips torch --index-url https://download.pytorch.org/whl/cpu || echo "lpips 설치 실패 — 지표 생략"
+          python -u gpu-worker/scripts/tournament_metrics_v32.py
       - name: Upload tournament metrics
         if: ${{ always() && github.event.inputs.action == 'tournmetrics' }}
         uses: actions/upload-artifact@v4
