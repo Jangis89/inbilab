@@ -2084,13 +2084,48 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                                                        "90"))
     _dbg_ev = []
 
+    def _rss_mb():
+        try:
+            with open("/proc/self/status") as f2:
+                for ln in f2:
+                    if ln.startswith("VmRSS"):
+                        return int(ln.split()[1]) // 1024
+        except Exception:
+            pass
+        return -1
+
     def _dbg(ev):
-        _dbg_ev.append({**ev, "at": round(time.time() - t_enter, 1)})
+        _dbg_ev.append({**ev, "at": round(time.time() - t_enter, 1),
+                        "rss": _rss_mb()})
         try:
             tmp_upload(pid, f"rc4dbg_{part}.json",
                        json.dumps(_dbg_ev).encode(), "application/json")
         except Exception:
             pass
+
+    # RC4-6: 행 원점 규명 — 감시 스레드가 240s/480s 시점에 전 스레드 스택을
+    # dbg 채널로 덤프 (Modal 로그는 러너에 안 옴 → 저장소 경유).
+    # 덤프가 안 나타나면 = GIL을 쥔 네이티브 호출에서의 행 (그 자체가 진단정보).
+    import threading as _th
+    import sys as _sys
+    _seg_done = _th.Event()
+
+    def _stall_dump(tag):
+        try:
+            stk = {}
+            for _tid, _frm in _sys._current_frames().items():
+                stk[str(_tid)] = [ln.strip() for ln in
+                                  traceback.format_stack(_frm)[-8:]]
+            _dbg({"ev": "stall", "tag": tag, "stacks": stk})
+        except Exception:
+            pass
+
+    def _watchdog():
+        for _d, _tag in ((240, "t240"), (240, "t480")):
+            if _seg_done.wait(_d):
+                return
+            _stall_dump(_tag)
+    _th.Thread(target=_watchdog, daemon=True).start()
     seg_rest = {}     # ri -> {global_i: 복원 crop}
     local_masks = {}  # ri -> 로컬 마스크 목록 (index = global_i - E0)
     local_pastes = {}  # ri -> tight paste 마스크 (출력 합성용 — AI 입력과 분리)
@@ -2240,8 +2275,15 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
                     mfc = 0.12 if is_trans else 0.30
                     bud = 150.0 if is_trans else 75.0
 
-                    def _ai_fb(fr2, mk2, tier2, ch2, _t2=t2):
-                        return h29.restore_chunk(fr2, mk2, _t2, ch2)
+                    def _ai_fb(fr2, mk2, tier2, ch2, _t2=t2, _ri=ri, _c=c):
+                        _dbg({"ev": "ai_enter", "reg": _ri,
+                              "c": [int(_c['s']), int(_c['e'])],
+                              "shape": list(fr2[0].shape),
+                              "nf": len(fr2),
+                              "nm": sum(1 for m3 in mk2 if m3 is not None)})
+                        r2 = h29.restore_chunk(fr2, mk2, _t2, ch2)
+                        _dbg({"ev": "ai_exit", "reg": _ri})
+                        return r2
 
                     def _prog(ev, _ri=ri, _c=c):
                         _dbg({"ev": "flow", "reg": _ri,
@@ -2413,6 +2455,7 @@ def segment_v32(proj, tmp, part, key_step=KEY_STEP_DEF):
         tmp_upload(pid, f"seg_{part}.mp4", f.read(), "video/mp4")
     os.remove(outp)
     sw.mark("up")
+    _seg_done.set()
     try:
         h29.set_proj(pid, "wm_running", f"[v32] 구간 {part + 1}/{K} 복원·합성 완료")
     except Exception:
