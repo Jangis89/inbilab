@@ -1,0 +1,47 @@
+# 인비랩 SVOR 스테이징 — 별도 Modal 앱 배포·스모크·ROI 벤치 (workflow_dispatch 전용)
+# 운영 배포·V31/V32 workflow와 완전 분리. 운영 앱은 건드리지 않는다. (명세 G6.1)
+name: SVOR staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "deploy | download | smoke | smoke_h100 | smoke_h200 | roi"
+        required: true
+        default: "deploy"
+      ref:
+        description: "체크아웃할 브랜치/커밋"
+        required: true
+        default: "perf/wm-v32-rc4-commercial-engine"
+      spec:
+        description: "roi 액션용 SVOR_SPEC JSON"
+        required: false
+        default: "[]"
+
+jobs:
+  svor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install -q modal requests
+      - name: Deploy SVOR staging app
+        if: ${{ github.event.inputs.action == 'deploy' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal deploy gpu-worker/modal_app_svor.py
+      - name: Run op
+        if: ${{ github.event.inputs.action != 'deploy' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SVOR_OP: ${{ github.event.inputs.action }}
+          SVOR_SPEC: ${{ github.event.inputs.spec }}
+        run: python -u gpu-worker/scripts/svor_run.py
