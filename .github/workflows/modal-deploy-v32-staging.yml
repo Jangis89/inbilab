@@ -264,3 +264,20 @@ jobs:
           name: benchmark-v32-${{ github.run_id }}
           path: BENCHMARK_V32.json
           if-no-files-found: ignore
+      # ---- SVOR staging (명세 G6 — 별도 앱, 이 워크플로는 디스패치 통로만) ----
+      - name: SVOR deploy
+        if: ${{ github.event.inputs.action == 'svordeploy' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal deploy gpu-worker/modal_app_svor.py
+      - name: SVOR op
+        if: ${{ startsWith(github.event.inputs.action, 'svor') && github.event.inputs.action != 'svordeploy' }}
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          SVOR_SPEC: ${{ github.event.inputs.pids }}
+        run: |
+          SVOR_OP="${{ github.event.inputs.action }}"
+          export SVOR_OP="${SVOR_OP#svor}"
+          python -u gpu-worker/scripts/svor_run.py
