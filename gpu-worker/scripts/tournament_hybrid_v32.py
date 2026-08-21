@@ -185,6 +185,7 @@ def main():
                   and int(n.split("_")[1]) in need]
         print(f"[HYB] resid packs={len(resids)}", flush=True)
         packs = []   # 조각 메타 + hole packbits + gen 파일 경로 (프레임 미보유)
+        jobs = []    # (rec, cand, ev) — v3 병렬 실행용
         for nm in sorted(resids):
             rp = os.path.join(tmpd, nm)
             if not dl("videos-clips", f"wmtmp-v32/{pid}/{nm}", rp):
@@ -220,20 +221,42 @@ def main():
                       "out": out_key, "lora": LORA[cd], "frames": n,
                       "dilation": 2, "steps": 20,
                       "max_area": min(720 * 1280, hh * ww)}
-                try:
-                    res = svor_fn.remote(ev)
-                except Exception as e:  # noqa: BLE001
-                    res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-                print(f"[HYB] pack={nm} cand={cd} -> "
-                      f"{json.dumps({x: res.get(x) for x in ('ok', 'run_s', 'vram_gb', 'error')})}",
-                      flush=True)
-                if not res.get("ok"):
-                    fail += 1
-                    continue
-                op = os.path.join(tmpd, nm + f".out_{cd}.mp4")
-                if dl("videos-clips", out_key, op):
-                    rec["gen"][cd] = op
+                jobs.append((rec, cd, ev))
             packs.append(rec)
+        # v3: 생성 호출 병렬 window (기본 6) — 품질·GPU초 동일, 벽시계만 단축.
+        # uat02 실측(조각 54개, 조각당 최대 824s)이 순차로는 러너 5h 한도를
+        # 넘김이 확실해 병렬화. 대표 협의(2026-08-22): 한도는 분할·병렬로
+        # 해결하고 폭주 방지 장치는 유지.
+        WINDOW = int(os.environ.get("HYB_PAR", "6"))
+        inflight = []
+        ji = 0
+        while ji < len(jobs) or inflight:
+            while ji < len(jobs) and len(inflight) < WINDOW:
+                rec2, cd2, ev2 = jobs[ji]
+                try:
+                    inflight.append((rec2, cd2, svor_fn.spawn(ev2)))
+                except Exception as e:  # noqa: BLE001
+                    print(f"[HYB] pack={rec2['pack']} cand={cd2} spawn 실패 "
+                          f"{type(e).__name__}: {e}", flush=True)
+                    fail += 1
+                ji += 1
+            if not inflight:
+                break
+            rec2, cd2, call = inflight.pop(0)
+            try:
+                res = call.get(timeout=3600)
+            except Exception as e:  # noqa: BLE001
+                res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            print(f"[HYB] pack={rec2['pack']} cand={cd2} -> "
+                  f"{json.dumps({x: res.get(x) for x in ('ok', 'run_s', 'vram_gb', 'error')})}",
+                  flush=True)
+            if not res.get("ok"):
+                fail += 1
+                continue
+            out_key2 = f"wmtmp-v32/{pid}/{rec2['pack']}.out_{cd2}.mp4"
+            op2 = os.path.join(tmpd, rec2["pack"] + f".out_{cd2}.mp4")
+            if dl("videos-clips", out_key2, op2):
+                rec2["gen"][cd2] = op2
         # ---- 스트리밍 합성: 프레임 단위 (피크 메모리 수백 MB) ----
         by_part = {}
         for rec in packs:
