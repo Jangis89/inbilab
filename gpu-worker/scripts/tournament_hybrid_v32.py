@@ -43,23 +43,42 @@ def hdr(extra=None):
 
 
 def dl(bucket, path, dst):
-    with requests.get(f"{SB_URL}/storage/v1/object/{bucket}/{path}",
-                      headers=hdr(), stream=True, timeout=1800) as r:
-        if not r.ok:
-            return None
-        with open(dst, "wb") as f:
-            for c in r.iter_content(1 << 20):
-                f.write(c)
-    return os.path.getsize(dst)
+    for att in range(3):
+        try:
+            with requests.get(f"{SB_URL}/storage/v1/object/{bucket}/{path}",
+                              headers=hdr(), stream=True, timeout=1800) as r:
+                if r.status_code in (400, 404):
+                    return None
+                r.raise_for_status()
+                with open(dst, "wb") as f:
+                    for c in r.iter_content(1 << 20):
+                        f.write(c)
+            return os.path.getsize(dst)
+        except Exception as e:  # noqa: BLE001 — 일시 오류(520 등) 재시도
+            if att == 2:
+                print(f"[HYB] dl 실패 {path}: {type(e).__name__}: {e}",
+                      flush=True)
+                return None
+            import time as _t
+            _t.sleep(5 * (att + 1))
 
 
 def up(src, path, ctype="video/mp4"):
-    with open(src, "rb") as f:
-        r = requests.post(f"{SB_URL}/storage/v1/object/videos-clips/{path}",
-                          headers=hdr({"Content-Type": ctype,
-                                       "x-upsert": "true"}), data=f.read(),
-                          timeout=1800)
-    r.raise_for_status()
+    for att in range(3):
+        try:
+            with open(src, "rb") as f:
+                r = requests.post(
+                    f"{SB_URL}/storage/v1/object/videos-clips/{path}",
+                    headers=hdr({"Content-Type": ctype, "x-upsert": "true"}),
+                    data=f.read(), timeout=1800)
+            r.raise_for_status()
+            return
+        except Exception as e:  # noqa: BLE001 — 일시 오류(520 등) 재시도
+            if att == 2:
+                raise
+            print(f"[HYB] up 재시도 {path}: {type(e).__name__}", flush=True)
+            import time as _t
+            _t.sleep(5 * (att + 1))
 
 
 def ls_prefix(prefix):
