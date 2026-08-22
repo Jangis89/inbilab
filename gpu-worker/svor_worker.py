@@ -281,6 +281,8 @@ def handle(ev: dict) -> dict:
                 "out": ev["out"], "bytes": n, "fps": fps, **met}
     if op == "flowbench":
         return _flowbench(ev, gpu)
+    if op == "prove":
+        return _prove(ev, gpu)
     return {"ok": False, "error": f"unknown op {op}"}
 
 
@@ -451,3 +453,100 @@ def _flowbench(ev, gpu):
             res[eng] = {"error": f"{type(e).__name__}: {e}"}
     return {"ok": True, "op": "flowbench", "gpu": gpu, "roi": ev.get("roi"),
             "frames": len(frames), "size": [H, W], "results": res}
+
+
+def _prove(ev, gpu):
+    """P7: 공식 PROVE(Apache-2.0) RC-S/RC-T 평가기.
+
+    ROI 팩(bench-assets/tournament/{roi}/)의 mask.mp4와 후보 영상들을 받아
+    프레임별 RC-S(공간 제거 자연스러움)·인접쌍 RC-T(시간축 일관성)를 계산한다.
+    두 지표 모두 정답 영상 불필요(reference-free)이고 낮을수록 좋다.
+    구현은 xiaomi-research/prove 고정 커밋 7ca299a를 그대로 호출한다.
+    """
+    import sys
+    if "/app/prove" not in sys.path:
+        sys.path.insert(0, "/app/prove")
+    from utils.metrics import calculate_rc_s_score, calculate_rc_t_score
+    from utils.predictors import DinoPredictor
+    from transformers import AutoImageProcessor, AutoModel
+
+    roi = ev.get("roi")
+    if not roi:
+        return {"ok": False, "error": "roi 필요"}
+    cands = ev.get("cands") or ["cand_A"]
+    nmax = int(ev.get("frames", 81))
+    stride_s = max(1, int(ev.get("stride_s", 1)))
+    stride_t = max(1, int(ev.get("stride_t", 1)))
+    src = ev.get("src", "bench-assets/tournament")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    ck = "_prove_predictor"
+    if ck not in _CACHE:
+        t0 = time.time()
+        dpath = "/models/dinov2-giant"
+        proc = AutoImageProcessor.from_pretrained(dpath)
+        mdl = AutoModel.from_pretrained(dpath).to(device).eval()
+        _CACHE[ck] = (DinoPredictor(mdl, proc, device=device),
+                      round(time.time() - t0, 1))
+    pred, load_s = _CACHE[ck]
+
+    mp = "/tmp/prove_mask.mp4"
+    try:
+        _download(f"{src}/{roi}/mask.mp4", mp)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"mask 없음: {type(e).__name__}"}
+    mrgb, _fps = _read_video(mp, nmax)
+    masks = [cv2.cvtColor(m, cv2.COLOR_RGB2GRAY) for m in mrgb]
+    if not masks:
+        return {"ok": False, "error": "mask 프레임 0"}
+
+    results = {}
+    for cd in cands:
+        vp = f"/tmp/prove_{cd}.mp4"
+        try:
+            _download(f"{src}/{roi}/{cd}.mp4", vp)
+        except Exception as e:  # noqa: BLE001
+            results[cd] = {"error": f"영상 없음: {type(e).__name__}"}
+            continue
+        frames, _f2 = _read_video(vp, nmax)
+        n = min(len(frames), len(masks))
+        if n < 2:
+            results[cd] = {"error": f"프레임 부족 {n}"}
+            continue
+        t0 = time.time()
+        ss, ts, skip_s, skip_t = [], [], 0, 0
+        for i in range(0, n, stride_s):
+            v = calculate_rc_s_score(frames[i], masks[i], pred)
+            if v is None:
+                skip_s += 1
+            else:
+                ss.append(float(v))
+        for i in range(0, n - 1, stride_t):
+            v = calculate_rc_t_score(image_t=frames[i], image_t1=frames[i + 1],
+                                     mask_t=masks[i], mask_t1=masks[i + 1],
+                                     predictor=pred)
+            if v is None:
+                skip_t += 1
+            else:
+                ts.append(float(v))
+        results[cd] = {
+            "frames": n,
+            "rc_s": round(float(np.mean(ss)), 5) if ss else None,
+            "rc_s_p95": round(float(np.percentile(ss, 95)), 5) if ss else None,
+            "rc_t": round(float(np.mean(ts)), 5) if ts else None,
+            "rc_t_p95": round(float(np.percentile(ts, 95)), 5) if ts else None,
+            "n_s": len(ss), "n_t": len(ts),
+            "skipped_s": skip_s, "skipped_t": skip_t,
+            "eval_s": round(time.time() - t0, 1),
+        }
+        print(f"[PROVE] roi={roi} cand={cd} "
+              f"rc_s={results[cd]['rc_s']} rc_t={results[cd]['rc_t']} "
+              f"({results[cd]['eval_s']}s)", flush=True)
+        os.remove(vp)
+        gc.collect()
+
+    return {"ok": True, "op": "prove", "gpu": gpu, "roi": roi,
+            "dino_load_s": load_s, "stride_s": stride_s,
+            "stride_t": stride_t, "frames_cap": nmax,
+            "note": "RC-S/RC-T 모두 낮을수록 좋음 (reference-free)",
+            "results": results}
