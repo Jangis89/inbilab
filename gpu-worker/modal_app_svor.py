@@ -42,6 +42,12 @@ gpu_image = (
         "cd /app/searaft && "
         "git checkout 9137517ba24e628442aec097d3afe71d03503b75",
     )
+        .pip_install("scikit-image")
+    .run_commands(
+        # P7: 공식 PROVE (Apache-2.0) 고정 커밋 + DINOv2-giant (Apache-2.0)
+        "git clone https://github.com/xiaomi-research/prove /app/prove && cd /app/prove && git checkout 7ca299a7a5e12f0fb8285fb58ae744f691607b35",
+        "python -c \"from huggingface_hub import snapshot_download; snapshot_download('facebook/dinov2-giant', local_dir='/models/dinov2-giant')\"",
+    )
     .env({"PYTHONUNBUFFERED": "1", "HF_HUB_ENABLE_HF_TRANSFER": "0",
           "TORCH_HOME": "/vol/torchhub"})
 )
