@@ -455,13 +455,50 @@ def _flowbench(ev, gpu):
             "frames": len(frames), "size": [H, W], "results": res}
 
 
+def _rc_t_tiles(mask_u8):
+    """가로로 긴 자막 띠를 정사각에 가까운 타일로 분할한다.
+
+    공식 RC-T는 mask의 bounding square(변=max(w,h))를 잘라 특징맵으로
+    내린 뒤 sliding window마다 교집합 화소가 min_points(5) 이상일 때만
+    유효창으로 센다. 자막처럼 600x60짜리 가는 띠는 600x600 정사각 안에서
+    높이 10%만 차지해 특징맵에서 1~2셀로 줄어들고, 모든 창이 기준 미달이 되어
+    NaN이 나온다(g26 실측: 79쌍 전부 NaN).
+    공식 계산식은 손대지 않고, 논문이 RC-S에서 이미 쓰는 target(연결요소)
+    단위 평가를 RC-T에도 적용해 띠를 가로로 쪼갠다. 각 타일은 폭 약 3*높이라
+    정사각 crop 안에서 마스크가 1/3을 차지해 유효창이 확보된다.
+    """
+    bin_m = (mask_u8 > 127).astype(np.uint8)
+    n, _lab, stats, _cent = cv2.connectedComponentsWithStats(bin_m, 8)
+    tiles = []
+    for k in range(1, n):
+        x, y, w, h, area = (int(stats[k, 0]), int(stats[k, 1]),
+                            int(stats[k, 2]), int(stats[k, 3]),
+                            int(stats[k, 4]))
+        if area < 64 or w < 8 or h < 8:
+            continue
+        step = max(24, 3 * h)
+        if w <= int(step * 1.5):
+            tiles.append((x, y, x + w, y + h))
+        else:
+            xs = x
+            while xs < x + w:
+                xe = min(x + w, xs + step)
+                if xe - xs >= max(16, h):
+                    tiles.append((xs, y, xe, y + h))
+                elif tiles:
+                    tiles[-1] = (tiles[-1][0], tiles[-1][1], xe, tiles[-1][3])
+                xs = xe
+    return tiles
+
+
 def _prove(ev, gpu):
     """P7: 공식 PROVE(Apache-2.0) RC-S/RC-T 평가기.
 
     ROI 팩(bench-assets/tournament/{roi}/)의 mask.mp4와 후보 영상들을 받아
     프레임별 RC-S(공간 제거 자연스러움)·인접쌍 RC-T(시간축 일관성)를 계산한다.
     두 지표 모두 정답 영상 불필요(reference-free)이고 낮을수록 좋다.
-    구현은 xiaomi-research/prove 고정 커밋 7ca299a를 그대로 호출한다.
+    계산식은 xiaomi-research/prove 고정 커밋 7ca299a를 그대로 호출하고,
+    RC-T만 타일 단위로 적용한다(_rc_t_tiles 주석 참조).
     """
     import sys
     if "/app/prove" not in sys.path:
@@ -477,6 +514,7 @@ def _prove(ev, gpu):
     nmax = int(ev.get("frames", 81))
     stride_s = max(1, int(ev.get("stride_s", 1)))
     stride_t = max(1, int(ev.get("stride_t", 1)))
+    tile_rc_t = bool(ev.get("tile_rc_t", True))
     src = ev.get("src", "bench-assets/tournament")
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -500,6 +538,14 @@ def _prove(ev, gpu):
     if not masks:
         return {"ok": False, "error": "mask 프레임 0"}
 
+    pair_tiles = {}
+    if tile_rc_t:
+        for i in range(0, len(masks) - 1, stride_t):
+            uni = cv2.bitwise_or((masks[i] > 127).astype(np.uint8) * 255,
+                                 (masks[i + 1] > 127).astype(np.uint8) * 255)
+            pair_tiles[i] = _rc_t_tiles(uni)
+    ntile = int(np.mean([len(v) for v in pair_tiles.values()])) if pair_tiles else 0
+
     results = {}
     for cd in cands:
         vp = f"/tmp/prove_{cd}.mp4"
@@ -514,21 +560,45 @@ def _prove(ev, gpu):
             results[cd] = {"error": f"프레임 부족 {n}"}
             continue
         t0 = time.time()
-        ss, ts, skip_s, skip_t = [], [], 0, 0
+        ss, ts, skip_s, skip_t, nan_t = [], [], 0, 0, 0
         for i in range(0, n, stride_s):
             v = calculate_rc_s_score(frames[i], masks[i], pred)
-            if v is None:
+            if v is None or not np.isfinite(v):
                 skip_s += 1
             else:
                 ss.append(float(v))
         for i in range(0, n - 1, stride_t):
-            v = calculate_rc_t_score(image_t=frames[i], image_t1=frames[i + 1],
-                                     mask_t=masks[i], mask_t1=masks[i + 1],
-                                     predictor=pred)
-            if v is None:
-                skip_t += 1
+            if tile_rc_t:
+                vals = []
+                for (x0, y0, x1, y1) in pair_tiles.get(i, []):
+                    mt = np.zeros_like(masks[i])
+                    mt1 = np.zeros_like(masks[i])
+                    mt[y0:y1, x0:x1] = masks[i][y0:y1, x0:x1]
+                    mt1[y0:y1, x0:x1] = masks[i + 1][y0:y1, x0:x1]
+                    if mt.max() < 128 or mt1.max() < 128:
+                        continue
+                    v = calculate_rc_t_score(image_t=frames[i],
+                                             image_t1=frames[i + 1],
+                                             mask_t=mt, mask_t1=mt1,
+                                             predictor=pred)
+                    if v is not None and np.isfinite(v):
+                        vals.append(float(v))
+                    else:
+                        nan_t += 1
+                if vals:
+                    ts.append(float(np.mean(vals)))
+                else:
+                    skip_t += 1
             else:
-                ts.append(float(v))
+                v = calculate_rc_t_score(image_t=frames[i],
+                                         image_t1=frames[i + 1],
+                                         mask_t=masks[i], mask_t1=masks[i + 1],
+                                         predictor=pred)
+                if v is None or not np.isfinite(v):
+                    skip_t += 1
+                    nan_t += 1
+                else:
+                    ts.append(float(v))
         results[cd] = {
             "frames": n,
             "rc_s": round(float(np.mean(ss)), 5) if ss else None,
@@ -536,7 +606,7 @@ def _prove(ev, gpu):
             "rc_t": round(float(np.mean(ts)), 5) if ts else None,
             "rc_t_p95": round(float(np.percentile(ts, 95)), 5) if ts else None,
             "n_s": len(ss), "n_t": len(ts),
-            "skipped_s": skip_s, "skipped_t": skip_t,
+            "skipped_s": skip_s, "skipped_t": skip_t, "nan_tiles": nan_t,
             "eval_s": round(time.time() - t0, 1),
         }
         print(f"[PROVE] roi={roi} cand={cd} "
@@ -548,5 +618,6 @@ def _prove(ev, gpu):
     return {"ok": True, "op": "prove", "gpu": gpu, "roi": roi,
             "dino_load_s": load_s, "stride_s": stride_s,
             "stride_t": stride_t, "frames_cap": nmax,
+            "tile_rc_t": tile_rc_t, "tiles_per_pair": ntile,
             "note": "RC-S/RC-T 모두 낮을수록 좋음 (reference-free)",
             "results": results}
