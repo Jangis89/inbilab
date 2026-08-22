@@ -1,16 +1,22 @@
 # -*- coding: utf-8 -*-
-"""후보 D/F 하이브리드 오케스트레이터 v2 (후속 명세 Phase 6).
+"""후보 D/F 하이브리드 오케스트레이터 v4 (후속 명세 Phase 6 — 2차).
 
-v2: 합성을 스트리밍으로 재설계 — v1은 seg 프레임 전체를 후보별로 RAM에
-복사해 UAT 해상도(1080×2046)에서 러너 메모리(16GB)를 초과, GitHub 러너가
-OOM으로 종료됨(2026-08-22 04시대 3회 재현). v2는 프레임 단위 스트림 합성으로
-피크 메모리를 수백 MB 수준으로 유지한다.
+v4: residual 생성의 시간 창을 chunk(~12f) → part 병합 창(≤81f)으로 확대.
+v1~v3.1의 실측 결론(진행 로그 D2): chunk 단위 생성은 시간 문맥이 부족해
+골든 PSNR이 전체창 후보(C/E)보다 낮고, uat01_t154 육안에서 잔상이 남았다.
+v4는 같은 (part, reg)의 residual 조각 hole을 프레임 축으로 병합한 뒤
+spans_to_windows()로 ≤81프레임 창(overlap 8, pad 4)을 만들어 1회 생성한다.
+생성 입력은 seg 출력 영상의 union crop이다 — 자리채움(inpaint) 화소는
+VACE 전처리가 mask 영역을 회색으로 대체하므로 생성 품질에 영향이 없고,
+hole 밖 화소(실화소 전파·Preserver 결과)가 시간 문맥으로 쓰인다.
 
-구조 (production H.2/H.3와 동일 순서를 파이프라인 안에서 그대로 사용):
-  segment_v32(residual_export=1) — 카드 un-blend → flow 실화소 전파 →
-    residual 조각(crop+context)만 npz 저장·자리채움 → Preserver
-  → 각 조각을 SVOR(F)/순정 VACE(D)로 복원
-  → hole alpha(feather 2px)로 seg 스트림에 프레임 단위 되붙여 cand_D/F 생성
+유지되는 항목:
+  - v2 스트리밍 합성(피크 메모리 수백 MB; 러너 16GB OOM 방지)
+  - v3 생성 호출 병렬 window(HYB_PAR, 기본 6; 러너 5h 한도 대응 —
+    대표 협의 2026-08-22: 한도는 분할·병렬로 해결, 폭주 방지는 유지)
+  - v3.1 업/다운로드 3회 재시도(저장소 일시 오류 520 대응)
+  - production H.2/H.3 동일 순서: 카드 un-blend → flow 실화소 전파 →
+    residual hole만 생성 → Preserver (전체 사각형 생성 금지)
 
 HYBRID_SPEC (JSON): [{"pid","roi","t0","t1","cands":["D","F"]}]
 산출: bench-assets/tournament/{roi}/cand_D.mp4 · cand_F.mp4 · hybrid_meta.json
@@ -33,6 +39,9 @@ SB_URL = os.environ["SUPABASE_URL"].rstrip("/")
 SB_KEY = os.environ["SUPABASE_SERVICE_ROLE"]
 DEST = "bench-assets/tournament"
 LORA = {"D": "none", "F": "stage12"}
+WIN_MAX = 81   # 생성 창 최대 프레임 (VACE 전체창과 동일 규모)
+WIN_OVL = 8    # 인접 창 겹침 (합성 시 중앙 분할로 이음새 배분)
+WIN_PAD = 4    # hole span 앞뒤 문맥 여유
 
 
 def hdr(extra=None):
@@ -144,6 +153,60 @@ class StreamEncoder:
         return self.p.returncode == 0
 
 
+def spans_to_windows(hole_ls, plen):
+    """hole이 있는 part-local 프레임 목록 → 생성 창 [(w0,w1,c0,c1)].
+
+    w0..w1 = 생성에 넣는 범위(pad 포함), c0..c1 = 합성에 쓰는 core 범위.
+    인접 창은 WIN_OVL 겹치고 core는 겹침 중앙에서 나뉜다.
+    """
+    if not hole_ls:
+        return []
+    ls = sorted(hole_ls)
+    spans = []
+    s = e = ls[0]
+    for l in ls[1:]:
+        if l - e <= WIN_OVL:      # 작은 공백은 같은 span으로 병합
+            e = l
+        else:
+            spans.append((s, e + 1))
+            s = e = l
+    spans.append((s, e + 1))
+    padded = []
+    for s, e in spans:
+        s, e = max(0, s - WIN_PAD), min(plen, e + WIN_PAD)
+        if padded and s <= padded[-1][1]:
+            padded[-1] = (padded[-1][0], max(padded[-1][1], e))
+        else:
+            padded.append((s, e))
+    wins = []
+    stride = WIN_MAX - WIN_OVL
+    for s, e in padded:
+        if e - s <= WIN_MAX:
+            wins.append([s, e])
+        else:
+            w0 = s
+            while True:
+                w1 = min(w0 + WIN_MAX, e)
+                wins.append([w0, w1])
+                if w1 >= e:
+                    break
+                w0 += stride
+            # 마지막 창이 짧으면 뒤에서 WIN_MAX만큼 당겨 잡음
+            # (짧은 창 = 시간 문맥 부족 = v1 품질 미달의 원인 — 방지)
+            wins[-1][0] = max(s, wins[-1][1] - WIN_MAX)
+        # core 분할: 같은 span 안의 인접 창끼리 겹침 중앙에서 나눔
+    out = []
+    for i, (w0, w1) in enumerate(wins):
+        c0 = w0
+        c1 = w1
+        if i > 0 and wins[i - 1][1] > w0:            # 앞 창과 겹침
+            c0 = w0 + (wins[i - 1][1] - w0) // 2
+        if i + 1 < len(wins) and wins[i + 1][0] < w1:  # 뒤 창과 겹침
+            c1 = wins[i + 1][0] + (w1 - wins[i + 1][0]) // 2
+        out.append((w0, w1, c0, c1))
+    return out
+
+
 def main():
     spec = json.loads(os.environ.get("HYBRID_SPEC", "[]"))
     if not spec:
@@ -203,49 +266,124 @@ def main():
                   if n.startswith("resid_") and n.endswith(".npz")
                   and int(n.split("_")[1]) in need]
         print(f"[HYB] resid packs={len(resids)}", flush=True)
-        packs = []   # 조각 메타 + hole packbits + gen 파일 경로 (프레임 미보유)
-        jobs = []    # (rec, cand, ev) — v3 병렬 실행용
+        # ---- v4: 조각을 (part, reg)별로 병합 (hole·crop만 사용; 조각의
+        #          residual 프레임 PNG는 v4에서 불필요 — 생성 입력은 seg 영상) ----
+        packs = []
+        groups = {}
         for nm in sorted(resids):
             rp = os.path.join(tmpd, nm)
             if not dl("videos-clips", f"wmtmp-v32/{pid}/{nm}", rp):
                 continue
             z = np.load(rp)
             meta = json.loads(bytes(z["meta"]).decode())
-            cs, ce = meta["cs"], meta["ce"]
             hh, ww = meta["shape"]
-            n = ce - cs + 1
-            frames, holes_pb, hole_px = [], [], 0
-            for j in range(n):
-                frames.append(cv2.imdecode(z[f"f{j}"], cv2.IMREAD_COLOR))
-                holes_pb.append(np.array(z[f"m{j}"]))
-                hole_px += int(np.unpackbits(z[f"m{j}"])[:hh * ww].sum())
-            inp = os.path.join(tmpd, nm + ".in.mp4")
-            mkp = os.path.join(tmpd, nm + ".mask.mp4")
-            write_mp4(frames, inp, fps)
-            write_mp4([cv2.cvtColor(
-                (np.unpackbits(pb)[:hh * ww].reshape(hh, ww) * 255
-                 ).astype(np.uint8), cv2.COLOR_GRAY2BGR)
-                for pb in holes_pb], mkp, fps)
-            del frames
-            key_in = f"wmtmp-v32/{pid}/{nm}.in.mp4"
-            key_mk = f"wmtmp-v32/{pid}/{nm}.mask.mp4"
-            up(inp, key_in)
-            up(mkp, key_mk)
-            os.remove(inp)
+            n = meta["ce"] - meta["cs"] + 1
+            holes_pb = [np.array(z[f"m{j}"]) for j in range(n)]
+            hole_px = sum(int(np.unpackbits(pb)[:hh * ww].sum())
+                          for pb in holes_pb)
             rec = {"pack": nm, "meta": meta, "holes_pb": holes_pb,
-                   "hole_px": hole_px, "gen": {}}
-            for cd in cands:
-                out_key = f"wmtmp-v32/{pid}/{nm}.out_{cd}.mp4"
-                ev = {"op": "roi", "video": key_in, "mask": key_mk,
-                      "out": out_key, "lora": LORA[cd], "frames": n,
-                      "dilation": 2, "steps": 20,
-                      "max_area": min(720 * 1280, hh * ww)}
-                jobs.append((rec, cd, ev))
+                   "hole_px": hole_px}
             packs.append(rec)
+            groups.setdefault((meta["part"], meta["reg"]), []).append(rec)
+            os.remove(rp)
+        wrecs = []   # 창 레코드 (part별 합성에 사용)
+        jobs = []    # (wrec, cand, ev) — v3 병렬 실행용
+        for (k, reg), grp in sorted(groups.items()):
+            a, b = segments[k]
+            plen = b - a
+            # union crop (global 좌표)
+            gx0 = gy0 = 10 ** 9
+            gx1 = gy1 = -1
+            for rec in grp:
+                m = rec["meta"]
+                x0c, y0c, x1c, y1c = m["crop"]
+                rx, ry = m["reg_xy"]
+                gx0, gy0 = min(gx0, rx + x0c), min(gy0, ry + y0c)
+                gx1, gy1 = max(gx1, rx + x1c), max(gy1, ry + y1c)
+            gx0, gy0 = max(0, gx0), max(0, gy0)
+            gx1, gy1 = min(W, gx1), min(H, gy1)
+            uw, uh = gx1 - gx0, gy1 - gy0
+            if uw <= 0 or uh <= 0:
+                continue
+            # part-local 프레임 l → union-crop hole mask (packbits)
+            hl = {}
+            for rec in grp:
+                m = rec["meta"]
+                hh, ww = m["shape"]
+                x0c, y0c, x1c, y1c = m["crop"]
+                rx, ry = m["reg_xy"]
+                oy, ox = ry + y0c - gy0, rx + x0c - gx0
+                for j, pb in enumerate(rec["holes_pb"]):
+                    l = m["E0"] + m["cs"] + j - a
+                    if not (0 <= l < plen):
+                        continue
+                    hole = np.unpackbits(pb)[:hh * ww].reshape(hh, ww)
+                    if not hole.any():
+                        continue
+                    cnv = (np.unpackbits(hl[l])[:uh * uw].reshape(uh, uw)
+                           if l in hl else
+                           np.zeros((uh, uw), np.uint8))
+                    ey, ex = min(uh, oy + hh), min(uw, ox + ww)
+                    if ey > max(0, oy) and ex > max(0, ox):
+                        cnv[max(0, oy):ey, max(0, ox):ex] |= \
+                            hole[max(0, -oy):ey - oy, max(0, -ox):ex - ox]
+                    hl[l] = np.packbits(cnv)
+            wins = spans_to_windows(list(hl.keys()), plen)
+            print(f"[HYB] group part={k} reg={reg} rect="
+                  f"({gx0},{gy0},{gx1},{gy1}) hole_frames={len(hl)} "
+                  f"windows={[(w0, w1) for w0, w1, _c0, _c1 in wins]}",
+                  flush=True)
+            if not wins or k not in segpath:
+                if wins:
+                    print(f"[HYB] part={k} seg 영상 누락 — 창 {len(wins)}개 skip")
+                    fail += len(wins)
+                continue
+            for w0, w1, c0, c1 in wins:
+                tag = f"hybw_{k}_{reg}_{w0}"
+                # 생성 입력 = seg 출력 영상의 union crop (w0..w1)
+                cap = cv2.VideoCapture(segpath[k])
+                cap.set(cv2.CAP_PROP_POS_FRAMES, w0)
+                inf, mkf = [], []
+                for l in range(w0, w1):
+                    ok2, fr = cap.read()
+                    if not ok2:
+                        break
+                    inf.append(fr[gy0:gy1, gx0:gx1].copy())
+                    pb = hl.get(l)
+                    hole = (np.unpackbits(pb)[:uh * uw].reshape(uh, uw) * 255
+                            ).astype(np.uint8) if pb is not None else \
+                        np.zeros((uh, uw), np.uint8)
+                    mkf.append(cv2.cvtColor(hole, cv2.COLOR_GRAY2BGR))
+                cap.release()
+                if len(inf) < w1 - w0:
+                    print(f"[HYB] {tag} seg 프레임 부족 "
+                          f"{len(inf)}/{w1 - w0} — skip")
+                    fail += 1
+                    continue
+                inp = os.path.join(tmpd, tag + ".in.mp4")
+                mkp = os.path.join(tmpd, tag + ".mask.mp4")
+                write_mp4(inf, inp, fps)
+                write_mp4(mkf, mkp, fps)
+                del inf, mkf
+                key_in = f"wmtmp-v32/{pid}/{tag}.in.mp4"
+                key_mk = f"wmtmp-v32/{pid}/{tag}.mask.mp4"
+                up(inp, key_in)
+                up(mkp, key_mk)
+                os.remove(inp)
+                os.remove(mkp)
+                wrec = {"tag": tag, "part": k, "reg": reg,
+                        "rect": (gx0, gy0, gx1, gy1),
+                        "w0": w0, "w1": w1, "c0": c0, "c1": c1,
+                        "holes": hl, "gen": {}}
+                for cd in cands:
+                    out_key = f"wmtmp-v32/{pid}/{tag}.out_{cd}.mp4"
+                    ev = {"op": "roi", "video": key_in, "mask": key_mk,
+                          "out": out_key, "lora": LORA[cd],
+                          "frames": w1 - w0, "dilation": 2, "steps": 20,
+                          "max_area": min(720 * 1280, uh * uw)}
+                    jobs.append((wrec, cd, ev))
+                wrecs.append(wrec)
         # v3: 생성 호출 병렬 window (기본 6) — 품질·GPU초 동일, 벽시계만 단축.
-        # uat02 실측(조각 54개, 조각당 최대 824s)이 순차로는 러너 5h 한도를
-        # 넘김이 확실해 병렬화. 대표 협의(2026-08-22): 한도는 분할·병렬로
-        # 해결하고 폭주 방지 장치는 유지.
         WINDOW = int(os.environ.get("HYB_PAR", "6"))
         inflight = []
         ji = 0
@@ -255,7 +393,7 @@ def main():
                 try:
                     inflight.append((rec2, cd2, svor_fn.spawn(ev2)))
                 except Exception as e:  # noqa: BLE001
-                    print(f"[HYB] pack={rec2['pack']} cand={cd2} spawn 실패 "
+                    print(f"[HYB] {rec2['tag']} cand={cd2} spawn 실패 "
                           f"{type(e).__name__}: {e}", flush=True)
                     fail += 1
                 ji += 1
@@ -266,20 +404,20 @@ def main():
                 res = call.get(timeout=3600)
             except Exception as e:  # noqa: BLE001
                 res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-            print(f"[HYB] pack={rec2['pack']} cand={cd2} -> "
+            print(f"[HYB] {rec2['tag']} cand={cd2} -> "
                   f"{json.dumps({x: res.get(x) for x in ('ok', 'run_s', 'vram_gb', 'error')})}",
                   flush=True)
             if not res.get("ok"):
                 fail += 1
                 continue
-            out_key2 = f"wmtmp-v32/{pid}/{rec2['pack']}.out_{cd2}.mp4"
-            op2 = os.path.join(tmpd, rec2["pack"] + f".out_{cd2}.mp4")
+            out_key2 = f"wmtmp-v32/{pid}/{rec2['tag']}.out_{cd2}.mp4"
+            op2 = os.path.join(tmpd, rec2["tag"] + f".out_{cd2}.mp4")
             if dl("videos-clips", out_key2, op2):
                 rec2["gen"][cd2] = op2
         # ---- 스트리밍 합성: 프레임 단위 (피크 메모리 수백 MB) ----
         by_part = {}
-        for rec in packs:
-            by_part.setdefault(rec["meta"]["part"], []).append(rec)
+        for wrec in wrecs:
+            by_part.setdefault(wrec["part"], []).append(wrec)
         for it in items:
             f0, f1, roi = it["f0"], it["f1"], it["roi"]
             spans = [(k, a, b) for k, (a, b) in enumerate(segments)
@@ -293,51 +431,55 @@ def main():
                 enc = StreamEncoder(outp, W, H, fps)
                 nw = 0
                 for k, a, b in spans:
-                    # 이 part 조각의 gen 프레임을 지금만 로드
-                    gens = {}
-                    for rec in by_part.get(k, []):
-                        gp = rec["gen"].get(cd)
-                        if gp:
-                            hh, ww = rec["meta"]["shape"]
-                            gf = read_frames(gp)
-                            gens[rec["pack"]] = [
-                                (cv2.resize(g, (ww, hh),
-                                            interpolation=cv2.INTER_LANCZOS4)
-                                 if g.shape[:2] != (hh, ww) else g)
-                                for g in gf]
+                    gens = {}   # tag → 프레임 리스트 (창 core 통과 시 해제)
                     cap = cv2.VideoCapture(segpath[k])
                     gi = a
                     while True:
                         ok2, fr = cap.read()
                         if not ok2:
                             break
+                        l = gi - a
                         if f0 <= gi < f1:
-                            for rec in by_part.get(k, []):
-                                m = rec["meta"]
-                                j = gi - m["E0"] - m["cs"]
-                                gl = gens.get(rec["pack"])
-                                if gl is None or j < 0 or j >= len(gl) \
-                                        or j >= len(rec["holes_pb"]):
+                            for wrec in by_part.get(k, []):
+                                if not (wrec["c0"] <= l < wrec["c1"]):
                                     continue
-                                hh, ww = m["shape"]
-                                x0c, y0c, x1c, y1c = m["crop"]
-                                rx, ry = m["reg_xy"]
-                                hole = (np.unpackbits(rec["holes_pb"][j])
-                                        [:hh * ww].reshape(hh, ww)
-                                        * 255).astype(np.uint8)
+                                gp = wrec["gen"].get(cd)
+                                pb = wrec["holes"].get(l)
+                                if gp is None or pb is None:
+                                    continue
+                                if wrec["tag"] not in gens:
+                                    gens[wrec["tag"]] = read_frames(gp)
+                                gl = gens[wrec["tag"]]
+                                j = l - wrec["w0"]
+                                if j < 0 or j >= len(gl):
+                                    continue
+                                gx0, gy0, gx1, gy1 = wrec["rect"]
+                                uh, uw = gy1 - gy0, gx1 - gx0
+                                g = gl[j]
+                                if g.shape[:2] != (uh, uw):
+                                    if g.shape[0] >= uh and g.shape[1] >= uw:
+                                        g = g[:uh, :uw]   # 짝수 pad 제거
+                                    else:
+                                        g = cv2.resize(
+                                            g, (uw, uh),
+                                            interpolation=cv2.INTER_LANCZOS4)
+                                hole = (np.unpackbits(pb)[:uh * uw]
+                                        .reshape(uh, uw) * 255).astype(np.uint8)
                                 if not hole.any():
                                     continue
                                 al = cv2.GaussianBlur(hole, (0, 0), 2) \
                                     .astype(np.float32)[..., None] / 255.0
-                                gy0, gy1 = ry + y0c, ry + y1c
-                                gx0, gx1 = rx + x0c, rx + x1c
                                 sub = fr[gy0:gy1, gx0:gx1].astype(np.float32)
                                 fr[gy0:gy1, gx0:gx1] = np.clip(
                                     sub * (1 - al)
-                                    + gl[j].astype(np.float32) * al,
+                                    + g.astype(np.float32) * al,
                                     0, 255).astype(np.uint8)
                             enc.write(fr)
                             nw += 1
+                        # core를 지난 창의 gen 프레임 즉시 해제 (RAM 절약)
+                        for wrec in by_part.get(k, []):
+                            if wrec["tag"] in gens and l >= wrec["c1"]:
+                                del gens[wrec["tag"]]
                         gi += 1
                         if gi >= f1:
                             break
@@ -354,14 +496,15 @@ def main():
             covs = [segstats.get(k, {}) for k, _a, _b in spans]
             used = sum(c.get("flow_used", 0) for c in covs)
             csum = sum(c.get("flow_cover_pct_sum", 0) for c in covs)
-            hmeta = {"roi": roi,
+            hmeta = {"roi": roi, "hybrid_ver": "v4",
                      "flow_used_chunks": used,
                      "flow_bypass_chunks": sum(c.get("flow_bypass", 0)
                                                for c in covs),
                      "real_pixel_coverage_avg_pct":
                          round(csum / used, 1) if used else None,
                      "resid_packs": len(packs),
-                     "resid_hole_px": sum(p["hole_px"] for p in packs)}
+                     "resid_hole_px": sum(p["hole_px"] for p in packs),
+                     "gen_windows": len(wrecs)}
             mf = os.path.join(tmpd, f"{roi}_hybrid_meta.json")
             open(mf, "w").write(json.dumps(hmeta))
             up(mf, f"{DEST}/{roi}/hybrid_meta.json", "application/json")
