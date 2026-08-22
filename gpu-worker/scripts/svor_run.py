@@ -42,7 +42,7 @@ def main():
             print(f"[SVOR][{tag}]", json.dumps(out)[:4000])
             if not out.get("ok"):
                 fail += 1
-    elif op in ("roi", "flowbench"):
+    elif op in ("roi", "flowbench", "prove"):
         spec = json.loads(os.environ.get("SVOR_SPEC", "[]"))
         for i, item in enumerate(spec):
             fname = "svor_h200" if item.get("gpu") == "h200" else "svor_h100"
