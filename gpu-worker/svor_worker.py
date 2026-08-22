@@ -39,26 +39,53 @@ def _split(p):
     return "videos-clips", p
 
 
+def _retry_io(fn, what, tries=3):
+    """저장소 일시 오류(HTTP 5xx/520) 재시도.
+
+    2026-08-23 uat01_full 실측: 274창 중 1창이 업로드 520으로 실패해 run 전체가
+    fail=1이 됐다. 오케스트레이터(tournament_hybrid_v32)에는 재시도가 있었으나
+    워커에는 없었다. 같은 정책(3회, 5s/10s 백오프)을 워커에도 적용한다.
+    """
+    import time as _t
+    for att in range(tries):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            if att == tries - 1:
+                raise
+            print(f"[SVOR] {what} 재시도 {att + 1}/{tries - 1}: "
+                  f"{type(e).__name__}", flush=True)
+            _t.sleep(5 * (att + 1))
+
+
 def _download(path, dst):
     b, p = _split(path)
-    with requests.get(f"{SB_URL}/storage/v1/object/{b}/{p}", headers=_hdr(),
-                      stream=True, timeout=1800) as r:
-        r.raise_for_status()
-        with open(dst, "wb") as f:
-            for c in r.iter_content(1 << 20):
-                f.write(c)
-    return os.path.getsize(dst)
+
+    def _once():
+        with requests.get(f"{SB_URL}/storage/v1/object/{b}/{p}",
+                          headers=_hdr(), stream=True, timeout=1800) as r:
+            r.raise_for_status()
+            with open(dst, "wb") as f:
+                for c in r.iter_content(1 << 20):
+                    f.write(c)
+        return os.path.getsize(dst)
+
+    return _retry_io(_once, f"dl {p}")
 
 
 def _upload(src, path, ctype="video/mp4"):
     b, p = _split(path)
-    with open(src, "rb") as f:
-        r = requests.post(f"{SB_URL}/storage/v1/object/{b}/{p}",
-                          headers=_hdr({"Content-Type": ctype,
-                                        "x-upsert": "true"}),
-                          data=f.read(), timeout=1800)
-    r.raise_for_status()
-    return os.path.getsize(src)
+
+    def _once():
+        with open(src, "rb") as f:
+            r = requests.post(f"{SB_URL}/storage/v1/object/{b}/{p}",
+                              headers=_hdr({"Content-Type": ctype,
+                                            "x-upsert": "true"}),
+                              data=f.read(), timeout=1800)
+        r.raise_for_status()
+        return os.path.getsize(src)
+
+    return _retry_io(_once, f"up {p}")
 
 
 def _load_pipeline(lora="stage12", weight_dtype=torch.bfloat16):
