@@ -212,6 +212,11 @@ def main():
     if not spec:
         print("[HYB] empty HYBRID_SPEC")
         sys.exit(1)
+    # P8 속도최적화 A/B: spec[0]의 steps/suffix로 전 항목 공통 설정.
+    # steps 감소는 명세 8.2에 따라 "품질 동등 증명" 후에만 채택한다.
+    HYB_STEPS = int(spec[0].get("steps", 20))
+    HYB_SUFFIX = str(spec[0].get("suffix", ""))
+    print(f"[HYB] steps={HYB_STEPS} suffix='{HYB_SUFFIX}'", flush=True)
     scan_fn = modal.Function.from_name(APP, "scan_v32_cpu")
     seg_fn = modal.Function.from_name(APP, "segment_v32_gpu")
     svor_fn = modal.Function.from_name(SVOR_APP, "svor_h100")
@@ -376,10 +381,10 @@ def main():
                         "w0": w0, "w1": w1, "c0": c0, "c1": c1,
                         "holes": hl, "gen": {}}
                 for cd in cands:
-                    out_key = f"wmtmp-v32/{pid}/{tag}.out_{cd}.mp4"
+                    out_key = f"wmtmp-v32/{pid}/{tag}.out_{cd}{HYB_SUFFIX}.mp4"
                     ev = {"op": "roi", "video": key_in, "mask": key_mk,
                           "out": out_key, "lora": LORA[cd],
-                          "frames": w1 - w0, "dilation": 2, "steps": 20,
+                          "frames": w1 - w0, "dilation": 2, "steps": HYB_STEPS,
                           "max_area": min(720 * 1280, uh * uw)}
                     jobs.append((wrec, cd, ev))
                 wrecs.append(wrec)
@@ -410,8 +415,8 @@ def main():
             if not res.get("ok"):
                 fail += 1
                 continue
-            out_key2 = f"wmtmp-v32/{pid}/{rec2['tag']}.out_{cd2}.mp4"
-            op2 = os.path.join(tmpd, rec2["tag"] + f".out_{cd2}.mp4")
+            out_key2 = f"wmtmp-v32/{pid}/{rec2['tag']}.out_{cd2}{HYB_SUFFIX}.mp4"
+            op2 = os.path.join(tmpd, rec2["tag"] + f".out_{cd2}{HYB_SUFFIX}.mp4")
             if dl("videos-clips", out_key2, op2):
                 rec2["gen"][cd2] = op2
         # ---- 스트리밍 합성: 프레임 단위 (피크 메모리 수백 MB) ----
@@ -427,7 +432,7 @@ def main():
                     print(f"[HYB] roi={roi} cand={cd} seg 누락")
                     fail += 1
                     continue
-                outp = os.path.join(tmpd, f"{roi}_cand_{cd}.mp4")
+                outp = os.path.join(tmpd, f"{roi}_cand_{cd}{HYB_SUFFIX}.mp4")
                 enc = StreamEncoder(outp, W, H, fps)
                 nw = 0
                 for k, a, b in spans:
@@ -489,14 +494,14 @@ def main():
                     print(f"[HYB] roi={roi} cand_{cd} 인코딩 실패")
                     fail += 1
                     continue
-                up(outp, f"{DEST}/{roi}/cand_{cd}.mp4")
-                print(f"[HYB] roi={roi} cand_{cd} frames={nw} "
+                up(outp, f"{DEST}/{roi}/cand_{cd}{HYB_SUFFIX}.mp4")
+                print(f"[HYB] roi={roi} cand_{cd}{HYB_SUFFIX} frames={nw} "
                       f"sha256={sha(outp)}", flush=True)
                 os.remove(outp)
             covs = [segstats.get(k, {}) for k, _a, _b in spans]
             used = sum(c.get("flow_used", 0) for c in covs)
             csum = sum(c.get("flow_cover_pct_sum", 0) for c in covs)
-            hmeta = {"roi": roi, "hybrid_ver": "v4",
+            hmeta = {"roi": roi, "hybrid_ver": "v4", "steps": HYB_STEPS,
                      "flow_used_chunks": used,
                      "flow_bypass_chunks": sum(c.get("flow_bypass", 0)
                                                for c in covs),
@@ -505,9 +510,9 @@ def main():
                      "resid_packs": len(packs),
                      "resid_hole_px": sum(p["hole_px"] for p in packs),
                      "gen_windows": len(wrecs)}
-            mf = os.path.join(tmpd, f"{roi}_hybrid_meta.json")
+            mf = os.path.join(tmpd, f"{roi}_hybrid_meta{HYB_SUFFIX}.json")
             open(mf, "w").write(json.dumps(hmeta))
-            up(mf, f"{DEST}/{roi}/hybrid_meta.json", "application/json")
+            up(mf, f"{DEST}/{roi}/hybrid_meta{HYB_SUFFIX}.json", "application/json")
             print(f"[HYB] roi={roi} meta={json.dumps(hmeta)}", flush=True)
     print(f"[HYB] done fail={fail}")
     if fail:
