@@ -323,3 +323,10 @@ jobs:
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
           HYBRID_SPEC: ${{ github.event.inputs.pids }}
         run: python -u gpu-worker/scripts/tournament_hybrid_v32.py
+      - name: Vmake clip pack
+        if: ${{ github.event.inputs.action == 'vmakeclip' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          VMAKE_SPEC: ${{ github.event.inputs.pids }}
+        run: python -u gpu-worker/scripts/vmake_clip_v32.py
