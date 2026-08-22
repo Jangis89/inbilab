@@ -18,6 +18,12 @@
      - 값이 클수록 획 자리에 구조가 남아 있음 = 글자잔상 → 나쁨
   보조로 glyph_contrast = |mean(out[G]) - mean(out[B])| (밝기 잔상)
 
+card_res (카드 잔존도, 명세 11.2 "카드 ghost" 대응):
+  mask 안쪽 평균밝기 - mask 바깥 링 평균밝기 = gap.
+  card_res = |gap(결과)| / |gap(원본)| → 0에 가까울수록 카드가 완전히 제거됨,
+  1에 가까우면 카드가 그대로 남아 있음. (원본 gap이 3 미만이면 카드 없음으로 보고 생략)
+  글자획 지표(glyph_ratio)는 획 모양 잔상만 잡고 넓은 면(카드) 잔존은 못 잡으므로 함께 본다.
+
 GLYPH_SPEC (JSON): [{"roi","cands":[...],"frames":81}]
 산출: 표준출력 [GLYPH] 행 + docs용 CSV 문자열
 """
@@ -84,7 +90,7 @@ def main():
         print("[GLYPH] empty GLYPH_SPEC")
         sys.exit(1)
     tmpd = tempfile.mkdtemp(prefix="glyph-")
-    lines = ["roi,cand,glyph_ratio,glyph_contrast,frames,glyph_px,bg_px"]
+    lines = ["roi,cand,glyph_ratio,glyph_contrast,card_res,frames,glyph_px,bg_px"]
     fail = 0
     for it in spec:
         roi = it["roi"]
@@ -100,15 +106,24 @@ def main():
         msk = frames_of(mp, nmax)
         n0 = min(len(inp), len(msk))
         # 프레임별 글자획 G / 배경 B 집합을 원본 기준으로 미리 계산
-        Gs, Bs = [], []
+        Gs, Bs, Is, Rs, gapin = [], [], [], [], []
         for i in range(n0):
             m = cv2.cvtColor(msk[i], cv2.COLOR_BGR2GRAY)
             m = (m > 127).astype(np.uint8)
             m_in = cv2.erode(m, np.ones((5, 5), np.uint8), iterations=1)
-            if m_in.sum() < 200:
+            ring = (cv2.dilate(m, np.ones((25, 25), np.uint8), 1)
+                    - cv2.dilate(m, np.ones((7, 7), np.uint8), 1))
+            if m_in.sum() < 200 or ring.sum() < 200:
                 Gs.append(None)
                 Bs.append(None)
+                Is.append(None)
+                Rs.append(None)
+                gapin.append(0.0)
                 continue
+            gin = cv2.cvtColor(inp[i], cv2.COLOR_BGR2GRAY).astype(np.float32)
+            Is.append(m_in > 0)
+            Rs.append(ring > 0)
+            gapin.append(float(gin[m_in > 0].mean() - gin[ring > 0].mean()))
             gray = cv2.cvtColor(inp[i], cv2.COLOR_BGR2GRAY)
             ed = cv2.Canny(gray, 60, 160)
             G = ((ed > 0) & (m_in > 0))
@@ -135,7 +150,7 @@ def main():
                 continue
             out = frames_of(cp, nmax)
             n = min(len(out), n0)
-            ratios, contrasts = [], []
+            ratios, contrasts, cards = [], [], []
             for i in valid:
                 if i >= n:
                     break
@@ -148,14 +163,19 @@ def main():
                 ratios.append(gG / gB)
                 contrasts.append(abs(float(gray[Gs[i]].mean())
                                      - float(gray[Bs[i]].mean())))
+                if Is[i] is not None and abs(gapin[i]) > 3.0:
+                    gout = float(gray[Is[i]].mean() - gray[Rs[i]].mean())
+                    cards.append(min(2.0, abs(gout) / abs(gapin[i])))
             if not ratios:
                 print(f"[GLYPH] {roi} {cd} 계측 실패")
                 continue
             r = round(float(np.mean(ratios)), 4)
             c = round(float(np.mean(contrasts)), 3)
-            lines.append(f"{roi},{cd},{r},{c},{len(ratios)},{gpx},{bpx}")
+            cr = round(float(np.mean(cards)), 4) if cards else ""
+            lines.append(f"{roi},{cd},{r},{c},{cr},{len(ratios)},{gpx},{bpx}")
             print(f"[GLYPH] {roi} {cd} glyph_ratio={r} contrast={c} "
-                  f"(G={gpx}px B={bpx}px, {len(ratios)}f)", flush=True)
+                  f"card_res={cr} (G={gpx}px B={bpx}px, {len(ratios)}f)",
+                  flush=True)
             os.remove(cp)
     print("[GLYPH] ---CSV---")
     for ln in lines:
