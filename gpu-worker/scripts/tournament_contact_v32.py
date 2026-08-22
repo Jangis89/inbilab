@@ -75,7 +75,8 @@ def main():
         dl(f"{SRC}/{roi}/input.mp4", inp)
         vids.append(("input", inp))
         for cand in ("cand_A", "cand_B", "cand_C", "cand_D", "cand_E",
-                     "cand_E_w0", "cand_C_w0", "cand_F", "cand_G", "cand_H"):
+                     "cand_E_w0", "cand_C_w0", "cand_F", "cand_G", "cand_H",
+                     "cand_V"):
             p = os.path.join(tmpd, cand + ".mp4")
             if dl(f"{SRC}/{roi}/{cand}.mp4", p):
                 vids.append((cand, p))
