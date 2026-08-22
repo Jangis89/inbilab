@@ -337,3 +337,10 @@ jobs:
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
           GLYPH_SPEC: ${{ github.event.inputs.pids }}
         run: python -u gpu-worker/scripts/glyph_residual_v32.py
+      - name: Storage list/restore
+        if: ${{ github.event.inputs.action == 'storagels' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          LS_SPEC: ${{ github.event.inputs.pids }}
+        run: python -u gpu-worker/scripts/storage_ls_v32.py
